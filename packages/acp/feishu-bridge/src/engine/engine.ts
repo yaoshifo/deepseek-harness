@@ -5988,39 +5988,34 @@ export class Engine {
       return false
     }
 
+    // Renders die only with a settlement (verdict resolved, every question
+    // answered) — the routers below own those points. A response that leaves
+    // the ask parked (a clarification, a partial answer) must not kill an
+    // in-flight render: the plan overview is still the approver-facing
+    // artifact, and a settling message that resumes the turn has the
+    // turn-start cancelRenders as its backstop.
     const pending = state.pendingAsk
-    // An approving verdict settles the ask and resumes the turn, so an
-    // in-flight speculative reply render stays a valid delivery of this
-    // turn's content — it must not die with the response (2026-09-04
-    // oc_3b2fa1: the approval click killed the only speculative render of
-    // a long pre-ask text; a permission approval takes seconds while a
-    // render fork needs ~12s, so Go handlePendingPermission's
-    // unconditional cancel was structurally lethal to speculative
-    // renders). A plan-card render is the opposite case: its plan is
-    // already approved and executing, so the late image is stale — only
-    // the plan-kind renders are cancelled (the plan card's export button
-    // keeps the content reachable). Every other response — deny, question
-    // answers, stale buttons — keeps the Go semantics: the waiting window
-    // ended and a stale render is no longer worth burning tokens on.
     const verdict = parsePermissionVerdict(content)
-    const approving = pending !== undefined && pending.request.kind !== 'questions'
-      && (verdict?.verdict === 'allow' || verdict?.verdict === 'allow-all')
-    if (approving) cancelPlanRenders(state)
-    else cancelRenders(state)
-
     if (pending === undefined) {
+      // Stale card buttons reference an ask whose waiting window already
+      // ended (Go handlePendingPermission's cancelRenders); the consumed
+      // hint is their only side effect.
       if (msg.isPermissionAction && verdict !== undefined) {
+        cancelRenders(state)
         void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PermissionExpired))
         return true
       }
-      if (this.staleAskqCardAction(p, msg)) return true
+      if (this.staleAskqCardAction(p, msg)) {
+        cancelRenders(state)
+        return true
+      }
       return false
     }
 
     if (pending.request.kind === 'questions') {
-      return this.routeQuestionResponse(p, msg, content, pending)
+      return this.routeQuestionResponse(p, msg, content, pending, state)
     }
-    return this.routePermissionResponse(p, msg, content, pending)
+    return this.routePermissionResponse(p, msg, content, pending, state)
   }
 
   /**
@@ -6076,10 +6071,11 @@ export class Engine {
    * @param msg - The inbound response message.
    * @param content - Response text (askq payload, index(es), or free text).
    * @param pending - The parked questions ask.
+   * @param state - Per-session state whose renders die with the settlement.
    * @returns True when the message was consumed as an answer.
    */
   private routeQuestionResponse(
-    p: Platform, msg: Message, content: string, pending: PendingAsk,
+    p: Platform, msg: Message, content: string, pending: PendingAsk, state: InteractiveState,
   ): boolean {
     if (pending.request.kind !== 'questions') return false
     const questions = pending.request.questions
@@ -6137,8 +6133,11 @@ export class Engine {
         : ''
       void this.reply(p, msg.replyCtx, `✅ ${q.question}: **${askAnswerDisplay(answer)}**${progress}${hint}`)
     }
-    // Every question answered — settle the whole ask.
+    // Every question answered — settle the whole ask. The waiting window
+    // ends here, so in-flight renders die with it (Go handlePendingPermission
+    // semantics); a partial answer leaves them running.
     if (questions.every((_q, i) => pending.answers.has(i))) {
+      cancelRenders(state)
       pending.resolve({ answers: finalAskAnswers(questions, pending.answers) })
       return true
     }
@@ -6163,13 +6162,29 @@ export class Engine {
    * @param msg - The inbound response message.
    * @param content - Response text; card verdicts may append "\x00<note>".
    * @param pending - The parked permission or plan-review ask.
+   * @param state - Per-session state whose renders die with the verdict.
    * @returns True when the message was consumed as a verdict.
    */
-  private routePermissionResponse(p: Platform, msg: Message, content: string, pending: PendingAsk): boolean {
+  private routePermissionResponse(p: Platform, msg: Message, content: string, pending: PendingAsk, state: InteractiveState): boolean {
     const verdict = parsePermissionVerdict(content)
     if (verdict === undefined) {
       void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PermissionHint))
       return true
+    }
+    // A verdict settles the waiting window, so in-flight renders die with
+    // it. An approving verdict resumes the turn, so the speculative reply
+    // render stays a valid delivery of this turn's content — it must not
+    // die with the response (2026-09-04 oc_3b2fa1: the approval click
+    // killed the only speculative render of a long pre-ask text; a
+    // permission approval takes seconds while a render fork needs ~12s).
+    // A plan-card render is the opposite case: its plan is already approved
+    // and executing, so the late image is stale — only the plan-kind
+    // renders are cancelled (the plan card's export button keeps the
+    // content reachable). A deny keeps the Go semantics: everything dies.
+    if (verdict.verdict === 'allow' || verdict.verdict === 'allow-all') {
+      cancelPlanRenders(state)
+    } else {
+      cancelRenders(state)
     }
     if (verdict.verdict === 'allow') {
       pending.resolve(verdict.note !== '' ? { outcome: 'allowed-once', note: verdict.note } : { outcome: 'allowed-once' })
@@ -8952,9 +8967,13 @@ export class Engine {
    * @param action - Full act:/nav: value carried by the pressed button.
    */
   async handleCardAction(p: Platform, msg: Message, action: string): Promise<void> {
-    // Any card-button click means the user is back — abort in-flight HTML
-    // renders (Go handleCardNav's cancelRenders).
-    cancelRenders(this.interactiveStates.get(msg.sessionKey))
+    // A card-button click means the user is back — abort in-flight HTML
+    // renders (Go handleCardNav's cancelRenders) — but never while an ask is
+    // parked: act:/nav: buttons settle nothing (verdicts route through
+    // perm:/askq:), so the approval window and its approver-facing plan
+    // render stay open.
+    const actionState = this.interactiveStates.get(msg.sessionKey)
+    if (actionState?.pendingAsk === undefined) cancelRenders(actionState)
     const colonIdx = action.indexOf(':')
     if (colonIdx === -1) return
     const prefix = action.slice(0, colonIdx)

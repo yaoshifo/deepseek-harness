@@ -13,6 +13,7 @@ import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
+  createStubMediaPlatform,
   createStubPlatform,
   newControllableSession,
 } from '../stubs/engine-stubs.ts'
@@ -22,6 +23,7 @@ import type { Message, ProgressContent } from '../../src/core/types.ts'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createRenderAgent, pollUntil, renderSkillBodyFixture } from './plan-render-helpers.ts'
 
 function newTestEngine(): Engine {
   return new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')
@@ -418,6 +420,81 @@ describe('PlanLayeredCard', () => {
       .toContain('file content wins')
 
     e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:deny', isPermissionAction: true }), 'perm:deny')
+    await expect(decision).resolves.toEqual({ outcome: 'rejected' })
+  })
+})
+
+describe('PlanRenderVerdictCancel', () => {
+  // #3 (2026-09-12 audit): a clarification while the plan-review ask is
+  // parked is NOT a verdict — it must not kill the in-flight plan render
+  // while the approval window is still open; only a settling verdict cancels.
+  function newPlanRenderEngine(agent: ReturnType<typeof createRenderAgent>, platform: ReturnType<typeof createStubMediaPlatform>): Engine {
+    const e = new Engine('test', agent, [platform], '', 'en')
+    e.planRenderEnabled = true
+    e.planRenderProvider = 'p'
+    e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
+    return e
+  }
+
+  async function parkPlanReview(e: Engine, p: ReturnType<typeof createStubMediaPlatform>, key: string): Promise<InteractiveState> {
+    const state = new InteractiveState()
+    state.agentSession = newControllableSession('plan-cancel')
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    e.sessions.getOrCreateActive(key)
+    return state
+  }
+
+  it('a non-verdict clarification keeps the render alive; the verdict cancels it', async () => {
+    const a = createRenderAgent({ blockCount: 5 })
+    const p = createStubMediaPlatform()
+    const e = newPlanRenderEngine(a, p)
+    const key = 'feishu:oc_plan:u10'
+    const state = await parkPlanReview(e, p, key)
+
+    const decision = e.askUser(key, { kind: 'plan-review', heading: '# P', plan: '# P\nplan body' })
+    await pollUntil(() => a.getCalls().length > 0, 2000)
+    expect(state.pendingAsk).toBeDefined()
+
+    // Free text that parses to no verdict: the ask stays parked, so the
+    // approver-facing render must keep running.
+    const clarification = '这个方案会影响线上稳定性吗？'
+    e.routeAskResponse(p, msg({ sessionKey: key, content: clarification }), clarification)
+    await new Promise((r) => { setTimeout(r, 50) })
+    expect(a.cancelledCount()).toBe(0)
+    expect(state.pendingAsk).toBeDefined()
+    expect(p.getSent().join('\n')).toContain('Waiting for permission response')
+
+    // The approving verdict settles the ask — now the plan render is stale
+    // and must be cancelled.
+    e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await pollUntil(() => a.cancelledCount() > 0, 2000)
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+    expect(state.pendingAsk).toBeUndefined()
+  })
+
+  it('a non-verdict card-button click (act:/nav:) leaves the parked ask and its render alone', async () => {
+    const a = createRenderAgent({ blockCount: 5 })
+    const p = createStubMediaPlatform()
+    const e = newPlanRenderEngine(a, p)
+    const key = 'feishu:oc_plan:u11'
+    const state = await parkPlanReview(e, p, key)
+
+    const decision = e.askUser(key, { kind: 'plan-review', heading: '# P', plan: '# P\nplan body' })
+    await pollUntil(() => a.getCalls().length > 0, 2000)
+    expect(state.pendingAsk).toBeDefined()
+
+    // Clicking an unrelated card button (help/list/status/…) is not a
+    // verdict: the plan-review window is still open, so the render must
+    // survive the click.
+    e.receiveMessage(p, msg({ sessionKey: key, content: 'act:/help', isCardAction: true, chatType: 'group' }))
+    await new Promise((r) => { setTimeout(r, 100) })
+    expect(a.cancelledCount()).toBe(0)
+    expect(state.pendingAsk).toBeDefined()
+
+    e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:deny', isPermissionAction: true }), 'perm:deny')
+    await pollUntil(() => a.cancelledCount() > 0, 2000)
     await expect(decision).resolves.toEqual({ outcome: 'rejected' })
   })
 })
