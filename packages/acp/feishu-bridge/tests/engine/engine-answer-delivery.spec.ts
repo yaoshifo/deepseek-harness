@@ -71,6 +71,42 @@ const forbiddenError = {
 }
 
 /**
+ * Preview-card platform whose terminal PATCH never lands: every
+ * updateMessage throws, the fallback re-delivery send fails once with the
+ * definite rejection, later sends (the warning) succeed and are recorded,
+ * and the ✅ completion card rides sendCardWithHandle.
+ */
+function failingCardPlatform(error: unknown): Platform & { sent: string[]; cards: unknown[] } {
+  const p = createStubPlatform('test')
+  const cards: unknown[] = []
+  let fallbackFailed = false
+  return Object.assign(p, {
+    cards,
+    async sendPreviewStart(_rc: unknown): Promise<unknown> {
+      return 'preview-handle'
+    },
+    async updateMessage(_rc: unknown): Promise<void> {
+      // A real PATCH crosses the network: the terminal outcome settles on a
+      // macrotask, after the engine's synchronous post-delivery steps.
+      await new Promise((resolve) => { setTimeout(resolve, 25) })
+      throw new Error('terminal PATCH rejected')
+    },
+    async sendCardWithHandle(_rc: unknown, card: unknown): Promise<unknown> {
+      cards.push(card)
+      return 'card-handle'
+    },
+    classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' => classifyDeliveryFailure(err),
+    send: async (_rc: unknown, content: string) => {
+      if (!fallbackFailed) {
+        fallbackFailed = true
+        throw error
+      }
+      p.sent.push(content)
+    },
+  }) as Platform & { sent: string[]; cards: unknown[] }
+}
+
+/**
  * Drive one inbound message to a settled turn and return the engine.
  * @param p - Platform under test.
  * @param agent - Agent whose session emits one result event per send.
@@ -128,6 +164,36 @@ describe('answer delivery outcome', () => {
       const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
       expect(saved, `dir=${workDir}`).toHaveLength(1)
       expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('the recoverable answer')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
+  })
+
+  it('a card turn whose terminal PATCH and fallback re-delivery both fail warns, saves, and marks the ✅ card', async () => {
+    // The streamed-card surfaces deliver through the async terminal PATCH;
+    // its outcome (and the fallback's) is final only after the sender
+    // barrier. The turn must still warn, persist the answer, and keep the ✅
+    // push from reading as plain success.
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-undelivered-card-'))
+    try {
+      const p = failingCardPlatform(forbiddenError)
+      const e = new Engine('test', resultAgent('the recoverable card answer'), [p], '', 'en')
+      e.setDisplayConfig({ toolProgress: true })
+      e.setBaseWorkDir(workDir)
+      e.receiveMessage(p, msg('please answer'))
+      await vi.waitFor(() => {
+        expect(p.cards.length, `sent=${JSON.stringify(p.sent)}`).toBeGreaterThan(0)
+      }, { timeout: 5000 })
+      expect(e.interactiveStates.get('testchat')?.answerDelivery,
+        'the post-barrier card outcome reaches the turn state').toBe('failed')
+      const texts = p.sent.join('\n')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('failed to deliver')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('undelivered-reply-')
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('the recoverable card answer')
+      expect(JSON.stringify(p.cards[0]), 'the ✅ card leads with the delivery warning')
+        .toContain('failed to deliver')
     } finally {
       await rm(workDir, { recursive: true, force: true })
     }

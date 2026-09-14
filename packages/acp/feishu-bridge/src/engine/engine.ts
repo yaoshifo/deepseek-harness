@@ -4227,14 +4227,21 @@ export class Engine {
       }
     }
 
+    // Guarantee the terminal PATCH has landed before the ✅ notification so
+    // the progress card is not still mid-state when the push arrives.
+    await barrier()
+
     // Answer-delivery warning (dsh-im absorption batch 1): a turn that
     // finished must not read as success when its answer did not provably
-    // land. Sits right after the delivery branches and rides the plain send
-    // path, so card-less platforms see it too; the ✅ card repeats it in its
-    // body. The streaming-card surfaces report through sp.answerDelivery
-    // (deliverAnswer / terminal PATCH); when the answer could not be
-    // delivered at all, it is also saved next to the session so the work is
-    // recoverable, and the warning carries the path.
+    // land. Runs after the barrier — the streaming-card surfaces settle
+    // sp.answerDelivery inside the async terminal (final PATCH, then the
+    // fallback re-delivery), so only the drained sender holds the final
+    // outcome — and before the ✅ card below, so the warning precedes the
+    // push and the card body repeats it. Card-less platforms ride the plain
+    // send path: deliverAnswerText wrote state.answerDelivery directly.
+    // When the answer could not be delivered at all, it is also saved next
+    // to the session so the work is recoverable, and the warning carries
+    // the path.
     if (state.answerDelivery === undefined && sp.answerDelivery !== undefined) {
       state.answerDelivery = sp.answerDelivery
     }
@@ -4249,9 +4256,6 @@ export class Engine {
       await this.send(p, replyCtx, warn)
     }
 
-    // Guarantee the terminal PATCH has landed before the ✅ notification so
-    // the progress card is not still mid-state when the push arrives.
-    await barrier()
     if (sendCompletionNotification && p !== undefined && state.pendingMessages.length === 0) {
       // Parked-ask wall time is the user deciding, not the agent working —
       // the hard cap above already exempts it (resumeCapPark banks it into
