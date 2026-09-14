@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join as joinPath } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Engine } from '../../src/engine/engine.ts'
-import { createStubAgent, createStubPlatform, newResultAgentSession } from '../stubs/engine-stubs.ts'
+import { createStubAgent, createStubPlatform, newResultAgentSession, newStubMessage } from '../stubs/engine-stubs.ts'
 import { classifyDeliveryFailure } from '../../src/feishu/delivery-outcome.ts'
 import type { Agent, Message, Platform } from '../../src/core/types.ts'
 
@@ -30,19 +30,14 @@ function resultAgent(text: string): Agent {
 
 function msg(content: string): Message {
   return {
+    ...newStubMessage(),
     sessionKey: 'testchat',
     platform: 'test',
     messageID: 'om_test',
-    userID: '',
-    userName: '',
-    chatName: '',
-    chatType: '',
     content,
     originalContent: content,
-    images: [],
-    files: [],
     machine: false,
-  } as Message
+  }
 }
 
 /**

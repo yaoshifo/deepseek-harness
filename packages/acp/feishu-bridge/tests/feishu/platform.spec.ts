@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { extractPostImageKeys, extractPostPlainText, hasHumanMention, isBotMentioned, stripMentions } from '../../src/feishu/extract.ts'
 import { AllowList } from '../../src/feishu/allowlist.ts'
-import { FeishuPlatform, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.ts'
+import { FeishuPlatform, type FeishuApiClient, type FeishuReceiveEvent, type FeishuReplyParams } from '../../src/feishu/platform.ts'
 import type { Message } from '../../src/core/types.ts'
 
 // Ported from cc-connect platform/feishu/feishu_test.go (text-path subset)
@@ -167,16 +167,19 @@ describe('AllowList', () => {
   })
 })
 
+/** The recorded shape of a FeishuApiClient.create call. */
+type RecordedCreate = Parameters<FeishuApiClient['create']>[0]
+
 /** Recording fake API client for outbound assertions. */
-function recordingClient(): FeishuApiClient & { replies: unknown[]; creates: unknown[] } {
+function recordingClient(): FeishuApiClient & { replies: FeishuReplyParams[]; creates: RecordedCreate[] } {
   return {
     replies: [],
     creates: [],
     async reply(params) {
-      ;(this as { replies: unknown[] }).replies.push(params)
+      ;(this as { replies: FeishuReplyParams[] }).replies.push(params)
     },
     async create(params) {
-      ;(this as { creates: unknown[] }).creates.push(params)
+      ;(this as { creates: RecordedCreate[] }).creates.push(params)
     },
   }
 }
