@@ -44,6 +44,7 @@ import {
 import { previewOverflow as previewOverflowFn } from './markdown.ts'
 import { noSpinner, resolveSpinnerAsset, spinnerKeyForState, type SpinnerCfg } from './spinner.ts'
 import { TokenBucketRateLimiter, feishuBusinessCode, feishuPatchRateLimitCode, isTenantAccessTokenInvalid, retryTiming, withTransientRetry } from './retry.ts'
+import { classifyDeliveryFailure } from './delivery-outcome.ts'
 import { errorMessage } from './retry.ts'
 import { ErrNotSupported, type ChatBasePhase, type ChatPhase, type ImageAttachment, type FileAttachment, type Message, type MessageHandler, type Platform, type ProgressContent } from '../core/types.ts'
 import { SpawnedChatStore, extractFeishuChatID, projectBaseForTag, type GroupSpawnOptions, type SpawnedChatInfo, type SpawnedChatMeta } from './spawn.ts'
@@ -1735,6 +1736,11 @@ export class FeishuPlatform implements Platform {
     const rc = this.requireReplyCtx(replyCtx)
     const { msgType, body } = buildReplyContent(content)
     await this.sendNewMessageToChat(rc, msgType, body)
+  }
+
+  /** DeliveryOutcomeClassifier capability: three-state send-failure judgment. */
+  classifyDeliveryFailure(err: unknown): 'failed' | 'unknown' {
+    return classifyDeliveryFailure(err)
   }
 
   private shouldUseThreadOrReplyAPI(rc: FeishuReplyContext): boolean {

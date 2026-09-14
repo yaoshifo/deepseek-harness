@@ -754,6 +754,29 @@ export interface MessageUpdater {
 }
 
 /**
+ * What happened to an outbound message the platform tried to deliver:
+ * 'sent' it landed, 'failed' the server provably rejected it, 'unknown' the
+ * request's fate is unknowable (transport/timeout symptoms only).
+ */
+export type DeliveryOutcome = 'sent' | 'failed' | 'unknown'
+
+/**
+ * Optional: platform can classify its own send failures into the
+ * channel-neutral {@link DeliveryOutcome} terms, so the engine can gate
+ * terminal state and user copy on whether the answer actually landed
+ * instead of always reporting success.
+ */
+export interface DeliveryOutcomeClassifier {
+  /**
+   * @param err - The thrown value from a failed send attempt, after the
+   *   platform's retry layer is exhausted.
+   * @returns 'failed' | 'unknown'; the 'sent' state never reaches a
+   *   failure classifier.
+   */
+  classifyDeliveryFailure(err: unknown): 'failed' | 'unknown'
+}
+
+/**
  * Optional: platform can start a streaming preview message and return a
  * handle for subsequent in-place edits.
  */
@@ -886,6 +909,16 @@ function withMethod<T>(obj: object, method: keyof T & string): T | undefined {
  */
 export function asMessageUpdater(p: Platform): MessageUpdater | undefined {
   return withMethod<MessageUpdater>(p, 'updateMessage')
+}
+
+/**
+ * Structural check for the {@link DeliveryOutcomeClassifier} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asDeliveryOutcomeClassifier(p: Platform): DeliveryOutcomeClassifier | undefined {
+  return withMethod<DeliveryOutcomeClassifier>(p, 'classifyDeliveryFailure')
 }
 
 /**
