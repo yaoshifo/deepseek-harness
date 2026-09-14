@@ -2,12 +2,14 @@
  * Three-state delivery-outcome classification for Feishu send failures
  * (dsh-im absorption batch 1, u1).
  *
- * Judgment: a failure is definite ("failed") only when the server answered —
- * an HTTP status or a business code arrived, so the message provably did not
- * land. Transport symptoms and the bridge's own synthesized per-attempt
- * deadline leave the request's fate unknowable ("unknown"); rate-limit
- * rejections are definite rejections even though they stay retryable —
- * outcome and retryability are separate axes.
+ * Judgment: a failure is definite ("failed") only when the server's answer
+ * proves the message did not land — a 4xx HTTP status or a business code
+ * rejected the send. Gateway 5xx statuses prove nothing either way (504 in
+ * particular answers after the upstream work), transport symptoms and the
+ * bridge's own synthesized per-attempt deadline likewise leave the request's
+ * fate unknowable ("unknown"); rate-limit rejections are definite
+ * rejections even though they stay retryable — outcome and retryability
+ * are separate axes.
  *
  * @module dsh-feishu-bridge/tests-feishu-delivery-outcome
  */
@@ -40,6 +42,17 @@ describe('classifyDeliveryFailure', () => {
   it('a rate-limit rejection answered by the server is failed', () => {
     expect(classifyDeliveryFailure(sdkError(200, 230020))).toBe('failed')
     expect(classifyDeliveryFailure(sdkError(400, 99991400))).toBe('failed')
+  })
+
+  it('5xx gateway statuses leave the delivery fate unknown', () => {
+    // A gateway 5xx does not prove the server skipped the send — 504 in
+    // particular answers after the upstream work may already have landed —
+    // so the wording must not press the user to resend (that is the failed
+    // branch). 499 stays on the definite side of the boundary.
+    expect(classifyDeliveryFailure(sdkError(499))).toBe('failed')
+    for (const status of [500, 502, 503, 504]) {
+      expect(classifyDeliveryFailure(sdkError(status)), `HTTP ${status}`).toBe('unknown')
+    }
   })
 
   it('timeout symptoms may have delivered, so unknown', () => {
