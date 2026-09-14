@@ -7,6 +7,7 @@ import type { AssistantMessage, AssistantMessageEvent, Usage } from '@earendil-w
 import { transformMessages } from '@earendil-works/pi-ai/api/transform-messages'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { toPiContext } from '../src/context.ts'
+import { resolveProfiles } from '../src/config.ts'
 import { toPiReplayState } from '../src/replay.ts'
 import { mapStopReason, mapUsage, toStreamChunks } from '../src/stream.ts'
 
@@ -712,6 +713,82 @@ describe('toStreamChunks', () => {
     expect(transformMessages(context.messages, requested)[0]).toMatchObject({
       content: requestedModel === returnedModel ? native.content : [{ type: 'text', text: 'reason' }],
     })
+  })
+
+  it('replays a gateway route under its requested identity when the route resolves it', async () => {
+    const native = assistant({
+      api: 'anthropic-messages', provider: 'mify-dsh', model: 'glm-5.3',
+      content: [{ type: 'thinking', thinking: 'reason', thinkingSignature: 'sig' }, { type: 'text', text: 'answer' }],
+    })
+    const chunks = await collect(toStreamChunks(feed(
+      { type: 'done', reason: 'toolUse', message: native },
+    ), undefined, undefined, 'zhipuai/glm-5.3'))
+    const finish = chunks.find(chunk => chunk.type === 'finish')
+    const replayState: unknown = JSON.parse(JSON.stringify(finish?.replayState))
+
+    const context = toPiContext({
+      provider: 'mify-dsh', model: 'zhipuai/glm-5.3',
+      messages: [createMessage({
+        role: 'assistant',
+        content: [{ type: 'reasoning', text: 'reason' }, { type: 'text', text: 'answer' }],
+        source: { kind: 'model', provider: 'mify-dsh', model: 'zhipuai/glm-5.3', replayState },
+      })],
+    }, undefined, undefined, 'requested')
+
+    expect(context.messages[0]).toMatchObject({ model: 'zhipuai/glm-5.3' })
+    const [model] = resolveProfiles({
+      'mify-dsh': {
+        api: 'anthropic-messages', baseURL: 'http://mify.test',
+        apiKeyEnv: 'TEST_MIFY_KEY', replayModelIdentity: 'requested',
+        models: [{ id: 'zhipuai/glm-5.3' }],
+      },
+    }).get('mify-dsh')?.piProvider?.getModels() ?? []
+    if (model === undefined) throw new Error('route resolved no models')
+    expect(transformMessages(context.messages, model)[0]).toMatchObject({
+      content: [{ type: 'thinking', thinking: 'reason', thinkingSignature: 'sig' }, { type: 'text', text: 'answer' }],
+    })
+  })
+
+  it('stamps a gateway route under its reported model by default', async () => {
+    const native = assistant({
+      api: 'anthropic-messages', provider: 'mify-dsh', model: 'glm-5.3',
+      content: [{ type: 'thinking', thinking: 'reason', thinkingSignature: 'sig' }],
+    })
+    const chunks = await collect(toStreamChunks(feed(
+      { type: 'done', reason: 'stop', message: native },
+    ), undefined, undefined, 'zhipuai/glm-5.3'))
+    const replayState: unknown = JSON.parse(JSON.stringify(chunks.find(chunk => chunk.type === 'finish')?.replayState))
+
+    const context = toPiContext({
+      provider: 'mify-dsh', model: 'zhipuai/glm-5.3',
+      messages: [createMessage({
+        role: 'assistant', content: [{ type: 'reasoning', text: 'reason' }],
+        source: { kind: 'model', provider: 'mify-dsh', model: 'zhipuai/glm-5.3', replayState },
+      })],
+    })
+
+    expect(context.messages[0]).toMatchObject({ model: 'glm-5.3' })
+  })
+
+  it('ignores the requested identity on Completions replay, which always uses the requested model', async () => {
+    const native = assistant({
+      api: 'openai-completions', provider: 'mify-dsh', model: 'deepseek-v4-flash',
+      content: [{ type: 'text', text: 'answer' }],
+    })
+    const chunks = await collect(toStreamChunks(feed(
+      { type: 'done', reason: 'stop', message: native },
+    ), undefined, undefined, 'deepseek/deepseek-v4-flash'))
+    const replayState: unknown = JSON.parse(JSON.stringify(chunks.find(chunk => chunk.type === 'finish')?.replayState))
+
+    const context = toPiContext({
+      provider: 'mify-dsh', model: 'deepseek/deepseek-v4-flash',
+      messages: [createMessage({
+        role: 'assistant', content: [{ type: 'text', text: 'answer' }],
+        source: { kind: 'model', provider: 'mify-dsh', model: 'deepseek/deepseek-v4-flash', replayState },
+      })],
+    }, undefined, undefined, 'requested')
+
+    expect(context.messages[0]).toMatchObject({ model: 'deepseek/deepseek-v4-flash' })
   })
 
   const partialWithToolCall = assistant({

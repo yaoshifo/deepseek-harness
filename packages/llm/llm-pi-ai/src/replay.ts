@@ -184,8 +184,16 @@ function foreignAssistant(message: Message): AssistantMessage {
   }
 }
 
+/** Which model identity a replayed assistant message carries; see {@link PiAiProviderProfile.replayModelIdentity}. */
+export type ReplayModelIdentity = 'requested' | 'resolved'
+
 /** Recombine durable Harness content with validated pi-ai replay metadata. */
-function replayedAssistant(message: Message, source: ModelMessageSource, rawState: unknown): AssistantMessage {
+function replayedAssistant(
+  message: Message,
+  source: ModelMessageSource,
+  rawState: unknown,
+  identity: ReplayModelIdentity,
+): AssistantMessage {
   const state = readReplayState(rawState)
   if (state.response.provider !== source.provider) return invalidReplay('provider does not match assistant source')
   if (state.response.model !== source.model) return invalidReplay('model does not match assistant source')
@@ -222,7 +230,10 @@ function replayedAssistant(message: Message, source: ModelMessageSource, rawStat
     api: state.response.api,
     provider: state.response.provider,
     // Anthropic reports aliases and fallbacks as model, unlike Completions' informational responseModel.
-    model: state.response.api === 'anthropic-messages'
+    // `requested` opts a gateway route out of that stamp: its reported name is
+    // just another spelling of the route id, and stamping it makes pi-ai treat
+    // every replay as cross-model, converting all thinking blocks to text.
+    model: state.response.api === 'anthropic-messages' && identity === 'resolved'
       ? state.response.responseModel ?? state.response.model : state.response.model,
     ...state.response.responseModel === undefined ? {} : { responseModel: state.response.responseModel },
     ...state.response.responseId === undefined ? {} : { responseId: state.response.responseId },
@@ -244,13 +255,19 @@ function replayedAssistant(message: Message, source: ModelMessageSource, rawStat
  * @param message - assistant content with required source and optional adapter-owned replay metadata.
  * @param onDegrade - called with the diagnostic reason when an unusable replay
  *   state falls back to provider-neutral conversion.
+ * @param identity - which model identity the replayed message carries; see
+ *   {@link PiAiProviderProfile.replayModelIdentity}. Defaults to `'resolved'`.
  * @returns a native pi-ai assistant message reconstructed from durable content.
  */
-export function toPiAssistant(message: Message, onDegrade?: (reason: string) => void): AssistantMessage {
+export function toPiAssistant(
+  message: Message,
+  onDegrade?: (reason: string) => void,
+  identity: ReplayModelIdentity = 'resolved',
+): AssistantMessage {
   const source = message.source
   if (source.kind !== 'model' || source.replayState === undefined) return foreignAssistant(message)
   try {
-    return replayedAssistant(message, source, source.replayState)
+    return replayedAssistant(message, source, source.replayState, identity)
   } catch (error: unknown) {
     /* v8 ignore next -- replayedAssistant throws only INVALID_REPLAY_STATE LlmErrors; the
        guard keeps a future non-replay failure loud instead of silently degrading it */
