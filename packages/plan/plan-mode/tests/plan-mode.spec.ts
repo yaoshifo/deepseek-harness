@@ -884,6 +884,47 @@ describe('exit_plan_mode', () => {
     expect(asked).toHaveLength(0)
   })
 
+  it('gates inlined details sections across levels, case, and fences (table)', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Keep planning'] })
+    // Keep-planning answers leave the mode untouched between rows, so every
+    // row runs against the same state; a gated row never reaches the review.
+    const cases: { plan: string; details?: string; gated: boolean }[] = [
+      // Recognized section titles: any heading level 2-6, English case-insensitive.
+      { plan: '# P\n\nplain\n\n## 实施细节\n\nfiles', gated: true },
+      { plan: '# P\n\nplain\n\n## 技术细节\n\nmechanism', gated: true },
+      { plan: '# P\n\nplain\n\n### 实施细节\n\nfiles', gated: true },
+      { plan: '# P\n\nplain\n\n#### 技术细节\n\nmechanism', gated: true },
+      { plan: '# P\n\nplain\n\n###### 实施细节\n\nfiles', gated: true },
+      { plan: '# P\n\nplain\n\n## implementation details\n\nfiles', gated: true },
+      { plan: '# P\n\nplain\n\n## IMPLEMENTATION NOTES\n\nfiles', gated: true },
+      // A whitespace-only details annex reads as absent, so the gate still fires.
+      { plan: '# P\n\nplain\n\n## 实施细节\n\nfiles', details: '   ', gated: true },
+      // Not a recognized section title: level 1, untaught synonyms, suffixed,
+      // decorated, indented, quoted, or generic names stay in the plan.
+      { plan: '# P\n\nplain\n\n# 实施细节\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n## 实现细节\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n## Technical Details\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n## Implementation Details: files\n\nx', gated: false },
+      { plan: '# P\n\nplain\n\n## 实施细节与风险\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n## **实施细节**\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n ## 实施细节\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n> ## 实施细节\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n## Details\n\nordinary prose', gated: false },
+      // Quoted content, not plan sections: inside a fence, without the ATX
+      // space, or with the title split across lines.
+      { plan: '# P\n\nplain\n\n```\n## Implementation Details\n```\n\nafter', gated: false },
+      { plan: '# P\n\nplain\n\n##Implementation Details\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n##\n实施细节\n\nfiles', gated: false },
+    ]
+    for (const { plan, details, gated } of cases) {
+      const result = await callExit(ctx, agent, plan, details)
+      expect(result.isError, plan).toBe(true)
+      expect(JSON.stringify(result.content), plan)
+        .toContain(gated ? 'belongs in the details argument' : 'keep planning')
+    }
+    expect(asked).toHaveLength(cases.filter(entry => !entry.gated).length)
+  })
+
   it('accepts the same inlined section once its content rides in details', async () => {
     const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
     const result = await callExit(ctx, agent, '# P\n\nplain layer\n\n## 实施细节\n\nfiles', 'files')
@@ -1130,6 +1171,16 @@ describe('exit_plan_mode', () => {
     const question = asked[0]?.questions[0]
     expect(question?.detail).toBe(plan)
     expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve' })
+  })
+
+  it('keeps a non-blank details annex untrimmed end to end', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
+    const plan = '# The plan\n\ndo things'
+    const annex = '  padded annex  '
+    await callExit(ctx, agent, plan, annex)
+    const question = asked[0]?.questions[0]
+    expect(question?.detail).toBe(`${plan}\n\n${annex}`)
+    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve', layers: { plain: plan, details: annex } })
   })
 
   it('reads a dismissed review as the user taking the turn back, not as a failure', async () => {

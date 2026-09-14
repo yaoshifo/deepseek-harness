@@ -99,14 +99,36 @@ function normalizeDetails(details: string | undefined): string | undefined {
   return details !== undefined && details.trim() !== '' ? details : undefined
 }
 
-/** Heading names that mark an inlined implementation-details section in the
- * plan; a match without a submitted `details` annex is a mislayered exit. */
-const EMBEDDED_DETAILS_HEADING = /^##\s*(实施细节|技术细节|Implementation Details?|Implementation Notes?)\s*$/m
+/** Heading titles that mark an inlined implementation-details section in the
+ * plan; a match without a submitted `details` annex is a mislayered exit.
+ * English titles are held lowercase and matched case-insensitively. */
+const EMBEDDED_DETAILS_TITLES = new Set([
+  '实施细节',
+  '技术细节',
+  'implementation detail',
+  'implementation details',
+  'implementation note',
+  'implementation notes',
+])
 
-/** The plan's inlined implementation-details heading text, or `undefined`
- * when the plan carries no such section. */
+/** The plan's inlined implementation-details heading title, or `undefined`
+ * when the plan carries no such section. Matches ATX headings of levels 2-6
+ * outside fenced code blocks: a heading inside a fence is quoted content,
+ * not a plan section. */
 function embeddedDetailsHeading(plan: string): string | undefined {
-  return EMBEDDED_DETAILS_HEADING.exec(plan)?.[1]
+  let inFence = false
+  for (const line of plan.split('\n')) {
+    // A fence-marker line opens a fence (an info string may follow); inside
+    // a fence only a bare marker closes it.
+    if (/^ {0,3}`{3}/.test(line)) {
+      if (!inFence || /^ {0,3}`{3,}[ \t]*$/.test(line)) inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const title = /^#{2,6}[ \t]+(.+?)[ \t]*$/.exec(line)?.[1]
+    if (title !== undefined && EMBEDDED_DETAILS_TITLES.has(title.toLowerCase())) return title
+  }
+  return undefined
 }
 
 /**
