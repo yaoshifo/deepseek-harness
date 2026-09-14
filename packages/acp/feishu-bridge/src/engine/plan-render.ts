@@ -542,9 +542,10 @@ export interface RenderCancelHandle {
 
 /**
  * Per-session plan-render throttle (Go shouldRenderPlan): allow only when no
- * render is running, the content changed since the last render (sha256), and
- * enough time elapsed since the last render. Revision 1 is always allowed.
- * Sets planRenderRunning on success — the caller must clear it.
+ * render is running, the content changed since the last DELIVERED render
+ * (sha256, recorded by {@link recordPlanRendered}), and enough time elapsed
+ * since that delivery. Revision 1 is always allowed. Sets planRenderRunning
+ * on success — the caller must clear it.
  *
  * @param state - Per-session interactive state; undefined never renders.
  * @param content - Plan markdown content, hashed for change detection.
@@ -558,9 +559,21 @@ export function shouldRenderPlan(state: InteractiveState | undefined, content: s
   if (revision > 1 && hash === state.lastRenderedPlanHash) return false
   if (revision > 1 && Date.now() - state.lastRenderedPlanAt < 10_000) return false
   state.planRenderRunning = true
-  state.lastRenderedPlanHash = hash
-  state.lastRenderedPlanAt = Date.now()
   return true
+}
+
+/**
+ * Record a plan render as delivered (Go shouldRenderPlan's bookkeeping,
+ * moved to the delivery point): the dedup hash and the throttle timestamp
+ * only count once the image actually reached the user, so a failed or
+ * cancelled render never blocks a same-content retry.
+ *
+ * @param state - Per-session state whose delivered hash is recorded.
+ * @param content - The plan markdown whose sha256 becomes the dedup key.
+ */
+export function recordPlanRendered(state: InteractiveState, content: string): void {
+  state.lastRenderedPlanHash = planContentHash(content)
+  state.lastRenderedPlanAt = Date.now()
 }
 
 /**
@@ -843,6 +856,10 @@ export function updatePlanCardStatus(
  * Record the reply render status and PATCH the tool-progress green card's
  * status line via RenderStatusUpdater (Go patchReplyRenderStatus). The caller
  * resolves platform+replyCtx once so repeated transitions don't re-rebuild.
+ * The status entry is recorded synchronously; the returned promise settles
+ * once the PATCH itself settled (never rejects — failures are logged), so
+ * callers that must order PATCHes (the progress drain) can await it while
+ * fire-and-forget callers keep ignoring it.
  *
  * @param e - Engine providing i18n for the status label.
  * @param p - Platform to PATCH through; undefined records status only.
@@ -851,17 +868,18 @@ export function updatePlanCardStatus(
  * @param exportKey - Export key identifying the reply render.
  * @param status - The render lifecycle status to record and display.
  * @param elapsedMs - Elapsed milliseconds appended to the label when > 0.
+ * @returns Promise settling after the PATCH (or at once when none is sent).
  */
 export function patchReplyRenderStatus(
   e: Engine, p: Platform | undefined, replyCtx: unknown, state: InteractiveState | undefined,
   exportKey: string, status: RenderStatus, elapsedMs: number,
-): void {
-  if (state === undefined || exportKey === '') return
+): Promise<void> {
+  if (state === undefined || exportKey === '') return Promise.resolve()
   setRenderStatus(state, exportKey, 'reply', status)
-  if (p === undefined || replyCtx === undefined || replyCtx === null) return
+  if (p === undefined || replyCtx === undefined || replyCtx === null) return Promise.resolve()
   const ru = asRenderStatusUpdater(p)
-  if (ru === undefined) return
-  void ru.updateRenderStatus(replyCtx, exportKey, renderStatusText(e, status, elapsedMs)).catch((error: unknown) => {
+  if (ru === undefined) return Promise.resolve()
+  return ru.updateRenderStatus(replyCtx, exportKey, renderStatusText(e, status, elapsedMs)).catch((error: unknown) => {
     console.warn(`reply-render: status patch failed (${exportKey}, ${status}): ${String(error)}`)
   })
 }
@@ -985,7 +1003,8 @@ export async function renderContentToHTML(
  * renderPlanToHTML). The fork writes to a short ASCII temp path — a
  * CJK/space-laden title path is fragile for the LLM to reproduce verbatim —
  * and the engine best-effort copies the assembled HTML to the pretty sibling
- * path next to the plan .md. Returns the temp write path (delivery source).
+ * path next to the plan .md. A failed fork removes its temp dir (reply-path
+ * symmetry). Returns the temp write path (delivery source).
  *
  * @param e - Engine used to fork the render session.
  * @param sessionKey - Session key for temp-path derivation and logging.
@@ -993,7 +1012,7 @@ export async function renderContentToHTML(
  * @param planFilePath - Plan .md path for the sibling artifact; may be empty.
  * @param revision - ExitPlanMode revision for the -vN suffix.
  * @param signal - Optional abort signal cancelling the fork.
- * @returns The temp write path, whether or not the render succeeded.
+ * @returns The temp write path; the file exists only when the render succeeded.
  */
 export async function renderPlanToHTML(
   e: Engine,
@@ -1011,10 +1030,14 @@ export async function renderPlanToHTML(
   const writePath = deriveHtmlPath('', sessionKey, '', revision)
   const prompt = `按你的 system-prompt 指令把以下内容渲染成 HTML。\n\n<html_path>${writePath}</html_path>\n\n<plan-markdown>\n${planMarkdown}\n</plan-markdown>`
   const ok = await renderContentToHTML(e, 'plan-render', 'plan', sessionKey, prompt, systemPrompt, writePath, signal)
-  if (ok) {
-    const artifactPath = deriveHtmlPath(planFilePath, sessionKey, nameHint, revision)
-    if (artifactPath !== '' && artifactPath !== writePath) copyFileBestEffort(writePath, artifactPath)
+  if (!ok) {
+    // Failed attempts reap their own mkdtemp dir (reply-path symmetry) so a
+    // retry that derives a fresh dir cannot leak this one.
+    await removeRenderedTemp(writePath)
+    return writePath
   }
+  const artifactPath = deriveHtmlPath(planFilePath, sessionKey, nameHint, revision)
+  if (artifactPath !== '' && artifactPath !== writePath) copyFileBestEffort(writePath, artifactPath)
   return writePath
 }
 
@@ -1235,7 +1258,9 @@ export async function deliverRenderedImage(
  * Best-effort with single-flight via state.preRenderRunning; a cancelled
  * render (new turn / card button → cancelRenders) or failed fork silently
  * skips delivery. Retries once when the first attempt stalls or times out
- * without producing a file (upstream LLM jitter).
+ * without producing a file (upstream LLM jitter). Every exit drains the
+ * periodic rendering-status PATCHes before issuing the terminal one, so a
+ * late tick cannot overwrite the terminal status on the card.
  *
  * @param e - Engine used to fork and deliver the render.
  * @param state - Per-session state guarding single-flight and cancel tracking.
@@ -1253,7 +1278,6 @@ export function renderAndDeliverReply(
   if (state === undefined || replyContent === '') return
   if (state.preRenderRunning) return
   state.preRenderRunning = true
-  state.preRenderingKey = exportKey
 
   const parentCtl = new AbortController()
   const handle = registerRenderCancel(state, () => { parentCtl.abort() }, 'reply')
@@ -1273,22 +1297,30 @@ export function renderAndDeliverReply(
         await renderSkillBody(e)
       } catch (error) {
         console.error(`reply-html: ${error instanceof Error ? error.message : String(error)} (${sessionKey})`)
-        patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
+        void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
         return
       }
-      patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', 0)
+      void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', 0)
       // Periodically refresh the elapsed "rendering" status so the user does
-      // not mistake a slow render for a hang; stopped before the final PATCH
-      // so a late tick cannot reorder statuses.
+      // not mistake a slow render for a hang. The tick's PATCH promise is
+      // chained into progressInflight so the drain below can wait for the
+      // network call itself, not just the synchronous dispatch.
       let progressStop = false
       const progressInflight: Array<Promise<void>> = []
       const ticker = setInterval(() => {
-        progressInflight.push(Promise.resolve().then(() => { patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', Date.now() - renderStart) }))
+        progressInflight.push(patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', Date.now() - renderStart))
       }, 30_000)
       const stopProgress = (): void => {
         if (progressStop) return
         progressStop = true
         clearInterval(ticker)
+      }
+      // Stop future ticks AND wait out every in-flight tick PATCH, so the
+      // terminal PATCH that follows can never be overwritten by a late tick
+      // (the card would read 渲染中 forever). Runs at every exit.
+      const drainProgress = async (): Promise<void> => {
+        stopProgress()
+        await Promise.allSettled(progressInflight)
       }
 
       const maxAttempts = 2
@@ -1305,43 +1337,49 @@ export function renderAndDeliverReply(
           clearTimeout(timer)
           parentCtl.signal.removeEventListener('abort', onParentAbort)
         }
+        // The aborted check leads the file check (same window as the plan
+        // path): a fork whose html landed just as the user opened a new turn
+        // was still cancelled — its file must not pass into an aborting
+        // delivery that flips the card to 渲染失败.
+        if (parentCtl.signal.aborted) break // user opened a new turn — stop retrying
         if (existsSync(hp)) {
           succeeded = true
           break
         }
-        if (parentCtl.signal.aborted) break // user opened a new turn — stop retrying
         if (attempt < maxAttempts) {
           console.info(`reply-html: first attempt produced no file, retrying (${sessionKey})`)
         }
       }
       if (!succeeded) {
-        stopProgress()
+        await drainProgress()
         const status: RenderStatus = parentCtl.signal.aborted ? 'cancelled' : 'failed'
-        patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, status, 0)
+        void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, status, 0)
+        // A completed-then-cancelled attempt leaves its file behind (the fork
+        // returned ok, so renderReplyToHTML's failure cleanup never ran) —
+        // reap it like the plan path's !succeeded exit.
+        await removeRenderedTemp(hp)
         return
       }
       recordRenderedReply(state, exportKey, hp)
       console.info(`reply-html-pre: rendered (${sessionKey}, exportKey ${exportKey}, html_path ${hp})`)
       if (platform === undefined || replyCtx === undefined) {
-        stopProgress()
+        await drainProgress()
         console.warn(`reply-html-pre: skip deliver, no replyCtx (${sessionKey})`)
-        patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
+        void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
       } else {
         try {
           await deliverRenderedImage(e, platform, replyCtx, hp, parentCtl.signal)
-          stopProgress()
-          patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'delivered', Date.now() - renderStart)
+          await drainProgress()
+          void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'delivered', Date.now() - renderStart)
         } catch (error) {
-          stopProgress()
+          await drainProgress()
           console.warn(`reply-html-pre: deliver failed (${sessionKey}): ${String(error)}`)
-          patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
+          void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
         }
       }
-      await Promise.allSettled(progressInflight)
       void removeRenderedTemp(hp)
     } finally {
       state.preRenderRunning = false
-      state.preRenderingKey = ''
       unregisterRenderCancel(state, handle)
     }
   })()
@@ -1407,11 +1445,14 @@ export function launchPlanRender(
           clearTimeout(timer)
           parentCtl.signal.removeEventListener('abort', onParentAbort)
         }
+        // The aborted check leads the file check: a fork that already wrote
+        // its html when the user approved was still cancelled — recording it
+        // as delivered-then-failed would flip the plan card to 渲染失败.
+        if (parentCtl.signal.aborted) break // user opened a new turn — stop retrying
         if (existsSync(htmlPath)) {
           succeeded = true
           break
         }
-        if (parentCtl.signal.aborted) break // user opened a new turn — stop retrying
         if (attempt < maxAttempts) {
           console.info(`plan-html: first attempt produced no file, retrying (${sessionKey})`)
         }
@@ -1432,6 +1473,7 @@ export function launchPlanRender(
       console.info(`plan-render: delivering image (${sessionKey}, html_path ${htmlPath})`)
       try {
         await deliverRenderedImage(e, platform, replyCtx, htmlPath, parentCtl.signal)
+        recordPlanRendered(state, sentPlanContent)
         updatePlanCardStatus(e, state, exportKey, 'delivered', Date.now() - renderStart)
       } catch (error) {
         console.warn(`plan-render: deliver failed (${sessionKey}): ${String(error)}`)

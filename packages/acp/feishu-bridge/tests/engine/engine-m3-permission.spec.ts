@@ -10,6 +10,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { registerSessionCommands } from '../../src/engine/commands.ts'
 import {
@@ -183,6 +186,37 @@ describe('routeAskResponse stale/hint/budget', () => {
     expect(handled).toBe(true)
     await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
     expect(Date.now() - state.lastEventAt).toBeLessThan(5000)
+  })
+
+  it('HintStagesAttachments: text+image during a parked permission keeps the hint and stages the image', async () => {
+    const e = newTestEngine()
+    const p = createStubPlatform('test')
+    e.setBaseWorkDir(mkdtempSync(join(tmpdir(), 'fb-perm-wd-')))
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set('test:chat:user1', state)
+    const decision = e.askUser('test:chat:user1', permRequest)
+    await new Promise((r) => { setTimeout(r, 10) })
+    const sentBefore = p.getSent().length
+
+    // "看这张图" parses to no verdict: the ask stays parked with the hint,
+    // but the screenshot riding the text must not silently vanish — stage it
+    // for the turn the eventual verdict resumes (mirror of the questions
+    // path's answer+stage coexistence).
+    const handled = e.routeAskResponse(
+      p,
+      msg({ content: '看这张图', images: [{ mimeType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) }] }),
+      '看这张图',
+    )
+
+    expect(handled).toBe(true)
+    expect(state.pendingAsk).toBeDefined()
+    expect(p.getSent().length, 'the permission hint was sent').toBeGreaterThan(sentBefore)
+    expect(state.pendingAttachments.length, 'the image landed in the staged attachments').toBe(1)
+
+    e.routeAskResponse(p, msg({ content: 'allow' }), 'allow')
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
   })
 })
 

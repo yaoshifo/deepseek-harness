@@ -9,9 +9,9 @@
  * @module dsh-feishu-bridge/tests-engine-plan-render-fork
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { existsSync, writeFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { ProjectStateStore } from '../../src/engine/project-state.ts'
@@ -352,6 +352,35 @@ describe('RenderAndDeliverReply', () => {
     expect(p.files).toHaveLength(0)
   })
 
+  it('AbortAfterCompletionRecordsCancelled: a new turn cancelling a just-finished fork settles as cancelled, not failed', async () => {
+    // F4a's reply-path window: the fork already wrote its html and returned
+    // ok when the user opens a new turn — the file passes the existence check
+    // and the delivery aborts, which must read as a cancel, never a failure,
+    // and must not leak the temp dir (the completed fork skipped the failure
+    // cleanup).
+    const a = createRenderAgent({ writeThenBlockOkCount: 5 })
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p, { timeoutMs: 30_000 })
+
+    const state = newRenderState(p)
+    renderAndDeliverReply(e, state, 'k1', longText, 'om_1')
+
+    // Wait until the fork wrote its html; a new turn then cancels the render,
+    // and the fork's completion still lands after the cancel.
+    await pollUntil(() => {
+      const hp = htmlPathFromPrompt(a.getCalls()[0]?.prompt ?? '')
+      return hp !== '' && existsSync(hp)
+    }, 2000)
+    const attemptDir = dirname(htmlPathFromPrompt(a.getCalls()[0]!.prompt))
+    cancelRendersFor(state)
+
+    await pollUntil(() => getRenderStatus(state, 'om_1')?.status !== undefined
+      && getRenderStatus(state, 'om_1')?.status !== 'rendering' && !state.preRenderRunning
+      && !existsSync(attemptDir), 3000)
+    expect(getRenderStatus(state, 'om_1')?.status).toBe('cancelled')
+    expect(p.files).toHaveLength(0)
+  })
+
   it('GivesUpAfterTwoFailures: two blocked attempts then no delivery', async () => {
     const a = createRenderAgent({ blockCount: 5 })
     const p = createStubMediaPlatform()
@@ -363,6 +392,62 @@ describe('RenderAndDeliverReply', () => {
     await pollUntil(() => !state.preRenderRunning && a.getCalls().length >= 2, 3000)
     expect(a.getCalls()).toHaveLength(2)
     expect(p.files).toHaveLength(0)
+  })
+
+  it('ProgressDrain: an in-flight tick PATCH lands before the terminal status PATCH', async () => {
+    // #13: stopProgress only stops future ticks; a tick whose PATCH is still
+    // on the wire must be drained BEFORE the terminal PATCH is issued, or the
+    // card can end stuck on 渲染中 (the late tick overwrites the terminal
+    // status). Held PATCH promises place the race at a deterministic point.
+    vi.useFakeTimers()
+    try {
+      interface HeldPatch { text: string; release: () => void }
+      const patches: HeldPatch[] = []
+      const heldPlatform = createStubMediaPlatform()
+      heldPlatform.updateRenderStatus = (_ctx: unknown, _key: string, text: string) => {
+        const patch: HeldPatch = { text, release: (): void => {} }
+        patches.push(patch)
+        return new Promise<void>((resolve) => { patch.release = resolve })
+      }
+      const a = createRenderAgent({ blockCount: 5 })
+      const e = new Engine('test', a, [heldPlatform], '', 'en')
+      e.planRenderEnabled = true
+      e.planRenderProvider = 'p'
+      e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
+      e.planRenderTimeoutMs = 60_000
+
+      const state = newRenderState(heldPlatform)
+      renderAndDeliverReply(e, state, 'k1', longText, 'om_1')
+
+      // Initial 'rendering' PATCH, then the 30s tick fires while attempt 1
+      // (60s timeout) is still blocked.
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(patches.length).toBeGreaterThanOrEqual(2)
+      expect(patches.some(p => p.text.includes('30s')), 'the tick PATCH was issued').toBe(true)
+
+      // Drive both attempt timeouts (60s, 120s) so the failure exit runs.
+      for (let i = 0; i < 30; i++) {
+        await vi.advanceTimersByTimeAsync(5_000)
+        // Red marker: the terminal PATCH must not be issued while a tick
+        // PATCH is still in flight.
+        if (patches.some(p => p.text.includes('Render failed'))) break
+      }
+
+      expect(patches.some(p => p.text.includes('Render failed')), 'no terminal PATCH before the tick PATCHes settle').toBe(false)
+      expect(getRenderStatus(state, 'om_1')?.status).toBe('rendering')
+
+      // Settle the held tick PATCHes; now the terminal PATCH may land.
+      for (const patch of patches) patch.release()
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(1_000)
+        if (patches.some(p => p.text.includes('Render failed'))) break
+      }
+      const terminalIdx = patches.findIndex(p => p.text.includes('Render failed'))
+      expect(terminalIdx).toBeGreaterThan(-1)
+      expect(patches.at(-1)?.text, 'the terminal PATCH is the last one issued').toContain('Render failed')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -429,6 +514,84 @@ describe('LaunchPlanRender', () => {
     cancelRendersFor(state)
     await new Promise((resolve) => { setTimeout(resolve, 300) })
     expect(a.getCalls()).toHaveLength(1)
+  })
+
+  it('AbortAfterWriteRecordsCancelled: approval aborting a written-out fork settles as cancelled, not failed', async () => {
+    // F4a window: the fork already wrote its html when the user approves —
+    // cancelPlanRenders aborts the fork, the file exists, but the status must
+    // read cancelled (the user killed it), never failed.
+    const a = createRenderAgent({ writeThenBlockCount: 5 })
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p, { timeoutMs: 30_000 })
+
+    const state = newRenderState(p)
+    expect(shouldRenderPlan(state, '# 计划', 1)).toBe(true)
+    launchPlanRender(e, state, 'feishu:user1', '# 计划', '', 1, 'plan:1')
+
+    // Wait until the fork wrote its html, then approve (cancelPlanRenders).
+    await pollUntil(() => {
+      const hp = htmlPathFromPrompt(a.getCalls()[0]?.prompt ?? '')
+      return hp !== '' && existsSync(hp)
+    }, 2000)
+    cancelRendersFor(state)
+
+    await pollUntil(() => getRenderStatus(state, 'plan:1')?.status !== undefined
+      && getRenderStatus(state, 'plan:1')?.status !== 'rendering' && !state.planRenderRunning, 3000)
+    expect(getRenderStatus(state, 'plan:1')?.status).toBe('cancelled')
+    expect(p.files).toHaveLength(0)
+  })
+
+  it('RetryCleansFailedAttemptDir: attempt-1\'s cc-plan-render-* dir is gone once attempt-2 takes over', async () => {
+    // #12: each attempt derives a fresh mkdtemp dir; a failed attempt must
+    // remove its own dir (reply-path symmetry) instead of leaking it when the
+    // retry overwrites the single htmlPath variable.
+    const a = createRenderAgent({ stallCount: 1 })
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p, { timeoutMs: 30_000 })
+
+    const state = newRenderState(p)
+    expect(shouldRenderPlan(state, '# 计划', 1)).toBe(true)
+    launchPlanRender(e, state, 'feishu:user1', '# 计划', '', 1, 'plan:1')
+
+    await pollUntil(() => a.getCalls().length >= 2, 3000)
+    const attempt1Dir = dirname(htmlPathFromPrompt(a.getCalls()[0]!.prompt))
+    await pollUntil(() => getRenderStatus(state, 'plan:1')?.status === 'delivered' && !state.planRenderRunning, 3000)
+    expect(existsSync(attempt1Dir)).toBe(false)
+  })
+})
+
+describe('ShouldRenderPlan_RetryAfterFailure', () => {
+  // F4b: the dedup hash is recorded only after the image is delivered — a
+  // failed or cancelled render must not block a same-content retry (since
+  // 3d6df58dcd the session revision is always ≥2 on re-presentation, so the
+  // old "revision 1 always renders" fallback no longer masks this).
+  it('a failed render allows the same content to render again; delivery dedupes it', async () => {
+    const fail = createRenderAgent({ err: new Error('boom') })
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(fail, p, { timeoutMs: 30_000 })
+    const state = newRenderState(p)
+    state.planRevisionCount = 2
+
+    const content = '# 计划\n\n步骤一：封装'
+    expect(shouldRenderPlan(state, content, 2)).toBe(true)
+    launchPlanRender(e, state, 'feishu:user1', content, '', 2, 'plan:2')
+    await pollUntil(() => getRenderStatus(state, 'plan:2')?.status === 'failed' && !state.planRenderRunning, 3000)
+
+    // Same content re-presented (revision stays ≥2 within the session):
+    // the failed render must not have poisoned the dedup hash.
+    expect(shouldRenderPlan(state, content, 2)).toBe(true)
+    expect(state.lastRenderedPlanHash).toBe('')
+
+    // A delivered render is the only thing that dedupes.
+    const ok = createRenderAgent()
+    const eOk = newRenderEngine(ok, p)
+    const stateOk = newRenderState(p)
+    stateOk.planRevisionCount = 2
+    expect(shouldRenderPlan(stateOk, content, 2)).toBe(true)
+    launchPlanRender(eOk, stateOk, 'feishu:user1', content, '', 2, 'plan:2')
+    await pollUntil(() => getRenderStatus(stateOk, 'plan:2')?.status === 'delivered' && !stateOk.planRenderRunning, 3000)
+    expect(stateOk.lastRenderedPlanHash).not.toBe('')
+    expect(shouldRenderPlan(stateOk, content, 2)).toBe(false)
   })
 })
 
