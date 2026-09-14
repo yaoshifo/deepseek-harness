@@ -1959,12 +1959,19 @@ export class Engine {
    * debug like {@link send}; the classification rides the platform's
    * DeliveryOutcomeClassifier capability when present, defaulting to
    * 'unknown' (uncertain by default, mirroring dsh-im).
-   * @param state - Turn state whose answerDelivery records the outcome.
+   *
+   * The recorded state outcome merges per call: 'unknown' is sticky (an
+   * uncertain delivery is never re-sent, so no later success can resolve
+   * it), while 'failed' clears on a later 'sent' — segment re-deliveries
+   * slice from the un-advanced {@link InteractiveState.segmentStart}, so a
+   * successful later send covers the failed span.
+   * @param state - Turn state whose answerDelivery records the merged outcome.
    * @param p - Platform to send on.
    * @param replyCtx - Platform reply context addressing the chat.
    * @param text - Full answer text; split to the platform message limit.
+   * @returns This call's own outcome, before merging with prior ones.
    */
-  async deliverAnswerText(state: InteractiveState, p: Platform, replyCtx: unknown, text: string): Promise<void> {
+  async deliverAnswerText(state: InteractiveState, p: Platform, replyCtx: unknown, text: string): Promise<DeliveryOutcome> {
     let outcome: DeliveryOutcome = 'sent'
     for (const chunk of splitMessage(text, MaxPlatformMessageLen)) {
       try {
@@ -1975,7 +1982,38 @@ export class Engine {
         if (outcome !== 'unknown') outcome = classified
       }
     }
-    state.answerDelivery = outcome
+    state.answerDelivery = state.answerDelivery === 'unknown' || outcome === 'unknown'
+      ? 'unknown'
+      : outcome
+    return outcome
+  }
+
+  /**
+   * Flush the accumulated text segment (from {@link
+   * InteractiveState.segmentStart}) as plain messages and advance the segment
+   * boundary by delivery outcome: a definite rejection never landed, so the
+   * boundary holds and the next flush or the turn-end settlement re-delivers
+   * from it (the recorded 'failed' clears when that re-delivery succeeds);
+   * an uncertain send may have landed, so the boundary advances — a retry
+   * could duplicate — and the sticky 'unknown' verdict warns at turn end.
+   * @param state - Turn state carrying the segment bookkeeping and outcome.
+   * @param p - Platform to send on; without one nothing is deliverable and
+   *   the boundary advances as before.
+   * @param replyCtx - Platform reply context addressing the chat.
+   */
+  private async flushTextSegment(
+    state: InteractiveState,
+    p: Platform | undefined,
+    replyCtx: unknown,
+  ): Promise<void> {
+    if (state.textParts.length <= state.segmentStart) return
+    const segment = state.textParts.slice(state.segmentStart).join('')
+    if (p === undefined || segment === '') {
+      state.segmentStart = state.textParts.length
+      return
+    }
+    const outcome = await this.deliverAnswerText(state, p, replyCtx, segment)
+    if (outcome !== 'failed') state.segmentStart = state.textParts.length
   }
 
   /**
@@ -3594,28 +3632,17 @@ export class Engine {
                 await sp.completeAndDetach()
                 state.segmentStart = state.textParts.length
               } else {
-                const segment = state.textParts.slice(state.segmentStart).join('')
-                if (segment !== '' && p !== undefined) {
-                  for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-                    await this.send(p, replyCtx, chunk)
-                  }
-                }
-                state.segmentStart = state.textParts.length
+                await this.flushTextSegment(state, p, replyCtx)
               }
-              if (!sp.inProgressMode()) state.segmentStart = state.textParts.length
               state.silentHold = false
             }
             if (event.content !== '' && p !== undefined) {
               if (state.textParts.length > state.segmentStart) {
                 if (!sp.canPreview()) {
-                  const segment = state.textParts.slice(state.segmentStart).join('')
-                  if (segment !== '') {
-                    for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-                      await this.send(p, replyCtx, chunk)
-                    }
-                  }
+                  await this.flushTextSegment(state, p, replyCtx)
+                } else {
+                  state.segmentStart = state.textParts.length
                 }
-                state.segmentStart = state.textParts.length
                 state.silentHold = false
               }
               await sp.completeAndDetach()
@@ -3887,7 +3914,7 @@ export class Engine {
                 } else if (sp.canPreview() && sp.inProgressMode()) {
                   await sp.appendAnalysisText(text)
                 } else if (sp.inProgressMode() && p !== undefined) {
-                  await this.send(p, replyCtx, text)
+                  await this.deliverAnswerText(state, p, replyCtx, text)
                 } else if (sp.canPreview()) {
                   await sp.appendText(text)
                 }
@@ -4236,9 +4263,14 @@ export class Engine {
           await this.deliverAnswerText(state, p, replyCtx, metaOnly)
         }
         sendCompletionNotification = true
-      } else if (state.toolCount > 0 && state.segmentStart > 0 && !sp.inProgressMode()) {
+      } else if (state.toolCount > 0
+        && (state.segmentStart > 0 || state.answerDelivery === 'failed')
+        && !sp.inProgressMode()) {
         // Prior segments were already surfaced between tools; deliver only
-        // the unsent remainder.
+        // the unsent remainder. A mid-flush definite failure holds the
+        // boundary at 0, so the recorded 'failed' also routes here — the
+        // remainder slice then re-delivers the failed segment instead of
+        // letting the result-only path below drop it.
         await sp.discard()
         const unsent = state.textParts.slice(state.segmentStart).join('')
         const [uStripped, uOk] = stripTrailingSilent(unsent)
@@ -4283,9 +4315,13 @@ export class Engine {
     // send path: deliverAnswerText wrote state.answerDelivery directly.
     // When the answer could not be delivered at all, it is also saved next
     // to the session so the work is recoverable, and the warning carries
-    // the path.
-    if (state.answerDelivery === undefined && sp.answerDelivery !== undefined) {
-      state.answerDelivery = sp.answerDelivery
+    // the path. The two surfaces merge worst-of: a card success does not
+    // clear a definite plain-text failure (the card may not carry that
+    // text), and a plain success does not resolve the card's uncertainty.
+    if (sp.answerDelivery !== undefined) {
+      const worse = (a: DeliveryOutcome, b: DeliveryOutcome): DeliveryOutcome =>
+        a === 'unknown' || b === 'unknown' ? 'unknown' : a === 'failed' || b === 'failed' ? 'failed' : 'sent'
+      state.answerDelivery = worse(state.answerDelivery ?? 'sent', sp.answerDelivery)
     }
     if (p !== undefined) await this.warnUndeliveredAnswer(state, p, replyCtx, sessionKey)
 

@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join as joinPath } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Engine } from '../../src/engine/engine.ts'
-import { createStubAgent, createStubPlatform, newResultAgentSession, newStubMessage } from '../stubs/engine-stubs.ts'
+import { createStubAgent, createStubPlatform, newControllableSession, newResultAgentSession, newStubMessage } from '../stubs/engine-stubs.ts'
 import { classifyDeliveryFailure } from '../../src/feishu/delivery-outcome.ts'
 import type { Agent, Message, Platform } from '../../src/core/types.ts'
 
@@ -58,6 +58,52 @@ function flakyPlatform(error: unknown): Platform & { sent: string[] } {
   }
   return Object.assign(p, {
     classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' => classifyDeliveryFailure(err),
+  }) as Platform & { sent: string[] }
+}
+
+/**
+ * Agent whose session streams one narration block, a thinking block (the
+ * inter-segment plain-text flush point), a tool call, a final block, then an
+ * empty-carrier result (the accumulated textParts are the answer).
+ */
+function segmentedAgent(): Agent {
+  const base = createStubAgent()
+  return {
+    ...base,
+    startSession: async () => {
+      const s = newControllableSession('segment-session')
+      let sentOnce = false
+      s.send = async () => {
+        if (sentOnce) return
+        sentOnce = true
+        s.channel.push({ type: 'text', content: 'precious first segment', done: false })
+        s.channel.push({ type: 'thinking', content: 'pondering deeply', done: false })
+        s.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+        s.channel.push({ type: 'text', content: 'final segment answer', done: false })
+        s.channel.push({ type: 'result', content: '', done: true })
+      }
+      return s
+    },
+  } as Agent
+}
+
+/**
+ * Platform whose first `failCount` sends throw the given error and are
+ * classified through the real Feishu judgment; later sends succeed and are
+ * recorded.
+ */
+function segmentFlakyPlatform(error: unknown, failCount: number): Platform & { sent: string[] } {
+  const p = createStubPlatform('test')
+  let failures = 0
+  return Object.assign(p, {
+    classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' => classifyDeliveryFailure(err),
+    send: async (_rc: unknown, content: string) => {
+      if (failures < failCount) {
+        failures++
+        throw error
+      }
+      p.sent.push(content)
+    },
   }) as Platform & { sent: string[] }
 }
 
@@ -194,6 +240,46 @@ describe('answer delivery outcome', () => {
       expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('the recoverable card answer')
       expect(JSON.stringify(p.cards[0]), 'the ✅ card leads with the delivery warning')
         .toContain('failed to deliver')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
+  })
+
+  it('a mid-turn segment flush failure is re-delivered with the turn-end remainder', async () => {
+    // Both thinking-block flush attempts for the first segment are definitely
+    // rejected: the segment must stay unsent (segmentStart holds) so the
+    // turn-end remainder branch re-delivers it, and the recovered delivery
+    // clears the earlier failure — no warning, no silent loss.
+    const p = segmentFlakyPlatform(forbiddenError, 2)
+    const e = await runTurn(p, segmentedAgent())
+    const texts = p.sent.join('\n')
+    expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('precious first segment')
+    expect(e.interactiveStates.get('testchat')?.answerDelivery,
+      'the turn-end re-delivery resolves the segment failure').toBe('sent')
+    expect(texts, `sent=${JSON.stringify(p.sent)}`).not.toContain('failed to deliver')
+    expect(texts, `sent=${JSON.stringify(p.sent)}`).not.toContain('not be confirmed')
+  })
+
+  it('an uncertain mid-turn segment flush keeps the unknown verdict and never re-sends', async () => {
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-segment-unknown-'))
+    try {
+      const p = segmentFlakyPlatform(deadlineError, 1)
+      const e = new Engine('test', segmentedAgent(), [p], '', 'en')
+      e.setBaseWorkDir(workDir)
+      e.receiveMessage(p, msg('please answer'))
+      await vi.waitFor(() => {
+        expect(e.interactiveStates.get('testchat')?.answerDelivery).toBe('unknown')
+      }, { timeout: 5000 })
+      // The uncertain segment may have landed — it must never be re-sent
+      // (only the thinking notice and the remainder that provably succeeded).
+      expect(p.sent.join('\n'), `sent=${JSON.stringify(p.sent)}`).not.toContain('precious first segment')
+      const texts = p.sent.join('\n')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('not be confirmed')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('Do not resend')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('undelivered-reply-')
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('precious first segment')
     } finally {
       await rm(workDir, { recursive: true, force: true })
     }
