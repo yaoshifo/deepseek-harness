@@ -14,10 +14,11 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join as joinPath } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { Engine } from '../../src/engine/engine.ts'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { createStubAgent, createStubPlatform, newControllableSession, newResultAgentSession, newStubMessage } from '../stubs/engine-stubs.ts'
 import { classifyDeliveryFailure } from '../../src/feishu/delivery-outcome.ts'
-import type { Agent, Message, Platform } from '../../src/core/types.ts'
+import { newStreamPreview } from '../../src/streaming.ts'
+import type { Agent, AskRequest, Message, Platform } from '../../src/core/types.ts'
 
 /** Controllable agent whose session answers with one result event. */
 function resultAgent(text: string): Agent {
@@ -165,6 +166,53 @@ function frozenCardPlatform(error: unknown): Platform & { sent: string[]; cards:
     },
   }) as Platform & { sent: string[]; cards: unknown[]; deletes: unknown[] }
 }
+
+/**
+ * Ask-path platform: the preview card starts and updates cleanly (so the
+ * parked card lifecycle runs), the first `failCount` plain sends throw the
+ * given error through the real Feishu classification, later sends succeed
+ * and are recorded.
+ */
+function askFlakyPlatform(error: unknown, failCount: number): Platform & { sent: string[] } {
+  const p = createStubPlatform('test')
+  let failures = 0
+  return Object.assign(p, {
+    async sendPreviewStart(): Promise<unknown> {
+      return 'preview-handle'
+    },
+    async updateMessage(): Promise<void> {},
+    classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' => classifyDeliveryFailure(err),
+    send: async (_rc: unknown, content: string) => {
+      if (failures < failCount) {
+        failures++
+        throw error
+      }
+      p.sent.push(content)
+    },
+  }) as Platform & { sent: string[] }
+}
+
+/**
+ * Park a permission ask over a started-then-recalled preview carrying one
+ * unsent text segment, mirroring a degraded in-progress card at the moment
+ * the agent asks for permission.
+ */
+async function parkAskOverSegment(
+  e: Engine, p: Platform, key: string, segment: string,
+): Promise<InteractiveState> {
+  const state = new InteractiveState()
+  state.platform = p
+  state.replyCtx = 'ctx'
+  state.textParts = [segment]
+  state.preview = newStreamPreview(e.streamPreview, p, 'ctx', undefined, undefined, key)
+  await state.preview.forceStart('placeholder')
+  await state.preview.markRecalled()
+  e.interactiveStates.set(key, state)
+  return state
+}
+
+/** Permission ask the parked-ask tests route a decision through. */
+const permRequest: AskRequest = { kind: 'permission', toolName: 'Bash', preview: 'ls' }
 
 /**
  * Timeout symptom: the bridge's own synthesized per-attempt deadline. */
@@ -370,5 +418,24 @@ describe('answer delivery outcome', () => {
     } finally {
       await rm(workDir, { recursive: true, force: true })
     }
+  })
+
+  it('a definitely rejected pre-ask segment flush re-delivers after the decision', async () => {
+    // deliverCards' pre-card flush swallowed the definite rejection and
+    // advanced the segment boundary unconditionally: the span sat on no
+    // surface (the degraded card cannot carry it, the plain send failed),
+    // and the post-decision restart had nothing left to flush — the segment
+    // vanished without a trace.
+    const p = askFlakyPlatform(forbiddenError, 1)
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    const state = await parkAskOverSegment(e, p, 'testchat', 'precious pre-ask segment')
+    const decision = e.askUser('testchat', permRequest)
+    await new Promise((r) => { setTimeout(r, 30) })
+    e.routeAskResponse(p, msg('allow'), 'allow')
+    await decision
+    await vi.waitFor(() => {
+      expect(state.textParts).toEqual([])
+    }, { timeout: 5000 })
+    expect(p.sent.join('\n'), `sent=${JSON.stringify(p.sent)}`).toContain('precious pre-ask segment')
   })
 })

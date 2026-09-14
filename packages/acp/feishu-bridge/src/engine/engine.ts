@@ -5674,9 +5674,10 @@ export class Engine {
     const deliverCards = async (): Promise<void> => {
       // Pre-card flush + detach (Go engine_events.go ~4192-4225): with the
       // preview degraded the accumulated text segment goes out as plain
-      // messages now — the live card cannot carry it — and segmentStart
-      // advances either way. The live card is completed and detached BEFORE
-      // the ask card reaches the user.
+      // messages now — the live card cannot carry it — advancing the
+      // boundary only when the delivery is not a definite rejection. The
+      // live card is completed and detached BEFORE the ask card reaches the
+      // user.
       if (planContent !== '') {
         // The plan card owns the exact plan text: strip it from the final
         // reply source so it is not delivered twice.
@@ -5693,14 +5694,14 @@ export class Engine {
         if (planContent !== '') await sp.removeText(planContent)
         if (state.textParts.length > state.segmentStart) {
           if (!sp.canPreview()) {
-            const segment = state.textParts.slice(state.segmentStart).join('')
-            if (segment !== '') {
-              for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-                await this.send(p, replyCtx, chunk)
-              }
-            }
+            // The pre-card segment goes out with the flush verdict semantics:
+            // a definite rejection holds the boundary so the post-decision
+            // restartAskSurfaces flush re-delivers this span (its success
+            // then clears the recorded failure).
+            await this.flushTextSegment(state, p, replyCtx)
+          } else {
+            state.segmentStart = state.textParts.length
           }
-          state.segmentStart = state.textParts.length
           state.silentHold = false
         }
         // Pre-detach speculative reply render (Go captureReplyForExport +
@@ -5881,7 +5882,11 @@ export class Engine {
   ): Promise<void> {
     const old = state.preview
     state.sender ??= newAsyncSender(sessionKey)
-    if (old !== undefined && old.hasStarted()) {
+    if (old !== undefined) {
+      // deliverCards parks the pre-ask card before the decision waits, so
+      // hasStarted() no longer holds there — the un-flushed segment re-send
+      // must cover the parked card too (a definite rejection back in
+      // deliverCards left the boundary un-advanced).
       if (state.textParts.length > state.segmentStart) {
         const segment = state.textParts.slice(state.segmentStart).join('')
         if (segment !== '') {
@@ -5891,7 +5896,7 @@ export class Engine {
         }
       }
       state.segmentStart = state.textParts.length
-      await old.completeAndDetach()
+      if (old.hasStarted()) await old.completeAndDetach()
     }
     const sp = newStreamPreview(this.streamPreview, p, replyCtx, undefined, state.sender, sessionKey)
     state.preview = sp
