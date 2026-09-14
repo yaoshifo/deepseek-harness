@@ -1657,6 +1657,23 @@ describe('role-pick priming lightning round', () => {
     expect(s).toContain('不超过上限 5')
     expect(buildChatroomPickPriming('定投频率', ['taleb', 'munger'], '/roles', 3)).toContain('不超过上限 3')
   })
+
+  it('carries no plan-mode instructions (pick turns run with modeOverride default)', async () => {
+    // Both pick sends carry modeOverride: 'default' (chatroom-pick.ts) and
+    // the moderator persona forces the default mode, so the pick turns can
+    // never run in plan mode — and the tool the old text named throws when
+    // called outside plan mode, so instructing the dance only induced
+    // invalid calls.
+    const { buildChatroomPickPriming, buildChatroomTopicPickPriming } = await import('../../src/engine/chatroom-priming.ts')
+    for (const priming of [
+      buildChatroomPickPriming('定投频率', ['taleb'], '/roles', 5),
+      buildChatroomTopicPickPriming(['taleb'], '/roles', '/chatroom-home'),
+    ]) {
+      for (const banned of ['plan mode', 'exit_plan_mode', 'ExitPlanMode']) {
+        expect(priming).not.toContain(banned)
+      }
+    }
+  })
 })
 
 describe('/chatroom re-entry from a role group', () => {
