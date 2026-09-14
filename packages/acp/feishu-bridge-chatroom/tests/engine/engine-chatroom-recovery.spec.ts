@@ -359,7 +359,7 @@ describe('serial-ask persistence and restart recovery', () => {
     armHubAndRole(e, hub)
     const hubSess = chatroomState(e.sessions.getOrCreateActive(hub))
     hubSess.chatroomGatherSeq = 1
-    hubSess.pendingSerialAsks.set('taleb', { id: 1, question: '请给出终版结论', armedAt: Date.now(), lastWakeAt: 0, wakeCount: 0 })
+    hubSess.pendingSerialAsks.set('taleb', { id: 1, question: '请给出终版结论', armedAt: Date.now(), lastWakeAt: 0, wakeCount: 0, breakerNoticeCount: 0 })
     e.sessions.save()
     e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
 
@@ -369,7 +369,7 @@ describe('serial-ask persistence and restart recovery', () => {
     expect(typeof armedAt).toBe('number')
     expect(snap).toEqual([{
       roleName: 'taleb', id: 1, question: '请给出终版结论',
-      armedAt, lastWakeAt: 0, wakeCount: 0,
+      armedAt, lastWakeAt: 0, wakeCount: 0, breakerNoticeCount: 0,
     }])
 
     hubSess.pendingSerialAsks.delete('taleb')
@@ -388,7 +388,7 @@ describe('serial-ask persistence and restart recovery', () => {
       armHubAndRole(e, hub)
       const hubSess = chatroomState(e.sessions.getOrCreateActive(hub))
       hubSess.chatroomGatherSeq = 1
-      hubSess.pendingSerialAsks.set('taleb', { id: 1, question: '请给出终版结论', armedAt: Date.now(), lastWakeAt: 0, wakeCount: 0 })
+      hubSess.pendingSerialAsks.set('taleb', { id: 1, question: '请给出终版结论', armedAt: Date.now(), lastWakeAt: 0, wakeCount: 0, breakerNoticeCount: 0 })
       e.sessions.save()
       e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     }

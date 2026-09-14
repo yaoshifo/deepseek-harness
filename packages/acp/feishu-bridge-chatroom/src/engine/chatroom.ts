@@ -179,6 +179,8 @@ export interface SerialAskEntry {
   lastWakeAt: number
   /** Supervisor wakes already spent on this entry's stall episode. */
   wakeCount: number
+  /** Visible breaker notices already posted for this entry; the entry's removal re-arms. */
+  breakerNoticeCount: number
 }
 
 /** Durable form of a serial ask: the map key (role name) rides the entry. */
@@ -843,6 +845,7 @@ async function askRoleInternal(
         armedAt: Date.now(),
         lastWakeAt: 0,
         wakeCount: 0,
+        breakerNoticeCount: 0,
       })
     }
   }
@@ -983,6 +986,7 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
         if (!done) return
         updateResearchProgressCard(e, p, g, 'done')
         chatroomState(hub).pendingGather = undefined
+        recordCompletedGather(hub, g.seq, wakeContent)
         e.sessions.save()
         wakeChatroomModerator(e, hubKey, wakeContent)
         console.info(`chatroom: gather closed after broadcast failure (hub=${hubKey} role=${r.name})`)
@@ -1028,12 +1032,42 @@ function fireGatherTimeout(e: Engine, hubKey: string): void {
   const { done, wake, missing } = g.timeoutFire()
   if (!done) return // already woken by the last reply
   chatroomState(hub).pendingGather = undefined
+  const finalWake = missing.length > 0 ? buildGatherTimeoutWake(e, hubKey, missing, wake) : wake
+  recordCompletedGather(hub, g.seq, finalWake)
   e.sessions.save()
   const p = e.spawnCapablePlatform()
   if (p !== undefined) updateResearchProgressCard(e, p, g, 'timedout')
-  const finalWake = missing.length > 0 ? buildGatherTimeoutWake(e, hubKey, missing, wake) : wake
   wakeChatroomModerator(e, hubKey, finalWake)
   console.info(`chatroom: gather timed out; woke moderator with partial replies (hub=${hubKey})`)
+}
+
+/**
+ * Record a completed gather round behind its fire-and-forget wake: the wake
+ * delivery can die silently (a reconstruct failure only warns), so the
+ * durable record carries the wake text until the moderator's next turn
+ * start consumes it — the stall supervisor re-delivers it if the quiet
+ * deadline passes first.
+ */
+function recordCompletedGather(hub: Session, seq: number, wakeContent: string): void {
+  chatroomState(hub).completedGather = { seq, wakeContent, completedAt: Date.now() }
+  chatroomState(hub).gatherWakeCount = 0
+  chatroomState(hub).gatherLastWakeAt = 0
+}
+
+/**
+ * Consume a completed-but-unconsumed gather record at the moderator's turn
+ * start: the wake text has now entered the moderator's context, so the
+ * re-delivery fallback stands down.
+ * @param e - Engine owning the session registry.
+ * @param session - The session whose turn started.
+ */
+export function consumeCompletedChatroomGather(e: Engine, session: Session): void {
+  const s = chatroomState(session)
+  if (!s.chatroomModerator || s.completedGather === undefined) return
+  s.completedGather = undefined
+  s.gatherWakeCount = 0
+  s.gatherLastWakeAt = 0
+  e.sessions.save()
 }
 
 // ── lightning-round poll ───────────────────────────────────────────────────
@@ -1130,11 +1164,16 @@ export function pollRoles(
   const queue = names.map(n => ({ name: n, dir: roleDir(rolesDir, n) }))
   const workers = Math.min(chatroomConfig(e).pollMaxConcurrent(), queue.length)
   const provider = chatroomConfig(e).pollProvider()
+  // The hub's live native session id rides along as each statement
+  // session's parentSession lineage, so a poll one-shot is traceable to its
+  // originating chat without timestamp archaeology.
+  const parentSession = hub.agentSessionID
   const dispatch = (): void => {
     const t = queue.shift()
     if (t === undefined) return
     void fq.pollQuery(q, t.dir, {
       ...(provider !== '' ? { providerName: provider } : {}),
+      ...(parentSession !== '' ? { parentSession } : {}),
       signal: state.abort.signal,
     })
       .then(
@@ -1765,9 +1804,12 @@ export function maybeAutoRelayRole(
     }
     // Last reply in: flip the progress card to its terminal state, clear the
     // barrier and wake the moderator once — after the relay card settles, so
-    // the moderator's placeholder card lands below it.
+    // the moderator's placeholder card lands below it. The wake text is
+    // recorded durably until the moderator's next turn start consumes it
+    // (the supervision net re-delivers it if this fire-and-forget wake dies).
     updateResearchProgressCard(e, p, g, 'done')
     if (hub !== undefined) chatroomState(hub).pendingGather = undefined
+    if (hub !== undefined) recordCompletedGather(hub, g.seq, wakeContent)
     e.sessions.save()
     void relayP.then(() => { wakeChatroomModerator(e, hubKey, wakeContent) })
     console.info(`chatroom: gather complete; woke moderator with all replies (hub=${hubKey})`)
@@ -1934,6 +1976,9 @@ function hangsOffChatroomExecutor(e: Engine, sess: Session, hubKey: string): boo
 export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'ended' | 'interrupted' = 'ended'): string[] {
   const p = e.spawnCapablePlatform()
   if (p === undefined) return []
+  // The room is closing: an undelivered gather wake has nothing left to drive.
+  const hubSess = e.sessions.getOrCreateActive(hubKey)
+  chatroomState(hubSess).completedGather = undefined
   // Native continuable descendants chain through the project state, not the
   // session tree (de-baggage B4) — drain them alongside the role groups.
   void e.drainNativeDescendants([hubKey, ...e.collectSubtree(hubKey)])
@@ -2053,6 +2098,8 @@ export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptR
     missing.push(...g.expected)
     chatroomState(hub).pendingGather = undefined
   }
+  // An undelivered gather wake is moot once the room is torn down.
+  chatroomState(hub).completedGather = undefined
   const b = chatroomState(hub).pendingEndBarrier
   if (b !== undefined) {
     b.clearFallbackTimer()
@@ -2218,6 +2265,9 @@ export function recoverChatroomBarriers(e: Engine): void {
         if (p !== undefined && restartHub !== undefined && chatroomState(restartHub).chatroomResearch) {
           sendRestartedProgressCard(e, p, key, g)
         }
+        // The restart wake is as fire-and-forget as the original: record the
+        // round so the sweep re-delivers it if this wake dies too.
+        if (restartHub !== undefined) recordCompletedGather(restartHub, g.seq, `${note}\n\n${wake}`)
         wakeChatroomModerator(e, key, `${note}\n\n${wake}`)
         console.info(`chatroom: closed restored gather after restart (hub=${key} lost=${missing.join(',')})`)
       }
@@ -2268,6 +2318,7 @@ function restoreSerialAsks(raw: unknown): SerialAskSnapshot[] {
       armedAt: o.armedAt,
       lastWakeAt: typeof o.lastWakeAt === 'number' ? o.lastWakeAt : 0,
       wakeCount: typeof o.wakeCount === 'number' ? o.wakeCount : 0,
+      breakerNoticeCount: typeof o.breakerNoticeCount === 'number' ? o.breakerNoticeCount : 0,
     })
   }
   return out

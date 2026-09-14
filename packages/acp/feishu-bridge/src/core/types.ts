@@ -1095,8 +1095,8 @@ export interface ForkQuerierWithProvider {
    * query (unlike {@link lightweightQuery} the workspace instructions at
    * `workDir` stay assembled, so a role directory's CLAUDE.md persona
    * loads), with every tool masked so the polled role cannot run research.
-   * Session-origin side effects (LLM title generation) are accepted for the
-   * kept memory-index injection.
+   * Session origin `oneshot` keeps LLM titles off; the memory-index
+   * injection it gates off is re-registered by the adapter.
    */
   pollQuery(prompt: string, workDir: string, opts?: PollQueryOptions): Promise<string>
 }
@@ -1109,6 +1109,12 @@ export interface PollQueryOptions {
   signal?: AbortSignal
   /** Turn budget; defaults to the adapter's poll budget. */
   timeoutMs?: number
+  /**
+   * Native session id of the chatroom hub the poll answers for: recorded as
+   * the one-shot session's `parentSession` lineage so a poll session is
+   * traceable to its originating chat.
+   */
+  parentSession?: string
 }
 
 /** Agent whose active provider can be queried for fallbacks (Go ProviderSwitcher). */
@@ -1948,10 +1954,18 @@ export interface RenderQuerier {
    * Run a standalone query with an injected system prompt. `providerName`
    * selects the provider route. `workDir` pins the session cwd (the calling
    * chat's effective directory); omitted or empty falls back to the
-   * adapter's base cwd. Returns the session's trimmed stdout (expected
-   * one-line confirmation).
+   * adapter's base cwd. `parentSession` records the originating host chat's
+   * native session id as the render one-shot's lineage. Returns the
+   * session's trimmed stdout (expected one-line confirmation).
    */
-  renderQuery(prompt: string, providerName: string, systemPrompt: string, signal?: AbortSignal, workDir?: string): Promise<string>
+  renderQuery(
+    prompt: string,
+    providerName: string,
+    systemPrompt: string,
+    signal?: AbortSignal,
+    workDir?: string,
+    parentSession?: string,
+  ): Promise<string>
 }
 
 /** Optional: platform can send standalone image messages (Go ImageSender). */

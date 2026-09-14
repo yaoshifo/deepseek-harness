@@ -273,9 +273,16 @@ function rotateChatroomRecord(dir: string, recordPath: string): void {
   atomicWriteFileSync(recordPath, encoder.encode(prefix + tail), 0o644)
 }
 
+/** The init placeholder synthesis body; never worth archiving. */
+const synthesisPlaceholder = '（主持尚未用'
+
 /**
  * Replace the content of SYNTHESIS.md after the `## 当前图景与进展`
- * header, preserving the file header (topic/roles/start).
+ * header, preserving the file header (topic/roles/start). The replaced
+ * body (unless it is still the init placeholder) is appended to
+ * SYNTHESIS-HISTORY.md under a `## 存档 <ISO timestamp>` heading first,
+ * inside the same serialized write, so a synthesis revision never erases
+ * the running record it distills.
  *
  * @param dir - Ledger directory.
  * @param synthesis - New synthesis body replacing the old section.
@@ -287,6 +294,13 @@ export function updateChatroomLedgerSynthesis(dir: string, synthesis: string): P
     const marker = '## 当前图景与进展\n'
     const mi = content.indexOf(marker)
     if (mi < 0) throw new Error('ledger: synthesis section marker not found')
+    const oldBody = content.slice(mi + marker.length).trim()
+    if (oldBody !== '' && !oldBody.startsWith(synthesisPlaceholder)) {
+      const historyPath = join(dir, 'SYNTHESIS-HISTORY.md')
+      const archived = existsSync(historyPath) ? readFileSync(historyPath, 'utf8') : ''
+      const entry = `## 存档 ${new Date().toISOString()}\n\n${oldBody}\n`
+      atomicWriteFileSync(historyPath, new TextEncoder().encode(archived + entry), 0o644)
+    }
     const newContent = content.slice(0, mi + marker.length) + synthesis.trim() + '\n'
     atomicWriteFileSync(path, new TextEncoder().encode(newContent), 0o644)
   })
@@ -294,14 +308,18 @@ export function updateChatroomLedgerSynthesis(dir: string, synthesis: string): P
 
 /**
  * Overwrite SUBPROBLEMS.md with the given text (子问题清单 + 进度): a fresh
- * list replaces the old one.
+ * list replaces the old one. A first line that is a markdown heading
+ * restating the section name (`## 子问题清单（v5·终版）`) is stripped — the
+ * engine writes its own section heading, and the model's decorated
+ * restatement would nest under it.
  *
  * @param dir - Ledger directory.
  * @param text - New subproblem list body.
  */
 export function updateChatroomSubproblems(dir: string, text: string): Promise<void> {
   return serialize(() => {
-    const content = `## 子问题清单\n\n${text.trim()}\n`
+    const stripped = text.replace(/^#{1,6}\s*子问题清单.*\n?/, '')
+    const content = `## 子问题清单\n\n${stripped.trim()}\n`
     atomicWriteFileSync(join(dir, ledgerSubproblemsFile), new TextEncoder().encode(content), 0o644)
   })
 }

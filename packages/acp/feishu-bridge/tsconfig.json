@@ -45,6 +45,9 @@
       "path": "../../mcp/mcp-workspace"
     },
     {
+      "path": "../../memory/memory"
+    },
+    {
       "path": "../../session/session-persistence-jsonl"
     },
     {
