@@ -114,6 +114,13 @@ export class Session {
   /** Armed subtask gather barrier on a parent session; in-memory only (Go PendingSubtaskGather). */
   pendingSubtaskGather: import('./subtask.ts').SubtaskGather | undefined
   /**
+   * The last agent-message a source delivered straight into this parent's
+   * agent conversation (the runtime send_message wake, recorded through
+   * Engine.noteAgentDirectMessage); in-memory only — a restart forgets it
+   * and the report-dedup below simply stops firing.
+   */
+  lastAgentDirectMessage: { fromKey: string; hash: string; at: number } | undefined
+  /**
    * Resolver of a blocking gather wait; in-memory only. Armed by the engine's
    * gatherSubtasksBlocking, resolved with the barrier summary so it lands as
    * the gather tool call's result inside the still-open parent turn.

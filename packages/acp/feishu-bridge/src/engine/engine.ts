@@ -153,6 +153,7 @@ import { readFileSync, statSync, existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join as joinPath } from 'node:path'
+import { createHash } from 'node:crypto'
 import { asCompletionNoticePreference, asCompletionNotifier, asChatPhasePainter, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.ts'
 import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.ts'
@@ -7676,6 +7677,28 @@ export class Engine {
   }
 
   /**
+   * Record that a source delivered an agent-message straight into a parent's
+   * agent conversation — the runtime's own send_message wake, which never
+   * passes the platform pipeline (the agent-session projection seam calls
+   * this). The record backs report dedup in {@link deliverParentReply}: a
+   * subtask report whose body is verbatim identical to the direct message
+   * injects a one-line status instead of the same body twice.
+   * @param parentSessionKey - Session key of the parent that received the message.
+   * @param fromKey - Session key (or runtime agent-session id) of the sender.
+   * @param content - The delivered message text.
+   */
+  noteAgentDirectMessage(parentSessionKey: string, fromKey: string, content: string): void {
+    const parent = this.sessions.findActive(parentSessionKey)
+    if (parent === undefined) return
+    parent.lastAgentDirectMessage = {
+      fromKey,
+      hash: createHash('sha256').update(content).digest('hex'),
+      at: Date.now(),
+    }
+    this.sessions.save()
+  }
+
+  /**
    * Push a child subtask's result back into its parent session, waking the
    * parent agent to synthesize. Unlike `/done --reply`, it does NOT stop the
    * child session (Go ReportSubtask). Empty result falls back to the child's
@@ -8295,8 +8318,20 @@ export class Engine {
 
     // The card body stays clean; the synthetic message the parent agent sees
     // carries a hint with the child's session key so it can follow up via
-    // the subtask tool even after context compaction.
-    let agentContent = `[子任务完成] ${label}:\n\n${content}`
+    // the subtask tool even after context compaction. A report whose body is
+    // verbatim identical to the sender's last direct agent-message (the
+    // runtime send_message wake recorded by noteAgentDirectMessage) injects
+    // a one-line status instead — the parent model must not read the same
+    // body twice (2026-09-13 chatroom postmortem); the card above keeps the
+    // full text.
+    const last = parentSess.lastAgentDirectMessage
+    const childAgentSID = this.sessions.findActive(childKey)?.getAgentSessionID() ?? ''
+    const repeatsDirect = last !== undefined
+      && (last.fromKey === childKey || (childAgentSID !== '' && last.fromKey === childAgentSID))
+      && last.hash === createHash('sha256').update(content).digest('hex')
+    let agentContent = repeatsDirect
+      ? `[子任务完成] ${label}：内容与刚才的直发消息相同，全文见群内卡片`
+      : `[子任务完成] ${label}:\n\n${content}`
     if (childKey !== '') {
       agentContent += `\n\n(如需追问该子任务: feishu_bridge_subtask 工具 action: send, child: ${childKey})`
     }
