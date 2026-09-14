@@ -4245,8 +4245,11 @@ export class Engine {
         await sp.markFailed()
         await sp.detachPreview()
       } else {
-        await sp.discard()
-        await this.deliverAnswerText(state, p, replyCtx, fullResponse)
+        // fallbackSend order (u5): delete the frozen card only after the
+        // error text landed — the frozen card is the last surface able to
+        // carry it, so a failed send leaves it in place. deliverAnswerText
+        // records the verdict the post-barrier warning block below consumes.
+        if (await this.deliverAnswerText(state, p, replyCtx, fullResponse) === 'sent') await sp.discard()
       }
     } else if (isSilent) {
       await sp.setAnalysisText(this.i18n.t(Msg.SilentReply))

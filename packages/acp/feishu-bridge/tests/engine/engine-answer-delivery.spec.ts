@@ -215,6 +215,31 @@ async function parkAskOverSegment(
 const permRequest: AskRequest = { kind: 'permission', toolName: 'Bash', preview: 'ls' }
 
 /**
+ * Agent whose session drives five tool calls (each PATCHing the progress
+ * card) then an error-reasoned result, so a platform whose updateMessage
+ * always rejects degrades the in-progress card before the turn fails.
+ */
+function degradingErrorAgent(): Agent {
+  const base = createStubAgent()
+  return {
+    ...base,
+    startSession: async () => {
+      const s = newControllableSession('degrade-error-session')
+      let sentOnce = false
+      s.send = async () => {
+        if (sentOnce) return
+        sentOnce = true
+        for (let i = 0; i < 5; i++) {
+          s.channel.push({ type: 'tool_use', toolName: `bash${i}`, toolInput: `ls ${i}`, toolID: `call-${i}`, content: '', done: false })
+        }
+        s.channel.push({ type: 'result', content: '', errorText: '1301 sensitive content rejected', done: true })
+      }
+      return s
+    },
+  } as Agent
+}
+
+/**
  * Timeout symptom: the bridge's own synthesized per-attempt deadline. */
 const deadlineError = new Error('context deadline exceeded')
 
@@ -462,6 +487,31 @@ describe('answer delivery outcome', () => {
       expect(saved, `dir=${workDir}`).toHaveLength(1)
       expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('precious restart segment')
       expect(state.answerDelivery, 'the verdict survives the restart reset').toBe('failed')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an errored degraded turn keeps the frozen card when the error text send fails', async () => {
+    // The errored branch discarded the frozen card before delivering the
+    // error text — the fallbackSend anti-pattern (u5/be3d05bb17): once the
+    // plain send also failed, the error wording existed nowhere, while the
+    // frozen card was still the last surface able to carry it.
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-errored-card-'))
+    try {
+      const p = frozenCardPlatform(forbiddenError)
+      const e = new Engine('test', degradingErrorAgent(), [p], '', 'en')
+      e.setDisplayConfig({ toolProgress: true })
+      e.streamPreview.progressFlushIntervalMs = 0
+      e.setBaseWorkDir(workDir)
+      e.receiveMessage(p, msg('please answer'))
+      await vi.waitFor(() => {
+        expect(e.interactiveStates.get('testchat')?.answerDelivery).toBe('failed')
+      }, { timeout: 5000 })
+      expect(p.deletes, 'the frozen card survives the failed error-text send').toHaveLength(0)
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('1301 sensitive content rejected')
     } finally {
       await rm(workDir, { recursive: true, force: true })
     }
