@@ -34,7 +34,9 @@ export interface RenderAgent extends Agent, RenderQuerier {
  * Stub Agent that records every renderQuery call (Go renderAgent): lets tests
  * assert the engine forked a render session with the right prompt / provider /
  * env without spawning a real agent. `blockCount` first calls block until the
- * signal aborts (LLM hang), `stallCount` first calls throw errRenderStalled.
+ * signal aborts (LLM hang), `stallCount` first calls throw errRenderStalled,
+ * `writeThenBlockCount` first calls write the body fragment and THEN block
+ * until abort (a fork that finished its file but never returned).
  */
 export function createRenderAgent(opts: {
   delayMs?: number
@@ -42,6 +44,7 @@ export function createRenderAgent(opts: {
   blockCount?: number
   stallCount?: number
   stallPartial?: boolean
+  writeThenBlockCount?: number
 } = {}): RenderAgent {
   const calls: RenderAgentCall[] = []
   let cancelled = 0
@@ -59,6 +62,7 @@ export function createRenderAgent(opts: {
       calls.push({ prompt, provider, systemPrompt, workDir: workDir ?? '', ...(parentSession !== undefined ? { parentSession } : {}) })
       const block = (opts.blockCount ?? 0) > 0 && callIdx < (opts.blockCount ?? 0)
       const stall = (opts.stallCount ?? 0) > 0 && callIdx < (opts.stallCount ?? 0)
+      const writeThenBlock = (opts.writeThenBlockCount ?? 0) > 0 && callIdx < (opts.writeThenBlockCount ?? 0)
       if (stall) {
         // Simulate the render session writing a partial body before the stall
         // detector fires (Go stallPartial).
@@ -68,7 +72,11 @@ export function createRenderAgent(opts: {
         }
         throw errRenderStalled
       }
-      if (block || (opts.delayMs ?? 0) > 0) {
+      if (writeThenBlock) {
+        const path = htmlPathFromPrompt(prompt)
+        if (path !== '') writeFileSync(path, '<div class="wrap"><header><h1>stub</h1></header></div>', 'utf8')
+      }
+      if (block || writeThenBlock || (opts.delayMs ?? 0) > 0) {
         const aborted = await new Promise<boolean>((resolve) => {
           const timer = setTimeout(() => { resolve(false) }, opts.delayMs ?? 86_400_000)
           signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(true) }, { once: true })

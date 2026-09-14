@@ -1418,11 +1418,14 @@ export function launchPlanRender(
           clearTimeout(timer)
           parentCtl.signal.removeEventListener('abort', onParentAbort)
         }
+        // The aborted check leads the file check: a fork that already wrote
+        // its html when the user approved was still cancelled — recording it
+        // as delivered-then-failed would flip the plan card to 渲染失败.
+        if (parentCtl.signal.aborted) break // user opened a new turn — stop retrying
         if (existsSync(htmlPath)) {
           succeeded = true
           break
         }
-        if (parentCtl.signal.aborted) break // user opened a new turn — stop retrying
         if (attempt < maxAttempts) {
           console.info(`plan-html: first attempt produced no file, retrying (${sessionKey})`)
         }

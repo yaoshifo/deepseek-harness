@@ -430,6 +430,31 @@ describe('LaunchPlanRender', () => {
     await new Promise((resolve) => { setTimeout(resolve, 300) })
     expect(a.getCalls()).toHaveLength(1)
   })
+
+  it('AbortAfterWriteRecordsCancelled: approval aborting a written-out fork settles as cancelled, not failed', async () => {
+    // F4a window: the fork already wrote its html when the user approves —
+    // cancelPlanRenders aborts the fork, the file exists, but the status must
+    // read cancelled (the user killed it), never failed.
+    const a = createRenderAgent({ writeThenBlockCount: 5 })
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p, { timeoutMs: 30_000 })
+
+    const state = newRenderState(p)
+    expect(shouldRenderPlan(state, '# 计划', 1)).toBe(true)
+    launchPlanRender(e, state, 'feishu:user1', '# 计划', '', 1, 'plan:1')
+
+    // Wait until the fork wrote its html, then approve (cancelPlanRenders).
+    await pollUntil(() => {
+      const hp = htmlPathFromPrompt(a.getCalls()[0]?.prompt ?? '')
+      return hp !== '' && existsSync(hp)
+    }, 2000)
+    cancelRendersFor(state)
+
+    await pollUntil(() => getRenderStatus(state, 'plan:1')?.status !== undefined
+      && getRenderStatus(state, 'plan:1')?.status !== 'rendering' && !state.planRenderRunning, 3000)
+    expect(getRenderStatus(state, 'plan:1')?.status).toBe('cancelled')
+    expect(p.files).toHaveLength(0)
+  })
 })
 
 describe('ShouldRenderPlan_RetryAfterFailure', () => {
