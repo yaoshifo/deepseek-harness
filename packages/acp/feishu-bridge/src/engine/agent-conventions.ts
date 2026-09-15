@@ -3,9 +3,10 @@
  * the plain-session agent conventions (async autonomy, grill interview for
  * ambiguous requests, curiosity reporting, plain-language output, closing
  * followups card via the dedicated tool, skillify offer) as the low-order `feishu-bridge-agent-conventions` section
- * for direct project-chat agents, and the default-TDD prompt as
+ * for direct project-chat agents, and the default-TDD prompt (red-green
+ * loop plus the diagnose-first mandate for reported breakage) as
  * `feishu-bridge-tdd-default` for plain sessions and subtask children alike
- * — coding turns run in both.
+ * — coding and bug-investigation turns run in both.
  * Deliberately kept out of the chatroom plugin's persona module: subtask
  * children report through their parent session, and chatroom roles carry
  * their own persona.
@@ -63,10 +64,11 @@ export function agentConventionsPrompt(): string {
 }
 
 /** The default-test-driven-development prompt for plain sessions and subtask
- * children — both branches run coding turns. The detailed red-green-refactor
- * loop stays in the `tdd` skill; the prompt directs the model to load it via
- * the `skill` tool before implementation, because sessions observed the inline
- * default as sufficient and never loaded the skill on their own.
+ * children — both branches run coding and bug-investigation turns. The
+ * detailed red-green-refactor loop stays in the `tdd` skill and the
+ * loop-construction methods stay in the `diagnose` skill; the prompt directs
+ * the model to load them via the `skill` tool, because sessions observed the
+ * inline default as sufficient and never loaded the skills on their own.
  *
  * @returns the TDD default section text.
  */
@@ -75,7 +77,9 @@ export function tddDefaultPrompt(): string {
 ### 默认测试驱动
 在实现功能、修改行为或修复 bug 时，默认用 \`tdd\` skill 的 red-green-refactor 循环驱动——不等用户先说"test"或"TDD"，自己驱动全过程，不停下来请求许可，也不等测试清单被批准。动手前先用 \`skill\` 工具加载 \`tdd\`，循环细节以其全文为准。开始时用一句话说明你正在测试的接口与行为，仅当公开接口或预期行为确实含糊时才提一个聚焦的问题。
 
-对于 bug 修复：一旦定位到原因，修复就从**一个能复现该 bug 的失败测试**开始——写它、确认它因正确的原因失败、然后再修。之前的调查阶段不受此约束。
+对于报障（用户报告某东西坏了、报错、行为不对、变慢）：定位根因前先用 \`skill\` 工具加载 \`diagnose\`，按其全文构造一个只对这个 bug 变红的对证回路——根因结论必须有回路证据支撑，没有回路不猜；这个回路通常就是下面那个失败测试。
+
+对于 bug 修复：一旦定位到原因，修复就从**一个能复现该 bug 的失败测试**开始——写它、确认它因正确的原因失败、然后再修。
 
 仅以下情况可跳过 TDD：纯粹的探索性问题与设计讨论（尚未实现任何东西）、不改动任何产品代码的纯代码阅读/解释/调查、文档与注释、不含逻辑的配置或依赖版本改动、以及不会提交或复用的真正一次性脚本。拿不准时，就写测试。
 `
