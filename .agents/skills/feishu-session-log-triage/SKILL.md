@@ -1,6 +1,6 @@
 ---
 name: feishu-session-log-triage
-description: "飞书群排查运维手册（Runbook）：由群 chat_id（oc_ 开头）定位 dsh 会话数据与 zstd 会话日志，按故障指纹判别真挂起、watchdog 强杀、卡片降级冻结、等用户输入等状态，并可从飞书群历史找回丢失的汇报内容。Use when 某个飞书群没响应、卡片不动、内容丢失，或需要查看某群 agent 的会话日志。触发例句：「排查 oc_xxx」「这个群的日志在哪」「群卡死了怎么回事」「找到 oc_xxx 对应的会话数据」「看下这个群的会话日志」"
+description: "飞书群排查运维手册（Runbook）：由群 chat_id（oc_ 开头）定位 dsh 会话数据与 zstd 会话日志，按故障指纹判别真挂起、watchdog 强杀、卡片降级冻结、等用户输入、实时播报混入推敲正文等状态，并可从飞书群历史找回丢失的汇报内容。Use when 某个飞书群没响应、卡片不动、内容丢失、卡片显示思考/推敲内容，或需要查看某群 agent 的会话日志。触发例句：「排查 oc_xxx」「这个群的日志在哪」「群卡死了怎么回事」「卡片上出现思考内容」「找到 oc_xxx 对应的会话数据」「看下这个群的会话日志」"
 ---
 
 # 飞书会话日志排查（feishu-session-log-triage）
@@ -81,6 +81,7 @@ python3 <skill-dir>/scripts/locate-session.py "$chat_id"
 - **症状**：/fk 出的群没继承上下文（子会话日志头 `"isSeeded":false`、日志直接从首条用户消息开始） → **做法**：查 daemon stderr 的 `agent-dsh: fork source` warn；旧版会把一切读错误吞成「no seedable turns」，真实原因多为 v0 会话被 v0→v2 迁移 codec 的 schema 快照拒绝（2026-09-09 实测五类：todo `activeForm`、header `oneshot` origin、permission `origin`、approval `allowed-always`、subagent/descriptor version 2；历史代日志 60% 不可读，用户已拍板弃用历史 v0 会话、不修 schema，锁定用例见 session-format-v0-to-v1 的 validation/codec spec）。全量核查用本 skill 的 `scripts/scan-migration-drift.mjs`（对 sessions root 跑当前构建的迁移解码，按拒绝原因聚类报告，fail-loud；reload 改动 session-format 包后必跑）。单点复现：zstdcat 父会话看 header `version:0`，再用 `sessionFormatCatalog.createRestore(header, {recovery:"recoverable",validation:"transformed"})` 逐行 `decodeRow` 找首个被拒事件。
 - **症状**：要找某场 chatroom 的账本/研究报告（SYNTHESIS/SUBPROBLEMS/RECORD/RECON/REPORT/summary.html）在哪 → **做法**：三步定位（2026-09-12 实测，场次 f999590a80252554）——① `locate-session.py` 定位 hub（发起 /chatroom 的群）的会话日志；② `zstdcat` 读日志 grep `Ledger updated`，`note` 动作的 tool/result 每次都返回账本目录 `/home/hm/workspace/books/chatroom/ledgers/<场次id>`；③ 该目录即账本全家，RECORD.md 会轮转出 RECORD-1.md/RECORD-2.md；journalctl 的 `chatroom: moderator updated ledger (hub=… section=…)` 行可交叉佐证场次归属。注意：`feishu-bridge-sessions` 下 `--home-hm-workspace-books-chatroom-ledgers-<场次id>--` 桶只是收尾 HTML 渲染子任务的会话数据，不是账本本体。
 - **症状**：要查某个并行子任务自己的会话日志（gather 报「子任务失败」要下钻） → **做法**：locate-session.py 只按群 chat_id 定位，不覆盖子任务；子会话目录名 = 子任务 uuid（父会话日志里 spawn 的 tool/result、gather 失败摘要、或父 agent 唤醒消息里都有），桶 = 子任务 cwd 对应桶，直接 `find ~/.dsh/feishu-bridge-sessions -type d -name "<uuid>"`。失败形态与判死机制见指纹表 J（限流预算耗尽 = turn/end error + RATE_LIMIT，区别于 watchdog 的 aborted/disposed）。
+- **症状**：进度卡「实时播报」出现大段推敲式正文（自我演算、方案草稿、验证分析——内容正确但出现在正文而非思考通道；轮数少的会话干净、长会话逐渐恶化） → **做法**：这是回放跨模型迁移环，已修（e794e670c2 + live 配置 `replayModelIdentity: requested`，2026-09-15 起效），完整判别与取证见指纹表 L。三个关键点：①thinking 签名查 `source.replayState.blocks[].thinkingSignature`，**不在 content 块**（09-10 曾因查错位置误诊「无签名」）；②判复发必须用**新开会话**——旧会话历史里已写进正文的推敲块是存量污染，续聊仍会被带偏；③与指纹 K（答非所问/伪造对话）的区分：本症状推敲内容正确、只是通道错了。
 
 ## 维护
 

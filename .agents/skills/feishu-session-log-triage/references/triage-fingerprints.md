@@ -89,6 +89,14 @@
 - **危害不止答非所问**：失控回合里的工具调用是真的——实测把基于幻觉对话的记忆写进了全局记忆并登记索引。收尾须排查污染（删文件+删索引行；全文可从该回合 memory_write 的 tool/call 参数找回）。
 - **恢复**：续用该会话有复发风险（失控上下文仍在模型历史里）；建议 /new 重开。伪造对话轮/域漂移的中流检测属 harness 防线缺口，未立项。
 
+### L 进度卡实时播报出现推敲正文 = 回放跨模型迁移环（2026-09-14 oc_084673f 实测，已修 e794e670c2）
+
+- **症状**：tool process 卡（进度卡）「实时播报」区出现大段推敲式正文——自我演算（「等一下 —— gate 底部 = 230+68 = 298」式）、构建方案的草稿、验证失败分析——而非短状态句；最终回复本身往往正常。轮数少的会话干净，长会话逐渐恶化（反馈环需累积）。与 K 的区分：K 是内容无关/伪造对话；本指纹是推敲内容**正确但出现在错误通道**（text 而非 reasoning）。
+- **机制（已修）**：回放历史给 assistant 消息盖「网关回报的裸模型名」（`glm-5.3`），而请求用的是带厂商前缀的路由名（`zhipuai/glm-5.3`，mify 强制）→ pi-ai `transformMessages` 判跨模型 → 历史 thinking 块全部转成 text 回传（签名在也照转）→ 模型看到自己过去的推敲全是正文，学着写正文 → 完成块整块上卡（显示层既有设计，不是显示 bug）。
+- **取证法**：①逐 assistant/message 统计块结构：reasoning 块是否在某步后整体消失、text 块是否出现 >2000c 且后跟 tool-call 的推敲块；②**签名查 `source.replayState.blocks[].thinkingSignature`，不在 content 块**（content 的 reasoning 块只有 text 字段——09-10 曾因查错位置误诊「无签名」，签名其实一直在）；③修复验证锚点：live 配置 mify-dsh 路由应有 `replayModelIdentity: requested`（2026-09-15 07:12 起），daemon 构建应 ≥e794e670c2。
+- **判复发先排存量污染**：修复前旧会话的历史里已写进正文的推敲块不会消失，旧会话续聊可能仍被存量样本带偏——**判复发必须用新开会话**。新会话仍泄漏才查：构建新旧（reload.log）→ 配置在否 → 该会话 replayState 签名链与 midturn 大文本块。
+- **根因与修复全程**：`packages/llm/llm-pi-ai` Agent Note `2026-09-14-replay-requested-model-identity`；回滚 = 删配置里 `replayModelIdentity` 一行再 reload。
+
 ## 审批事件判别（卡片没弹 / 反复要授权）
 
 - 会话日志事件 `approval/asked` → `approval/decided` 的**时间差**：秒级/分钟级 = 真弹卡等用户点击；0–1ms = 被常设授权短路放行。两种情况日志事件形态相同，只有时间差能区分。
