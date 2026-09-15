@@ -23,7 +23,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { SessionNode, SessionOrderBy } from '../tree.ts'
 import {
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey,
+  cwdGroupKey, deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey,
   pinCurrentBlank, reconcileManualOrder, UNGROUPED_KEY, visibleSessionIds,
 } from '../tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
@@ -219,7 +219,7 @@ function SessionTree({
   const current = panelActive ? undefined : list.current
   const revealGroup = revealSessionId === undefined || !workspaceReady
     ? undefined
-    : owningGroupKey(workspaces, revealSessionId)
+    : owningGroupKey(workspaces, revealSessionId, list.byId[revealSessionId]?.cwd)
   const [expandedSessionGroups, setExpandedSessionGroups] = useState<string[]>([])
   // Transient drag marker state; the selected mode owns the resulting order.
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -230,7 +230,7 @@ function SessionTree({
   useNativeDragAcceptance(nativeDragActive)
   const currentGroup = current === undefined || !workspaceReady
     ? undefined
-    : owningGroupKey(workspaces, current)
+    : owningGroupKey(workspaces, current, list.byId[current]?.cwd)
   useEffect(() => {
     if (current === undefined || currentGroup === undefined || Object.hasOwn(groupExpansion, currentGroup)) return
     setGroupExpanded(currentGroup, true)
@@ -781,13 +781,24 @@ export function WorkspaceBrowser({
     [FLAT_SESSION_ORDER_KEY, orderedFlatSessionIds] as const,
   ]), [orderedFlatSessionIds, orderedUngroupedSessionIds, orderedWorkspaces])
   useEffect(() => {
-    if (workspacePhase !== 'ready') return
+    if (workspacePhase !== 'ready' || list.phase !== 'ready') return
+    // Directory group keys live only as long as their unaccounted sessions:
+    // a not-yet-ready list must not prune keys restored from persisted state.
+    const accounted = new Set(workspaces.flatMap(workspace => workspace.sessionIds))
+    const directoryKeys = new Set<string>()
+    for (const id of list.ids) {
+      const summary = list.byId[id]
+      if (summary === undefined || accounted.has(id)) continue
+      const key = cwdGroupKey(summary.cwd)
+      if (key !== UNGROUPED_KEY) directoryKeys.add(key)
+    }
     actions.retainAccountKeys([
       UNGROUPED_KEY,
       FLAT_SESSION_ORDER_KEY,
       ...workspaces.map(workspace => workspace.workspaceId as string),
+      ...directoryKeys,
     ])
-  }, [actions.retainAccountKeys, workspacePhase, workspaces])
+  }, [actions.retainAccountKeys, workspacePhase, workspaces, list])
   useEffect(() => {
     if (list.phase !== 'ready' || workspaceReady || orderBy !== 'manual' || currentBlank === undefined) return
     // A first prompt can end blank pinning before the Workspace baseline arrives.
