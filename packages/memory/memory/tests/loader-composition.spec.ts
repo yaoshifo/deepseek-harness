@@ -207,16 +207,20 @@ describe('dsh-memory real Loader composition through cordis.yml', () => {
   }, 30_000)
 
   it('fails loading when maxIndexBytes is omitted', async () => {
-    await expect(boot(() => [])).rejects.toThrow('$.maxIndexBytes missing required value')
+    // The non-transactional Loader no longer rejects await() on a failed plugin
+    // fiber; assert the misconfigured plugin never activated instead.
+    const ctx = await boot(() => [])
+    expect(ctx.tools.get('memory_delete')).toBeUndefined()
   }, 30_000)
 
   it('fails loading when global memory carries a non-positive byte budget', async () => {
-    await expect(boot(home => [
+    const ctx = await boot(home => [
       `    claudeHome: ${home}`,
       '    maxIndexBytes: 25600',
       '    global:',
       '      maxIndexBytes: 0',
-    ])).rejects.toThrow('global.maxIndexBytes must be a positive number')
+    ])
+    expect(ctx.tools.get('memory_delete')).toBeUndefined()
   }, 30_000)
 
   it('enables global memory by default and disables it with enabled: false', async () => {

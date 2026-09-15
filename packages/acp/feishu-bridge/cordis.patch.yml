@@ -94,7 +94,7 @@
 - id: tool-workflow
   disabled: true
 
-- id: workflow-worker-thread
+- id: workflow-ptc
   disabled: true
 
 - id: tool-ralph

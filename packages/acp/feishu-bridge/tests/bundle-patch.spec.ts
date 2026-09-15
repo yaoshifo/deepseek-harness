@@ -145,7 +145,7 @@ describe('bridge bundle patch', () => {
     const { entries } = composeEntries()
     for (const id of [
       'goal', 'goal-round-driver', 'command-goal', 'tool-goal',
-      'tool-workflow', 'workflow-worker-thread', 'tool-ralph',
+      'tool-workflow', 'workflow-ptc', 'tool-ralph',
     ]) {
       const row = findRow(entries, id)
       expect(row, `${id} must be mounted by dsh-base`).toBeDefined()

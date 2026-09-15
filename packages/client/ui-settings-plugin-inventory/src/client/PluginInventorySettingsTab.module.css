@@ -116,6 +116,11 @@
   box-shadow: var(--dsw-elevation-stroke);
   border-radius: 14px;
   background: var(--dsw-alias-bg-layer-3);
+  /* Elevated surface: the scrollbar thumb takes the l2 elevation tokens so the
+     scrolling .yamlBlock child does not draw a base-surface thumb (see
+     ui-theme styles/scrollbar.css for the rebinding contract). */
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
 .card[data-open='true'] {
