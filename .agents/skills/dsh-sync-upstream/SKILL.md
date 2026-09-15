@@ -29,9 +29,9 @@ dev 工作区干净、与 origin/dev 同步后 `git fetch upstream`，量三个�
 
 ### 2. 零副作用预演
 
-`git merge-tree --write-tree --name-only dev master`
+`git merge-tree --write-tree dev master`，对输出 `grep -c 'CONFLICT'` 数真冲突。
 
-exit 0 且只输出一个 tree oid = 零冲突。有冲突则列出文件、判断归属（fork-local 还是双方共享改动），拿不准停下问用户。
+**不要用 `--name-only` 量冲突**：exit 0 时它只输出 tree oid 没问题，但 exit 1（有冲突）时它的文件列表是**合并后变更全集**而非冲突清单——2026-09-15 实例：361 个文件的列表差点被当成冲突数，非 `--name-only` 模式重跑才确认真冲突 65 个。有冲突则按 CONFLICT 行列文件、判断归属（fork-local 还是双方共享改动），拿不准停下问用户。
 
 **成功标准**：零冲突，或冲突面已评估并经用户同意继续。
 
@@ -89,6 +89,7 @@ fork 本地包（feishu-bridge adapter、feishu-bridge-chatroom 等）用 `*Like
 
 - 症状：`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` → 做法：`CI=true pnpm install`。lockfile 大改后必现，是无 TTY 确认问题，不是故障。
 - 症状：merge-tree 零冲突但测试红 → 做法：merge-tree 只保证文本干净；上游重构内部接口造成的语义冲突靠 typecheck + 聚焦测试抓。
+- 规则：解冲突期间严禁 `git add -A`/目录级 add——会把还带冲突标记的工作区内容暂存并标记 resolved，此后 `checkout --theirs/--ours` 对该文件静默失效（stage 3 已不存在）、关键词探针必然假阳性（带标记文件里两侧内容都在，grep 两侧关键词全命中）。解冲突只按文件名暂存（实例：2026-09-15 一次 add -A 卷入 22 个未解文件）。已误暂存时用 `git ls-tree <ref> <path>` 取 base/HEAD/master 三份 blob，`printf '%s %s %s\t%s\n' <mode> <sha> <stage> <path>` 逐条喂 `git update-index --index-info` 重建三路 unmerged 状态后重解。
 - 症状：typecheck 绿、单测绿，但重建重启后 seam 调用抛 `TypeError: <service>.<method> is not a function` 或工具毫秒级返回 NO_PROVIDER 类显式错误 → 做法：fork seam 用 `*Like` 结构接口 + 手写假件，静态与单测都看不见上游 API 删改。按第 5 步 seam 自查逐项对上游源码，并给 seam 补真组合测试（实例：2026-08-29 userQuestions registerProvider→waterfall，oc_cd00410d 全 daemon 追问卡片失效）。
 - 症状：产品沙箱测试 `EACCES mkdtemp /home/hm/.dsh-*` → 做法：宿主 landlock 沙箱挡 $HOME 写入。放权原样重跑即绿，别当回归修。
 - 症状：gen-tool-catalog 断言实际比预期多出 fork 工具 → 做法：fork 加工具包要同步三处：`scripts/gen-tool-catalog.ts` 的 TOOL_PACKAGES、重新生成 `docs/tool-catalog.md`、`packages/core/tools/tests/gen-tool-catalog.spec.ts` 的硬编码清单（`node --import tsx/esm scripts/gen-tool-catalog.ts --check` 验证）。
