@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/acp/feishu-bridge/README.md
 README.md: 9ae4499dd0bee952ad7e2ed4e8d1ce027af1838a
-README.zh.md: 9c5097caf570f7c169d954052c4663529964e874
+README.zh.md: 777e4086eb55b915f6271c1ba007b83c44d4fde5
