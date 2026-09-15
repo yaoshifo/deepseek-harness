@@ -25,8 +25,8 @@ import {
 } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { logPath } from '../../../../../../packages/session/session-persistence-jsonl/src/format.ts'
-import { renderWorkspaceContext } from '@deepseek-ai/dsh-agent-instructions'
-import { resolveConfig, workspaceBaselineIdentity, type CandidateSelection } from '@deepseek-ai/dsh-agent-instructions/src/config.ts'
+import { renderAgentInstructions } from '@deepseek-ai/dsh-agent-instructions'
+import { resolveConfig, workspaceBaselineIdentity } from '@deepseek-ai/dsh-agent-instructions/src/config.ts'
 import { describe, expect, it } from 'vitest'
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'expected/workspace-context-resume/offline-edit')
@@ -58,7 +58,6 @@ async function expectSession(actual: string, expectedPath: string): Promise<void
 interface SeedBaselineOptions {
   files?: Array<{ name: string; content: string }>
   instructionFileCandidates?: string[]
-  candidateSelection?: CandidateSelection
 }
 
 async function seedVisibleBaseline(
@@ -77,7 +76,7 @@ async function seedVisibleBaseline(
     delegationDepth: 0,
   }
   const files = options.files ?? [{ name: 'AGENTS.md', content: oldInstruction }]
-  const baseline = renderWorkspaceContext(files.map(file => ({
+  const baseline = renderAgentInstructions(files.map(file => ({
     absolutePath: join(cwd, file.name),
     displayPath: file.name,
     content: file.content,
@@ -88,9 +87,6 @@ async function seedVisibleBaseline(
     ...options.instructionFileCandidates === undefined
       ? {}
       : { instructionFileCandidates: options.instructionFileCandidates },
-    ...options.candidateSelection === undefined
-      ? {}
-      : { candidateSelection: options.candidateSelection },
   })
   const events: SessionEvent[] = [
     { type: 'turn/start', seq: SessionSeq(0), time: 10, data: { turn: 1 } },
@@ -347,7 +343,6 @@ describe('agent-instructions resume snapshot', () => {
         sessionPath = await seedVisibleBaseline(join(runCwd, '.sessions'), runCwd, {
           files: [{ name: 'AGENTS.md', content: 'Old AGENTS rule.' }],
           instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md'],
-          candidateSelection: 'first-existing',
         })
         // The preferred candidate appears only after the baseline was persisted.
         await writeFile(join(runCwd, 'CLAUDE.md'), 'Current CLAUDE rule.\n')

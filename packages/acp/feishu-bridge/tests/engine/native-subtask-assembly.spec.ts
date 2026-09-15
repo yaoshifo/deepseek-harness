@@ -247,7 +247,7 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
       expect(contents.some(c => c.kind === 'text' && c.status?.state === 'completed')).toBe(true)
     }, { timeout: 20_000 })
     const terminal = [...contents].reverse()
-      .find(c => c.kind === 'text' && c.status?.state === 'completed') as ProgressContent | undefined
+      .find(c => c.kind === 'text' && c.status?.state === 'completed')
     expect(terminal?.status?.pendingSubtasks).toBe(1)
     // buildProjectAssembly engines run zh; the unit cases pin the en wording.
     expect(terminal?.text).toContain('1 个子任务在途')

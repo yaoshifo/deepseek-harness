@@ -56,7 +56,7 @@ function stubFactory(ctx: Context): AgentFactory {
       return {
         agent,
         dispose: async () => {
-          unregister()
+          await unregister()
           await scope.dispose()
         },
       }

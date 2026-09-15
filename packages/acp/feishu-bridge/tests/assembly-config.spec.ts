@@ -288,7 +288,7 @@ describe('buildProjectAssembly config wiring', () => {
         feishu: { appId: 'cli_test', appSecret: 'sec', progressStyle: 'card' },
       }],
       providers: {},
-    } as unknown as FeishuBridgeConfig)
+    })
     const stale = parsed.projects[0] as ProjectConfig
     expect((stale.feishu as unknown as Record<string, unknown>).progressStyle).toBe('card')
     expect(() => assemble(baseConfig(), stale))
@@ -382,7 +382,7 @@ describe('buildProjectAssembly config wiring', () => {
   it('wires streamPreview.progressFlushIntervalMs over the default (2026-09-14 audit F4)', () => {
     // Assert the schema half too: schemastery keeps unknown keys, so an
     // undeclared field would still reach the engine as a silent passthrough.
-    const parsed = Config({ ...baseConfig(), streamPreview: { progressFlushIntervalMs: 1000 } } as unknown as FeishuBridgeConfig)
+    const parsed = Config({ ...baseConfig(), streamPreview: { progressFlushIntervalMs: 1000 } })
     expect(parsed.streamPreview?.progressFlushIntervalMs).toBe(1000)
     const { engine } = assemble({ ...baseConfig(), streamPreview: { progressFlushIntervalMs: 1000 } })
     expect(engine.streamPreview.progressFlushIntervalMs).toBe(1000)
@@ -392,7 +392,7 @@ describe('buildProjectAssembly config wiring', () => {
   })
 
   it('wires streamPreview.maxAnalysisChars over the default (2026-09-14 audit F4)', () => {
-    const parsed = Config({ ...baseConfig(), streamPreview: { maxAnalysisChars: 1200 } } as unknown as FeishuBridgeConfig)
+    const parsed = Config({ ...baseConfig(), streamPreview: { maxAnalysisChars: 1200 } })
     expect(parsed.streamPreview?.maxAnalysisChars).toBe(1200)
     const { engine } = assemble({ ...baseConfig(), streamPreview: { maxAnalysisChars: 1200 } })
     expect(engine.streamPreview.maxAnalysisChars).toBe(1200)

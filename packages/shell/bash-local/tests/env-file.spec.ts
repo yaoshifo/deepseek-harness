@@ -72,7 +72,7 @@ describe('LocalBashExecutor envFile', () => {
 
   it('merges envFile entries into background commands at their spawn', async () => {
     const { bash } = await setup({ envFile: envFile({ TEST_ENVFILE_BG: 'bg-value' }) })
-    const proc = bash.start(bash.resolve({
+    const proc = await bash.start(bash.resolve({
       command: 'printf %s "$TEST_ENVFILE_BG"; sleep 30',
     }))
     try {

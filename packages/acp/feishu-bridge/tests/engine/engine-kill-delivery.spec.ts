@@ -22,7 +22,7 @@ import type { Platform, ProgressContent } from '../../src/core/types.ts'
 
 /** Platform whose sends succeed (records texts). */
 function okPlatform(): Platform & { sent: string[] } {
-  return createStubPlatform('test') as Platform & { sent: string[] }
+  return createStubPlatform('test')
 }
 
 /** AxiosError shape the SDK surfaces for a definite HTTP rejection. */
@@ -44,7 +44,7 @@ function answerRejectingPlatform(error: unknown): Platform & { sent: string[] } 
       if (content.includes('precious partial answer')) throw error
       p.sent.push(content)
     },
-  }) as Platform & { sent: string[] }
+  })
 }
 
 /**
@@ -62,7 +62,7 @@ function previewRecordingPlatform(): Platform & { sent: string[]; patches: strin
     async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
       patches.push(JSON.stringify(content))
     },
-  }) as Platform & { sent: string[]; patches: string[] }
+  })
 }
 
 /**
@@ -95,7 +95,7 @@ function failingTerminalCardPlatform(error: unknown, failAnswerOnce: boolean): P
       }
       p.sent.push(content)
     },
-  }) as Platform & { sent: string[]; patches: string[] }
+  })
 }
 
 /**

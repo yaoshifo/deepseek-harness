@@ -19,9 +19,11 @@
 
 | 工具包 | 模型可见名称 | 依赖 | 写入／影响 | 随产品发布的别名 | 部署说明 |
 | --- | --- | --- | --- | --- | --- |
+| `@deepseek-ai/dsh-mcp-resources` | `list_mcp_resource_templates`, `list_mcp_resources`, `read_mcp_resource` | `ctx.tools`, `ctx.mcpResources` | `tool/call`, `tool/result` | - | - |
+| `@deepseek-ai/dsh-experimental-browser-use-stagehand-native` | `stagehand_act`、`stagehand_extract`、`stagehand_navigate`、`stagehand_observe`、`stagehand_screenshot`、`stagehand_tabs` | `ctx.browserUse`、`ctx.agents`、`ctx.tools`、`ctx.systemPrompt` | `tool/call`、`tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-ask-user` | `ask_user_question` | `ctx.tools`、`ctx.userQuestions` | `tool/call`、`tool/result after a UI/provider answers the question` | - | ask_user_question 会暂停工具调用，直到当前 UI 提供方返回人类答案。 |
-| `@deepseek-ai/dsh-tools` | `run_code` | `ctx.tools`、`ctx.codeRuntime (execution time)`、`ctx.systemPrompt` | `tool/call`、`one tool/ptc-dispatch-start + tool/ptc-dispatch pair per bridged sub-call`、`tool/result` | - | 在 `mode: ptc`／`mode: both` 下，它由工具注册表所有，作为可过滤能力层之外的保留传输机制（参见 PTC mode Agent Note）。在 `ptc` 下，它是注册表对协议格式（wire format）的唯一贡献；其他可见能力在使用已加载运行时语言生成的 SDK 章节中声明。程序通过 binding 调用这些能力，调用按照原生并发约定调度：启动顺序和策略遵循提交顺序，并发安全的函数体最多重叠执行 `maxParallelSubCalls` 个。调用会重新进入完整且受守卫保护的工具流水线，并将每个嵌套执行关联到此外层结果。 |
-| `@deepseek-ai/dsh-plan-mode` | `exit_plan_mode` | `ctx.tools`、`ctx.systemPrompt`、`ctx.userQuestions (execution time, opportunistic)` | `tool/call`、`plan/mode inactive on an approved review`、`tool/result` | - | 规划未激活时，exit_plan_mode 仍保留在面向模型的 schema 中，这样状态转换不会在规划策略变更之外额外造成工具目录变动。其执行路径会拒绝规划模式之外的调用；在规划模式下，它通过用户交互 seam 提交计划（批准／根据反馈继续规划），批准后会在步骤边界记录规划模式已停用；设置 `rejectionHold` 时，被拒绝的评审会让本回合剩余时间内的后续退出调用失败，用户的下一条消息解除锁定。 |
+| `@deepseek-ai/dsh-tools` | `run_code` | `ctx.tools`、`ctx.ptcRuntime (execution time)`、`ctx.systemPrompt` | `tool/call`、`one tool/ptc-dispatch-start + tool/ptc-dispatch pair per bridged sub-call`、`tool/result` | - | 在 `mode: ptc`／`mode: both` 下，它由工具注册表所有，作为可过滤能力层之外的保留传输机制（参见 PTC mode Agent Note）。在 `ptc` 下，它是注册表对协议格式（wire format）的唯一贡献；其他可见能力在使用已加载运行时语言生成的 SDK 章节中声明。程序通过 binding 调用这些能力，调用按照原生并发约定调度：启动顺序和策略遵循提交顺序，并发安全的函数体最多重叠执行 `maxParallelSubCalls` 个。调用会重新进入完整且受守卫保护的工具流水线，并将每个嵌套执行关联到此外层结果。 |
+| `@deepseek-ai/dsh-plan-mode` | `exit_plan_mode` | `ctx.tools`、`ctx.systemPrompt`、`ctx.userQuestions (execution time, opportunistic)` | `tool/call`、`plan/mode inactive on an approved review`、`tool/result` | - | 规划未激活时，exit_plan_mode 仍保留在面向模型的 schema 中，这样状态转换不会在规划策略变更之外额外造成工具目录变动。其执行路径会拒绝规划模式之外的调用；在规划模式下，它通过用户交互 seam 提交计划（批准／根据反馈继续规划），批准后会在步骤边界记录规划模式已停用。 |
 | `@deepseek-ai/dsh-tool-bash` | `bash` | `ctx.tools`、`ctx.shell`、`ctx.systemPrompt`、`ctx.shellEnv`、`ctx.jobs at call time for run_in_background` | `tool/call`、`tool/result` | - | bash 工具是 bash 执行器 seam 面向模型的消费方。使用 `run_in_background` 的运行会注册到通用 `ctx.jobs` 运行时，并通过 `job_*` 工具（来自 `@deepseek-ai/dsh-tool-jobs`）收集／停止；禁用 `enableRunInBackground` 配置（默认为 true）后，该参数会被完全移除。 |
 | `@deepseek-ai/dsh-tool-present` | `present` | `ctx.tools`, `ctx.fs`, `ctx.sessionProjections` | `tool/call`, `deliverables/presented 在成功的最终结果之后`, `tool/result` | - | 交付归调用方 Session 所有；Web ui-deliverables 提供源文件打开与卡片。 |
 | `@deepseek-ai/dsh-tool-pwsh` | `pwsh` | `ctx.tools`、`ctx.shell`、`ctx.systemPrompt`、`ctx.shellEnv`、`ctx.jobs at call time for run_in_background` | `tool/call`、`tool/result` | - | pwsh 工具是 Windows 组合中 bash 执行器 seam 的 PowerShell 方言消费方（由 `@deepseek-ai/dsh-pwsh-local` 等 PowerShell 执行器为 `ctx.shell` 提供后端）；除沙箱接口外，它逐项对应 bash 工具调用。使用 `run_in_background` 的运行会注册到通用 `ctx.jobs` 运行时，并通过 `job_*` 工具收集／停止；托管的 `DSH_*` 环境来自 `@deepseek-ai/dsh-shell-env`。每次调用都在新进程中运行，不使用持久 PTY 会话。路径采用原生 `C:\...` 形式，变量采用 `$env:NAME`。 |
@@ -47,6 +49,333 @@
 | `@deepseek-ai/dsh-memory` | `memory_delete`、`memory_index`、`memory_list`、`memory_read`、`memory_write` | `ctx.tools`、`ctx.systemPrompt`、`ctx.agents`、`host ~/.claude directory` | `tool/call`、`user/message (sourced dsh-memory index injection)`、`tool/result` | - | memory 工具经宿主 `node:fs` 直接共享 Claude Code 自己的按项目记忆目录（`~/.claude/projects/<slug>/memory/`），绝不经过可替换的 `ctx.fs` provider。`maxIndexBytes` 必填且无默认，本目录声明其取值：25,600，即 Claude Code 会话开始的读取预算。该插件还贡献记忆策略系统提示 section 与一次性的会话开始 MEMORY.md 索引注入；模型可见的策略文本与工具描述见包 README。 |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`、`ctx.workflowEngine`、`ctx.systemPrompt`、`a calling Agent (exec.agent parents the script children)` | `tool/call`、`tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`、`web_search` | `ctx.tools`、`ctx.web`、`ctx.systemPrompt` | `tool/call`、`tool/result` | - | web_search 和 web_fetch 将提供方选择置于 ctx.web 之后，使模型可见 schema 在更换后端时保持稳定。 |
+
+<a id="deepseek-aidsh-mcp-resources"></a>
+
+## `@deepseek-ai/dsh-mcp-resources`
+
+### `list_mcp_resource_templates`
+
+列出 MCP 服务器提供的参数化资源 URI 模板。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "server": {
+      "type": "string",
+      "description": "Configured MCP server name."
+    },
+    "cursor": {
+      "type": "string",
+      "description": "Continuation cursor returned by this server."
+    }
+  },
+  "required": [
+    "server"
+  ]
+}
+```
+
+来源： [`packages/mcp/mcp-resources/src/tools.ts`](../packages/mcp/mcp-resources/src/tools.ts)
+
+### `list_mcp_resources`
+
+列出 MCP 服务器提供的资源。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "server": {
+      "type": "string",
+      "description": "Configured MCP server name."
+    },
+    "cursor": {
+      "type": "string",
+      "description": "Continuation cursor returned by this server."
+    }
+  },
+  "required": [
+    "server"
+  ]
+}
+```
+
+来源： [`packages/mcp/mcp-resources/src/tools.ts`](../packages/mcp/mcp-resources/src/tools.ts)
+
+### `read_mcp_resource`
+
+按 URI 从指定服务器读取 MCP 资源。使用已列出的 URI 或展开后的资源模板。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "server": {
+      "type": "string",
+      "description": "Configured MCP server name."
+    },
+    "uri": {
+      "type": "string",
+      "description": "Resource URI to read."
+    }
+  },
+  "required": [
+    "server",
+    "uri"
+  ]
+}
+```
+
+来源： [`packages/mcp/mcp-resources/src/tools.ts`](../packages/mcp/mcp-resources/src/tools.ts)
+
+<a id="deepseek-aidsh-experimental-browser-use-stagehand-native"></a>
+
+## `@deepseek-ai/dsh-experimental-browser-use-stagehand-native`
+
+### `stagehand_act`
+
+使用配置的 Stagehand 模型执行一次自然语言浏览器操作。
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "pageId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "instruction"
+  ],
+  "additionalProperties": false
+}
+```
+
+来源：[`packages/experimental/browser-use-stagehand-native/src/index.ts`](../packages/experimental/browser-use-stagehand-native/src/index.ts)
+
+### `stagehand_extract`
+
+使用配置的 Stagehand 模型与可选的 JSON Schema 提取页面数据。
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "pageId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/__schema0"
+      }
+    }
+  },
+  "required": [
+    "instruction"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+来源：[`packages/experimental/browser-use-stagehand-native/src/index.ts`](../packages/experimental/browser-use-stagehand-native/src/index.ts)
+
+### `stagehand_navigate`
+
+将 Stagehand 浏览器标签页导航至指定 URL。
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "pageId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "url": {
+      "type": "string",
+      "format": "uri"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "additionalProperties": false
+}
+```
+
+来源：[`packages/experimental/browser-use-stagehand-native/src/index.ts`](../packages/experimental/browser-use-stagehand-native/src/index.ts)
+
+### `stagehand_observe`
+
+使用配置的 Stagehand 模型查找符合指令的浏览器操作。
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "pageId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "instruction"
+  ],
+  "additionalProperties": false
+}
+```
+
+来源：[`packages/experimental/browser-use-stagehand-native/src/index.ts`](../packages/experimental/browser-use-stagehand-native/src/index.ts)
+
+### `stagehand_screenshot`
+
+截取 Stagehand 标签页图像以供视觉检查。
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "pageId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fullPage": {
+      "default": false,
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "fullPage"
+  ],
+  "additionalProperties": false
+}
+```
+
+来源：[`packages/experimental/browser-use-stagehand-native/src/index.ts`](../packages/experimental/browser-use-stagehand-native/src/index.ts)
+
+### `stagehand_tabs`
+
+列出、创建、选择或关闭 Stagehand 浏览器标签页。
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "list"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "new"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "select",
+            "close"
+          ]
+        },
+        "pageId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "action",
+        "pageId"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "type": "object"
+}
+```
+
+来源：[`packages/experimental/browser-use-stagehand-native/src/index.ts`](../packages/experimental/browser-use-stagehand-native/src/index.ts)
 
 <a id="deepseek-aidsh-tool-ask-user"></a>
 
@@ -145,6 +474,22 @@ ask_user_question 会暂停工具调用，直到当前 UI 提供方返回人类�
     "description": {
       "type": "string",
       "description": "Clear, concise description of what this program does in active voice, 5-10 words (shown in the UI). Examples: \"Count TODO markers across packages\"; \"Read failing test and its fixture\"; \"Rename config key in every cordis.yml\"."
+    },
+    "timeoutMs": {
+      "type": "number",
+      "description": "Positive elapsed-time budget in milliseconds, capped by the deployment maximum."
+    },
+    "sandbox_permissions": {
+      "type": "string",
+      "description": "Wider sandbox mode for this complete program execution; requires justification and approval.",
+      "enum": [
+        "workspace-write",
+        "danger-full-access"
+      ]
+    },
+    "justification": {
+      "type": "string",
+      "description": "Reason this complete program needs wider access, shown to the user for approval."
     }
   },
   "required": [
@@ -164,7 +509,7 @@ ask_user_question 会暂停工具调用，直到当前 UI 提供方返回人类�
 
 ### `exit_plan_mode`
 
-仅在规划模式下使用。提交计划供用户评审，并在获批后退出规划模式。发送**完整的** Markdown 计划，以一个为计划命名的 # 标题开头——`plan` 携带白话层，`details` 携带实施细节层。用户可以批准（从你的下一步骤起执行计划），也可以继续规划——其反馈会通过工具结果返回。可选的 `details` 参数在计划之后携带实施细节附录；能力足够的 UI 默认折叠呈现。计划内嵌的实施细节段会被拒绝，除非其内容已随 `details` 提交。
+仅在规划模式下使用。提交计划供用户评审，并在获批后退出规划模式。发送**完整的** Markdown 计划，以一个为计划命名的 # 标题开头。用户可以批准（从你的下一步骤起执行计划），也可以要求继续规划；其反馈会通过工具结果返回，请修改后再次提交。
 
 ```json
 {
@@ -187,7 +532,7 @@ ask_user_question 会暂停工具调用，直到当前 UI 提供方返回人类�
 
 来源：[`packages/plan/plan-mode/src/index.ts`](../packages/plan/plan-mode/src/index.ts)
 
-规划未激活时，exit_plan_mode 仍保留在面向模型的 schema 中，这样状态转换不会在规划策略变更之外额外造成工具目录变动。其执行路径会拒绝规划模式之外的调用；在规划模式下，它通过用户交互 seam 提交计划（批准／根据反馈继续规划），批准后会在步骤边界记录规划模式已停用；设置 `rejectionHold` 时，被拒绝的评审会让本回合剩余时间内的后续退出调用失败，用户的下一条消息解除锁定。
+规划未激活时，exit_plan_mode 仍保留在面向模型的 schema 中，这样状态转换不会在规划策略变更之外额外造成工具目录变动。其执行路径会拒绝规划模式之外的调用；在规划模式下，它通过用户交互 seam 提交计划（批准／根据反馈继续规划），批准后会在步骤边界记录规划模式已停用。
 
 <a id="deepseek-aidsh-tool-bash"></a>
 
@@ -1259,7 +1604,7 @@ create、edit、pause 和 resume 要求直接来自人类的根权限；complete
 
 ### `lsp`
 
-查询语言服务器，以精确导航代码。workspaceSymbol 按名称在整个工作区查找符号——无需坐标；传入 file_path（与符号同语言的一个文件）可让查询路由到该语言的服务器，这也让按项目区分的服务器（TypeScript）保持应答。它返回 path:line:character，可直接传给 goToDefinition、findReferences、goToImplementation 或 hover——这些操作按符号上从 1 开始的 UTF-16 行与列取坐标。findReferences 包含声明。
+查询语言服务器，以精确导航代码。operation 可取 goToDefinition、findReferences、goToImplementation 或 hover。line 和 character 是从 1 开始的 UTF-16 光标坐标。findReferences 包含声明。
 
 ```json
 {
@@ -1622,7 +1967,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `subagent`
 
-将一项自包含任务委派给 subagent（在自身上下文中工作的独立 agent），用它卸载聚焦且独立的工作，例如研究、限定范围的实现或分析，以免消耗当前对话的上下文。subagent 会返回结果，但不会返回中间步骤。请提供完整、独立的提示词，因为它看不到当前对话。子级共享本会话的工作目录及其指令文件；一次委派不能将其重定向到其他目录。此调用默认等待结果。设置 `run_in_background: true` 可返回 job id；使用 `job_output` 收集结果，使用 `job_kill` 停止任务。
+将一项自包含任务委派给 subagent（在自身上下文中工作的独立 agent），用它卸载聚焦且独立的工作，例如研究、限定范围的实现或分析，以免消耗当前对话的上下文。subagent 会返回结果，但不会返回中间步骤。请提供完整、独立的提示词，因为它看不到当前对话。此调用默认等待结果。设置 `run_in_background: true` 可返回 job id；使用 `job_output` 收集结果，使用 `job_kill` 停止任务。
 
 ```json
 {
@@ -1751,6 +2096,8 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 ```
 
 来源：[`packages/subagent/tool-subagent-report/src/index.ts`](../packages/subagent/tool-subagent-report/src/index.ts)
+
+<a id="deepseek-aidsh-tool-jobs"></a>
 
 <a id="deepseek-aidsh-tool-jobs"></a>
 
@@ -2170,7 +2517,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为检查清单。`allowParallelInProgress` 是没有默认值的必填项，因此本目录明确选择 `true`，对应描述允许同时存在多个 `in_progress` 项。选择 `false` 的部署会获得同一工具，但描述会要求只能有 1 个活动任务。
 
-
+<a id="deepseek-aidsh-tool-workflow"></a>
 ## `@deepseek-ai/dsh-memory`
 
 ### `memory_delete`
@@ -2200,8 +2547,8 @@ todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为
 }
 ```
 
-Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/index.ts)
 
+来源：[`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/index.ts)
 ### `memory_index`
 
 这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。传入 scope: 'global' 可改为操作跨项目的全局记忆目录；你的指令中的 Memory 一节说明了哪些事实属于那里。按记忆文件名在 MEMORY.md 索引中新增/更新或删除一行指针。优先用它，而不是用 memory_write 重写整个索引。
@@ -2246,8 +2593,8 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 }
 ```
 
-Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/index.ts)
 
+来源：[`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/index.ts)
 ### `memory_list`
 
 这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。传入 scope: 'global' 可改为操作跨项目的全局记忆目录；你的指令中的 Memory 一节说明了哪些事实属于那里。列出记忆目录中的全部文件及其字节大小与修改时间。MEMORY.md 是索引；其余每个文件是一条记住的事实。
@@ -2268,8 +2615,8 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 }
 ```
 
-Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/index.ts)
 
+来源：[`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/index.ts)
 ### `memory_read`
 
 这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。传入 scope: 'global' 可改为操作跨项目的全局记忆目录；你的指令中的 Memory 一节说明了哪些事实属于那里。逐字读取一个文件，例如 MEMORY.md 或某个主题记忆文件。
@@ -2297,8 +2644,8 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 }
 ```
 
-Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/index.ts)
 
+来源：[`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/index.ts)
 ### `memory_write`
 
 这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。传入 scope: 'global' 可改为操作跨项目的全局记忆目录；你的指令中的 Memory 一节说明了哪些事实属于那里。写入完整内容的记忆文件（整文件替换，不做局部编辑）。目录按需创建，无需 mkdir。frontmatter 溯源（node_type、originSessionId）会自动回填。写完记忆文件后，用 memory_index 在 MEMORY.md 中新增或更新其单行指针。
@@ -2331,11 +2678,13 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 }
 ```
 
-Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/index.ts)
 
 memory 工具经宿主 `node:fs` 直接共享 Claude Code 自己的按项目记忆目录（`~/.claude/projects/<slug>/memory/`），绝不经过可替换的 `ctx.fs` provider。`maxIndexBytes` 必填且无默认，本目录声明其取值：25,600，即 Claude Code 会话开始的读取预算。该插件还贡献记忆策略系统提示 section 与一次性的会话开始 MEMORY.md 索引注入；模型可见的策略文本与工具描述见包 README。
 
 <a id="deepseek-aidsh-tool-workflow"></a>
+
+来源：[`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/index.ts)
+
 
 ## `@deepseek-ai/dsh-tool-workflow`
 
@@ -2431,7 +2780,6 @@ memory 工具经宿主 `node:fs` 直接共享 Claude Code 自己的按项目记�
 
 来源：[`packages/workflow/tool-workflow/src/index.ts`](../packages/workflow/tool-workflow/src/index.ts)
 
-<a id="deepseek-aidsh-tool-web"></a>
 
 ## `@deepseek-ai/dsh-tool-web`
 

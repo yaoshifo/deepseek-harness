@@ -1,7 +1,10 @@
 /** Lazy libc execve and descriptor bindings used by the one-shot Linux bootstrap. */
 
 import { getSystemErrorMessage, getSystemErrorName } from 'node:util'
-import koffi from 'koffi'
+import { SUBPROCESS_CONTROL_FD } from '@deepseek-ai/dsh-subprocess/control'
+import { createLazyRequire } from '@deepseek-ai/dsh-lazy-require'
+
+const requireKoffi = createLazyRequire<typeof import('koffi')['default']>('koffi', import.meta.url)
 
 /**
  * Replace the current process image while preserving the supplied argv and
@@ -12,6 +15,7 @@ export type LinuxExecve = (
   file: string,
   argv: string[],
   env: Record<string, string>,
+  control?: 'pipe',
 ) => never
 
 type NativeExecve = (
@@ -51,6 +55,7 @@ function systemError(errno: number, syscall: string, path?: string): Error {
  */
 export function loadLinuxExecve(): LinuxExecve {
   if (cachedExecve !== undefined) return cachedExecve
+  const koffi = requireKoffi()
   const libc = koffi.load(null)
   const nativeExecve = libc.func(
     'int execve(const char *pathname, const char **argv, const char **envp)',
@@ -58,12 +63,15 @@ export function loadLinuxExecve(): LinuxExecve {
   const nativeFcntl = libc.func(
     'int fcntl(int fd, int cmd, int arg)',
   ) as NativeFcntl
-  cachedExecve = (file, argv, env) => {
+  cachedExecve = (file, argv, env, control) => {
     // The hosting Node runtime leaves pipe-backed stdio non-blocking and
     // execve preserves status flags, so a full pipe would fail the target's
     // writes with EAGAIN instead of blocking; every fd_spawn'd or
     // posix_spawn'd child gets blocking stdio, and the exec'd target must too.
-    for (const fd of STANDARD_FILE_DESCRIPTORS) {
+    const descriptors = control === 'pipe'
+      ? [...STANDARD_FILE_DESCRIPTORS, SUBPROCESS_CONTROL_FD]
+      : STANDARD_FILE_DESCRIPTORS
+    for (const fd of descriptors) {
       const flags = nativeFcntl(fd, F_GETFD, 0)
       if (flags === -1) throw systemError(koffi.errno(), 'fcntl')
       if ((flags & FD_CLOEXEC) !== 0) {

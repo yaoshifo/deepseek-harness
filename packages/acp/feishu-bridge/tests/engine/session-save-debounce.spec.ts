@@ -101,7 +101,7 @@ describe('SIGTERM flush of pending debounced saves', () => {
     const path = await tempSessionsPath()
     // The handler re-raises SIGTERM to keep dying-by-signal semantics; spy
     // it so the emitted (not killed) signal cannot take the worker down.
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as never)
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
     const e = new Engine('test', createStubAgent(), [createStubPlatform('test')], path, 'en')
     try {
       e.sessions.getOrCreateActive('user1')

@@ -20,7 +20,7 @@ import {
   newStubMessage,
   type ControllableAgentSession,
 } from '../stubs/engine-stubs.ts'
-import type { AgentSession, Event, Message, Platform, ProgressContent } from '../../src/core/types.ts'
+import type { Event, Message, Platform, ProgressContent } from '../../src/core/types.ts'
 
 /** Platform recording the header state of every preview send/PATCH. */
 function createPreviewStatesPlatform(): Platform & { states: Array<string | undefined> } {
@@ -173,7 +173,7 @@ describe('turn-loop catch handlers settle the card they left running', () => {
 
     // Turn 2 throws before installing its own card, so the escaping error
     // reaches the catch with turn 1's settled card still on the state.
-    sess.send = (() => { throw new Error('prompt send threw') }) as unknown as AgentSession['send']
+    sess.send = (() => { throw new Error('prompt send threw') })
     expect(session.tryLock()).toBe(true)
     await e.processInteractiveMessageWith(p, turnMessage(), session, key)
 

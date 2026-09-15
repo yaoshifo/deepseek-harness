@@ -26,7 +26,7 @@ function resultAgent(text: string): Agent {
   return {
     ...base,
     startSession: async () => newResultAgentSession(text),
-  } as Agent
+  }
 }
 
 function msg(content: string): Message {
@@ -59,7 +59,7 @@ function flakyPlatform(error: unknown): Platform & { sent: string[] } {
   }
   return Object.assign(p, {
     classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' => classifyDeliveryFailure(err),
-  }) as Platform & { sent: string[] }
+  })
 }
 
 /**
@@ -85,7 +85,7 @@ function segmentedAgent(): Agent {
       }
       return s
     },
-  } as Agent
+  }
 }
 
 /**
@@ -105,7 +105,7 @@ function segmentFlakyPlatform(error: unknown, failCount: number): Platform & { s
       }
       p.sent.push(content)
     },
-  }) as Platform & { sent: string[] }
+  })
 }
 
 /**
@@ -130,7 +130,7 @@ function degradingCardAgent(): Agent {
       }
       return s
     },
-  } as Agent
+  }
 }
 
 /**
@@ -164,7 +164,7 @@ function frozenCardPlatform(error: unknown): Platform & { sent: string[]; cards:
     send: async (_rc: unknown, _content: string) => {
       throw error
     },
-  }) as Platform & { sent: string[]; cards: unknown[]; deletes: unknown[] }
+  })
 }
 
 /**
@@ -189,7 +189,7 @@ function askFlakyPlatform(error: unknown, failCount: number): Platform & { sent:
       }
       p.sent.push(content)
     },
-  }) as Platform & { sent: string[] }
+  })
 }
 
 /**
@@ -236,7 +236,7 @@ function degradingErrorAgent(): Agent {
       }
       return s
     },
-  } as Agent
+  }
 }
 
 /**
@@ -282,7 +282,7 @@ function failingCardPlatform(error: unknown): Platform & { sent: string[]; cards
       }
       p.sent.push(content)
     },
-  }) as Platform & { sent: string[]; cards: unknown[] }
+  })
 }
 
 /**
@@ -301,7 +301,7 @@ async function runTurn(p: Platform, agent: Agent): Promise<Engine> {
 
 describe('answer delivery outcome', () => {
   it('a delivered plain-text answer records sent without a warning', async () => {
-    const p = createStubPlatform('test') as Platform & { sent: string[] }
+    const p = createStubPlatform('test')
     const e = await runTurn(p, resultAgent('final answer text'))
     expect(e.interactiveStates.get('testchat')?.answerDelivery).toBe('sent')
     expect(p.sent.join('\n')).not.toContain('⚠️')

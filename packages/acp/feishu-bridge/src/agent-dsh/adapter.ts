@@ -2980,8 +2980,8 @@ export class DshAgentSession implements AgentSession {
         if (data.target !== 'next-step') break
         type SplicedMessage = { id?: unknown; source?: { kind?: unknown; plugin?: unknown; form?: unknown } }
         const ids = ((data.inserted as Array<SplicedMessage | undefined> | undefined) ?? [])
-          .flatMap(item => item?.source?.kind === 'plugin' && item?.source?.plugin === 'tool-jobs' && item?.source?.form === 'notice'
-            && typeof item?.id === 'string' && item.id !== ''
+          .flatMap(item => item.source?.kind === 'plugin' && item.source.plugin === 'tool-jobs' && item.source.form === 'notice'
+            && typeof item.id === 'string' && item.id !== ''
             ? [item.id]
             : [])
         if (ids.length === 0) break

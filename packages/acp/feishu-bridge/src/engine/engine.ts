@@ -2083,8 +2083,8 @@ export class Engine {
    *   write failed.
    */
   private saveUndeliveredAnswer(state: InteractiveState, sessionKey: string, explicitText?: string): string | undefined {
-    const text = (explicitText ?? state.lastBaseResponse)?.trim()
-    if (text === undefined || text === '') return undefined
+    const text = (explicitText ?? state.lastBaseResponse).trim()
+    if (text === '') return undefined
     // The chat's effective workspace (per-chat override, else the agent's
     // work dir), falling back to the engine's configured base dir — the
     // save must land somewhere the user can reach even when the agent-side
