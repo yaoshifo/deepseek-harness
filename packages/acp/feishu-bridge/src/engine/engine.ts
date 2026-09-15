@@ -4209,6 +4209,11 @@ export class Engine {
     // EventResult export block, #48): cache the full reply under the green
     // card's export key, then fork a render when the display text (trailing
     // 实时播报 segment, falling back to the full reply) clears the threshold.
+    // The fork itself starts only after the terminal-card barrier below: its
+    // render-status PATCHes rebuild the card from the preview cache, and a
+    // pre-terminal cache would repaint the settled card with its running
+    // state (green → 思考中 → green, 2026-09-15 oc_1b7e).
+    let startReplyRender: (() => void) | undefined
     {
       let exportKey = ''
       const ekp = sp.previewMsgID as { exportKey?: () => string } | undefined
@@ -4226,7 +4231,7 @@ export class Engine {
       // relay their output elsewhere, so a local HTML overview is redundant.
       if (this.planRenderEnabled && Array.from(displayText).length >= defaultReplyPreRenderLen
         && !session.shouldSuppressAutoRender(this.bridge)) {
-        renderAndDeliverReply(this, state, sessionKey, displayText, exportKey)
+        startReplyRender = () => { renderAndDeliverReply(this, state, sessionKey, displayText, exportKey) }
       }
     }
 
@@ -4315,6 +4320,11 @@ export class Engine {
     // Guarantee the terminal PATCH has landed before the ✅ notification so
     // the progress card is not still mid-state when the push arrives.
     await barrier()
+
+    // Start the reply-HTML render fork only now: its first render-status
+    // PATCH rebuilds the card from the preview cache, which holds the
+    // terminal card only after the barrier above.
+    startReplyRender?.()
 
     // Answer-delivery warning (dsh-im absorption batch 1): a turn that
     // finished must not read as success when its answer did not provably
