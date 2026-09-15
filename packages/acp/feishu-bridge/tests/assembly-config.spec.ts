@@ -288,7 +288,7 @@ describe('buildProjectAssembly config wiring', () => {
         feishu: { appId: 'cli_test', appSecret: 'sec', progressStyle: 'card' },
       }],
       providers: {},
-    })
+    } as unknown as FeishuBridgeConfig)
     const stale = parsed.projects[0] as ProjectConfig
     expect((stale.feishu as unknown as Record<string, unknown>).progressStyle).toBe('card')
     expect(() => assemble(baseConfig(), stale))
