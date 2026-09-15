@@ -442,6 +442,12 @@ export class InteractiveState {
    * (2026-09-04 oc_1fbe11 incident). In-memory only; daemon restart clears it.
    */
   consumedToolIDs: Set<string> = new Set()
+  /**
+   * Notice message ids already consumed off bg_task_notice events,
+   * FIFO-capped like {@link consumedToolIDs}: a late re-projection of the
+   * same inbox splice must not drop a second pending slot. In-memory only.
+   */
+  consumedNoticeIDs: Set<string> = new Set()
 
   // ── turn surfaces shared with the ask delegate (B2) ──
   // The event loop owns these per turn, but an askUser running from the
@@ -755,6 +761,25 @@ function recordConsumedToolID(state: InteractiveState, toolID: string | undefine
   if (state.consumedToolIDs.size > ConsumedToolIDCap) {
     const oldest = state.consumedToolIDs.keys().next().value
     if (oldest !== undefined) state.consumedToolIDs.delete(oldest)
+  }
+}
+
+/** FIFO cap for {@link InteractiveState.consumedNoticeIDs}. */
+const ConsumedNoticeIDCap = 64
+
+/**
+ * Keep notice ids FIFO-capped like tool ids: an id evicted by the cap only
+ * loses its duplicate protection, and the pending-count floor bounds the
+ * worst case to one extra decrement.
+ * @param state - State consuming the notices.
+ * @param ids - Notice message ids to record.
+ */
+function recordConsumedNoticeIDs(state: InteractiveState, ids: readonly string[]): void {
+  for (const id of ids) state.consumedNoticeIDs.add(id)
+  for (let i = state.consumedNoticeIDs.size - ConsumedNoticeIDCap; i > 0; i--) {
+    const oldest = state.consumedNoticeIDs.keys().next().value
+    if (oldest === undefined) break
+    state.consumedNoticeIDs.delete(oldest)
   }
 }
 
@@ -2887,6 +2912,14 @@ export class Engine {
 
         const event = outcome.event
         state.lastEventAt = Date.now()
+        if (event.type === 'bg_task_notice') {
+          // Wake-budget exhaustion delivers notices into an idle owner's
+          // next-step inbox: consume the slot without opening a turn (the
+          // task is settled either way; the orphan-pump and spillover paths
+          // below never see this kind).
+          await this.consumeBackgroundNotices(state, state.preview, event.bgNoticeIDs ?? [])
+          continue
+        }
         if (!isSubstantiveUnsolicitedEvent(event)) continue
 
         // A tool frame naming a call a previous pump already consumed is a
@@ -3008,6 +3041,13 @@ export class Engine {
           if (p !== undefined) await this.send(p, state.replyCtx, this.i18n.tf(Msg.Error, text))
           state.eventsNeedResync = true
           return true
+        }
+        case 'bg_task_notice': {
+        // The relay's own pulls bypass the reader's pre-substantive
+        // consume: a notice landing mid-relay still settles its slot (id
+        // dedup makes a double sighting harmless).
+          await this.consumeBackgroundNotices(state, state.preview, event.bgNoticeIDs ?? [])
+          break
         }
         case 'text_delta':
         case 'thinking_delta':
@@ -3302,6 +3342,33 @@ export class Engine {
   }
 
   // ── event loop ──────────────────────────────────────────────────────────
+
+  /**
+   * Consume tool-jobs completion notices delivered into a running turn's
+   * next-step inbox: no engine-woken turn will settle for them, so their
+   * delivery itself consumes one pending run_in_background slot each. The
+   * same splice re-projected late drops nothing (id dedup), and the count
+   * never goes below zero.
+   * @param state - Interactive state holding the pending count.
+   * @param sp - The turn's streaming preview, when one is live.
+   * @param ids - Notice message ids from the splice event.
+   */
+  private async consumeBackgroundNotices(
+    state: InteractiveState,
+    sp: StreamPreview | undefined,
+    ids: readonly string[],
+  ): Promise<void> {
+    const fresh = ids.filter(id => !state.consumedNoticeIDs.has(id))
+    recordConsumedNoticeIDs(state, ids)
+    if (fresh.length === 0 || state.backgroundTasksPending <= 0) return
+    state.backgroundTasksPending = Math.max(0, state.backgroundTasksPending - fresh.length)
+    if (state.backgroundTasksPending === 0) state.bgWaitStartedAt = 0
+    if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
+      await sp.setBackgroundHint(state.backgroundTasksPending > 0
+        ? this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending)
+        : '')
+    }
+  }
 
   /**
    * Consume agent events for one turn: accumulate text/thinking, deliver the
@@ -3874,6 +3941,15 @@ export class Engine {
               })
               await sp.appendProgress(entry)
             }
+            break
+          }
+
+          case 'bg_task_notice': {
+          // A tool-jobs completion notice spliced into this running turn
+          // (busy-owner delivery, no woken turn): its arrival consumes the
+          // slot now — the settle-path decrement only covers idle-owner
+          // notices that woke a turn (2026-09-15 oc_1b7e).
+            await this.consumeBackgroundNotices(state, sp, event.bgNoticeIDs ?? [])
             break
           }
 
@@ -5401,8 +5477,11 @@ export class Engine {
         case 'todo_update':
         case 'skill_invocation':
         case 'presented':
+        case 'bg_task_notice':
           // Preview- and card-only frames have no relayed text to collect
-          // (Go's HandleRelay switch ignores them the same way).
+          // (Go's HandleRelay switch ignores them the same way). A notice
+          // here belongs to the relay session's own agent — no interactive
+          // state of this engine owns its count.
           break
         default:
           assertNever(event.type, 'relay event switch')

@@ -300,6 +300,122 @@ describe('background task hint closed loop', () => {
     expect(withHint.length).toBeGreaterThan(0)
     expect(p.messages[p.messages.length - 1]).not.toContain('background task')
   })
+
+  it('drops the count when the completion notice is spliced into the running turn', async () => {
+    const p = createPreviewRecorderPlatform()
+    const agentSession = newControllableSession('s1')
+    agentSession.send = async () => {
+      agentSession.sendCalls.push('sent')
+      agentSession.channel.push({
+        type: 'tool_use', toolName: 'bash', toolInput: '{}', toolID: 'c1', content: '', done: false,
+        toolBackground: true,
+      })
+      agentSession.channel.push({ type: 'tool_result', toolResult: 'job started', toolID: 'c1', content: '', done: false })
+      // The job settles while the turn is still running: tool-jobs splices
+      // the notice into the next-step inbox (no woken turn), the model reads
+      // it and collects the output before the turn ends (2026-09-15
+      // oc_1b7e1: the count climbed to 7 with every task already done).
+      agentSession.channel.push({ type: 'bg_task_notice', content: '', done: false, bgNoticeIDs: ['n1'] })
+      agentSession.channel.push({ type: 'text', content: 'collected via job_output', done: false })
+      agentSession.channel.push({ type: 'result', content: 'deploy finished', done: true })
+    }
+    const e = new Engine('test', createControllableAgent(agentSession), [p], '', 'en')
+    e.setDisplayConfig({ toolProgress: true })
+    const msg = {
+      sessionKey: KEY, platform: 'test', messageID: '', userID: '', userName: '',
+      chatName: '', chatType: '', content: 'deploy', originalContent: '', images: [], files: [],
+      extraContent: '', replyCtx: 'ctx', fromVoice: false, isSpawnedGroup: false,
+      isPermissionAction: false, isAskqCardAction: false, isCardAction: false,
+      parentMessageID: '', quotedText: '',
+    }
+    const session = e.sessions.getOrCreateActive(KEY)
+
+    e.receiveMessage(p, msg)
+    await waitFor(() => session.lastResult === 'deploy finished')
+
+    const state = e.interactiveStates.get(KEY)
+    // The notice's delivery — not a later woken turn — consumed the slot.
+    expect(state?.backgroundTasksPending).toBe(0)
+    // The settle path found nothing left to clear; the final card carries no hint.
+    expect(p.messages[p.messages.length - 1]).not.toContain('background task')
+  })
+
+  it('consumes a late re-projection of the same notice exactly once', async () => {
+    const p = createPreviewRecorderPlatform()
+    const agentSession = newControllableSession('s1')
+    agentSession.send = async () => {
+      agentSession.sendCalls.push('sent')
+      for (const id of ['c1', 'c2']) {
+        agentSession.channel.push({
+          type: 'tool_use', toolName: 'bash', toolInput: '{}', toolID: id, content: '', done: false,
+          toolBackground: true,
+        })
+        agentSession.channel.push({ type: 'tool_result', toolResult: 'job started', toolID: id, content: '', done: false })
+      }
+      agentSession.channel.push({ type: 'bg_task_notice', content: '', done: false, bgNoticeIDs: ['n1'] })
+      // The runtime re-projects the same splice: only one slot may drop.
+      agentSession.channel.push({ type: 'bg_task_notice', content: '', done: false, bgNoticeIDs: ['n1'] })
+      agentSession.channel.push({ type: 'result', content: 'two jobs, one delivered notice', done: true })
+    }
+    const e = new Engine('test', createControllableAgent(agentSession), [p], '', 'en')
+    e.setDisplayConfig({ toolProgress: true })
+    const msg = {
+      sessionKey: KEY, platform: 'test', messageID: '', userID: '', userName: '',
+      chatName: '', chatType: '', content: 'deploy', originalContent: '', images: [], files: [],
+      extraContent: '', replyCtx: 'ctx', fromVoice: false, isSpawnedGroup: false,
+      isPermissionAction: false, isAskqCardAction: false, isCardAction: false,
+      parentMessageID: '', quotedText: '',
+    }
+    const session = e.sessions.getOrCreateActive(KEY)
+
+    e.receiveMessage(p, msg)
+    await waitFor(() => session.lastResult === 'two jobs, one delivered notice')
+
+    expect(e.interactiveStates.get(KEY)?.backgroundTasksPending).toBe(1)
+  })
+
+  it('leaves the count at zero when a notice arrives with nothing pending', async () => {
+    const p = createPreviewRecorderPlatform()
+    const agentSession = newControllableSession('s1')
+    agentSession.send = async () => {
+      agentSession.sendCalls.push('sent')
+      // A bridge restart lost the count; the notice must not drive it negative.
+      agentSession.channel.push({ type: 'bg_task_notice', content: '', done: false, bgNoticeIDs: ['n1'] })
+      agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    }
+    const e = new Engine('test', createControllableAgent(agentSession), [p], '', 'en')
+    e.setDisplayConfig({ toolProgress: true })
+    const msg = {
+      sessionKey: KEY, platform: 'test', messageID: '', userID: '', userName: '',
+      chatName: '', chatType: '', content: 'go', originalContent: '', images: [], files: [],
+      extraContent: '', replyCtx: 'ctx', fromVoice: false, isSpawnedGroup: false,
+      isPermissionAction: false, isAskqCardAction: false, isCardAction: false,
+      parentMessageID: '', quotedText: '',
+    }
+    const session = e.sessions.getOrCreateActive(KEY)
+
+    e.receiveMessage(p, msg)
+    await waitFor(() => session.lastResult === 'done')
+
+    expect(e.interactiveStates.get(KEY)?.backgroundTasksPending).toBe(0)
+  })
+
+  it('consumes a notice arriving while idle without opening a turn', async () => {
+    const { e, agentSession, state } = armed()
+    state.backgroundTasksPending = 1
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      e.startUnsolicitedReader(e.sessions.getOrCreateActive(KEY), e.sessions, KEY)
+
+      // Wake-budget exhaustion delivers the notice to a next-step inbox while
+      // the owner is idle: the count still drops, and no orphan turn opens.
+      agentSession.channel.push({ type: 'bg_task_notice', content: '', done: false, bgNoticeIDs: ['n1'] })
+      await waitFor(() => state.backgroundTasksPending === 0)
+      expect(infoSpy.mock.calls.some(c => String(c[0]).includes('orphan turn pump started'))).toBe(false)
+    } finally {
+      infoSpy.mockRestore()
+    }
+  })
 })
 
 describe('orphan pump with frozen stream clocks (2026-08-26 oc_b46da incident)', () => {

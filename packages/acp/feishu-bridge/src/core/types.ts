@@ -246,6 +246,7 @@ export type EventKind =
   | 'todo_update'
   | 'skill_invocation'
   | 'presented'
+  | 'bg_task_notice'
 
 /** A single piece of agent output streamed to the engine (Go Event). */
 export interface Event {
@@ -290,6 +291,13 @@ export interface Event {
    * completion arrives as a later engine-woken turn.
    */
   toolBackground?: boolean
+  /**
+   * Notice message ids carried by a `bg_task_notice` event: a tool-jobs
+   * completion notice spliced into the running turn's next-step inbox
+   * (no turn is woken for it). Ids let the engine drop late
+   * re-projections of the same splice.
+   */
+  bgNoticeIDs?: string[]
 }
 
 /**

@@ -288,6 +288,60 @@ describe('projectSessionEvent turn/end stop-reason projection', () => {
   })
 })
 
+describe('projectSessionEvent agent/inbox/spliced tool-jobs notice', () => {
+  it('projects a next-step tool-jobs notice as a bg_task_notice event carrying its ids', async () => {
+    const s = newSession()
+    const events = await project(s, {
+      type: 'agent/inbox/spliced', seq: 1, time: 0,
+      data: {
+        target: 'next-step', start: 0,
+        inserted: [{
+          role: 'user', id: 'n1',
+          content: [{ type: 'text', text: 'background job bash-6 (bash: deploy) finished [status: completed, exit code: 0]. Read its output with job_output.' }],
+          source: { kind: 'plugin', plugin: 'tool-jobs', form: 'notice', summary: 'bash deploy' },
+        }],
+      },
+    })
+    expect(events).toHaveLength(1)
+    expect(events[0]?.type).toBe('bg_task_notice')
+    expect(events[0]?.bgNoticeIDs).toEqual(['n1'])
+  })
+
+  it('collects every tool-jobs notice id from one splice and skips other messages', async () => {
+    const s = newSession()
+    const events = await project(s, {
+      type: 'agent/inbox/spliced', seq: 1, time: 0,
+      data: {
+        target: 'next-step', start: 0,
+        inserted: [
+          { role: 'user', id: 'n1', content: [{ type: 'text', text: 'notice 1' }], source: { kind: 'plugin', plugin: 'tool-jobs', form: 'notice' } },
+          { role: 'user', id: 'u1', content: [{ type: 'text', text: 'steered text' }], source: { kind: 'user' } },
+          { role: 'user', id: 'n2', content: [{ type: 'text', text: 'notice 2' }], source: { kind: 'plugin', plugin: 'tool-jobs', form: 'notice' } },
+        ],
+      },
+    })
+    expect(events).toHaveLength(1)
+    expect(events[0]?.bgNoticeIDs).toEqual(['n1', 'n2'])
+  })
+
+  it('projects nothing for next-turn splices, foreign sources, and removal-only splices', async () => {
+    const notice = { role: 'user', id: 'n1', content: [{ type: 'text', text: 'notice' }], source: { kind: 'plugin', plugin: 'tool-jobs', form: 'notice' } }
+    const cases: Array<Record<string, unknown>> = [
+      { target: 'next-turn', start: 0, inserted: [notice] },
+      { target: 'next-step', start: 0, inserted: [{ role: 'user', id: 'u1', content: [{ type: 'text', text: 'x' }], source: { kind: 'user' } }] },
+      { target: 'next-step', start: 0, inserted: [{ role: 'user', id: 's1', content: [{ type: 'text', text: 'x' }], source: { kind: 'skill-invocation', name: 'explain', form: 'instructions' } }] },
+      { target: 'next-step', start: 0, inserted: [{ role: 'user', id: 'p1', content: [{ type: 'text', text: 'x' }], source: { kind: 'plugin', plugin: 'other-plugin', form: 'notice' } }] },
+      { target: 'next-step', start: 0, removedCount: 1, inserted: [] },
+      { target: 'next-step', start: 0, inserted: [{ role: 'user', content: [{ type: 'text', text: 'idless' }], source: { kind: 'plugin', plugin: 'tool-jobs', form: 'notice' } }] },
+    ]
+    for (const data of cases) {
+      const s = newSession()
+      const events = await project(s, { type: 'agent/inbox/spliced', seq: 1, time: 0, data: { ...data } })
+      expect(events, JSON.stringify(data)).toHaveLength(0)
+    }
+  })
+})
+
 describe('projectSessionEvent deliverables/presented', () => {
   it('projects a presented deliverable batch with its declared files', async () => {
     const s = newSession()

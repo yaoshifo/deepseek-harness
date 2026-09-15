@@ -2968,6 +2968,26 @@ export class DshAgentSession implements AgentSession {
         })
         break
       }
+      case 'agent/inbox/spliced': {
+        // A tool-jobs completion notice spliced into a running turn's
+        // next-step inbox arrives without waking a turn; only this splice
+        // event tells the engine the task settled, so the pending count can
+        // drop at delivery. A next-turn splice (user prompts and idle-owner
+        // notices) wakes a turn whose settle already consumes one slot —
+        // projecting it here would double-decrement. Non-tool-jobs splices
+        // (steer text, skill bodies) never track a slot; id-less notices
+        // cannot be deduplicated, so they stay unprojected.
+        if (data.target !== 'next-step') break
+        type SplicedMessage = { id?: unknown; source?: { kind?: unknown; plugin?: unknown; form?: unknown } }
+        const ids = ((data.inserted as Array<SplicedMessage | undefined> | undefined) ?? [])
+          .flatMap(item => item?.source?.kind === 'plugin' && item?.source?.plugin === 'tool-jobs' && item?.source?.form === 'notice'
+            && typeof item?.id === 'string' && item.id !== ''
+            ? [item.id]
+            : [])
+        if (ids.length === 0) break
+        this.channel.push({ type: 'bg_task_notice', content: '', done: false, bgNoticeIDs: ids })
+        break
+      }
       default:
         break
     }
