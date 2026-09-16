@@ -332,6 +332,11 @@ export interface SubtaskConfig {
   maxDepth?: number
   /** Gather-barrier fallback timeout in seconds. */
   gatherTimeoutSec?: number
+  /**
+   * Cap on a subtask report's delivered text, in code points. 0/omitted
+   * keeps the default (8192); a value below 1024 fails at load.
+   */
+  reportMaxChars?: number
 }
 
 /** /spawn //fork isolation defaults (Go [spawn]). */
@@ -651,6 +656,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   subtask: Schema.object({
     maxDepth: Schema.natural().description('Max recursive delegation depth'),
     gatherTimeoutSec: Schema.natural().description('Gather barrier fallback timeout in seconds'),
+    reportMaxChars: Schema.natural().description('Cap on a subtask report injected into the parent agent context, in code points; a longer report is truncated to head+tail with the full text saved to a file and the path appended (default 8192; 0/omitted keeps the default; below 1024 fails at load)'),
   }).description('Subtask delegation caps'),
   spawn: Schema.object({
     worktree: Schema.union(['auto', 'on', 'off']).description('Default worktree isolation'),
@@ -1464,6 +1470,11 @@ export function buildProjectAssembly(
   }
   if (config.subtask?.gatherTimeoutSec !== undefined && config.subtask.gatherTimeoutSec > 0) {
     engine.setSubtaskGatherTimeout(config.subtask.gatherTimeoutSec * 1000)
+  }
+  if (config.subtask?.reportMaxChars !== undefined && config.subtask.reportMaxChars > 0) {
+    // The setter throws below the 1024 floor: a misconfigured cap must fail
+    // the load, not silently crowd every report out with the notice line.
+    engine.setSubtaskReportMaxChars(config.subtask.reportMaxChars)
   }
   if (config.spawn?.worktree !== undefined) {
     engine.setSpawnWorktreeMode(config.spawn.worktree)

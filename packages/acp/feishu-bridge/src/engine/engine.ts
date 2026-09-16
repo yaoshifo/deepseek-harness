@@ -117,6 +117,7 @@ import type { UsageProvider } from './usage.ts'
 import { hookSigtermFlush, Session, SessionManager } from './session.ts'
 import { pendingDirFor, saveFilesToDir, saveImagesToDir, spliceStagedAttachments, type StagedAttachment } from './attachments.ts'
 import { childLabel, failureBriefForAgentContext, SubtaskGather } from './subtask.ts'
+import { DEFAULT_SUBTASK_REPORT_MAX_CHARS, MIN_SUBTASK_REPORT_MAX_CHARS } from './subtask-report-cap.ts'
 import {
   createWorktree,
   gitDiffShortstat,
@@ -1093,6 +1094,8 @@ export class Engine {
   subtaskPanelStallMs: number = 120_000
   /** Gather barrier fallback timeout; 0 = defaultSubtaskGatherTimeout (Go subtaskGatherTimeout). */
   subtaskGatherTimeout: number = 0
+  /** Cap on a subtask report's delivered text, in code points (`subtask.reportMaxChars`). */
+  private subtaskReportMaxCharsValue: number = DEFAULT_SUBTASK_REPORT_MAX_CHARS
   /** LLM group-name generation switches (Go groupName* fields). */
   groupNameEnabled: boolean = false
   /** Provider route for group-name queries; '' = the active provider. */
@@ -6532,6 +6535,18 @@ export class Engine {
   }
 
   /**
+   * Override the subtask report cap (`subtask.reportMaxChars`).
+   * @param n - Cap in code points; below the floor throws (a cap that small
+   *   would crowd every report out with the notice line alone).
+   */
+  setSubtaskReportMaxChars(n: number): void {
+    if (n < MIN_SUBTASK_REPORT_MAX_CHARS) {
+      throw new Error(`subtask.reportMaxChars must be at least ${MIN_SUBTASK_REPORT_MAX_CHARS} (got ${n})`)
+    }
+    this.subtaskReportMaxCharsValue = n
+  }
+
+  /**
    * Suppress the settlement card for unattended native subtask reports; the
    * parent-agent wake is always delivered. Attended group children keep their
    * cards regardless.
@@ -8239,6 +8254,14 @@ export class Engine {
    */
   subtaskGatherTimeoutDuration(): number {
     return this.subtaskGatherTimeout > 0 ? this.subtaskGatherTimeout : defaultSubtaskGatherTimeout
+  }
+
+  /**
+   * The effective subtask report cap, in code points.
+   * @returns The configured cap (defaults to DEFAULT_SUBTASK_REPORT_MAX_CHARS).
+   */
+  subtaskReportMaxChars(): number {
+    return this.subtaskReportMaxCharsValue
   }
 
   /**

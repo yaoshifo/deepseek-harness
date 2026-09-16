@@ -393,6 +393,16 @@ describe('buildProjectAssembly config wiring', () => {
     expect(engine.subtaskGatherTimeout).toBe(60_000)
   })
 
+  it('wires subtask.reportMaxChars (default 8192; below-floor fails the load)', () => {
+    expect(assemble(baseConfig()).engine.subtaskReportMaxChars()).toBe(8192)
+    expect(assemble({ ...baseConfig(), subtask: { reportMaxChars: 4096 } }).engine.subtaskReportMaxChars()).toBe(4096)
+    // 0/omitted keeps the default (explicit opt-out of the override).
+    expect(assemble({ ...baseConfig(), subtask: { reportMaxChars: 0 } }).engine.subtaskReportMaxChars()).toBe(8192)
+    // A cap below the 1024 floor fails the load instead of silently crowding
+    // every report out with the notice line.
+    expect(() => assemble({ ...baseConfig(), subtask: { reportMaxChars: 100 } })).toThrow()
+  })
+
   it('wires spawn.worktree (Go SetSpawnWorktreeMode)', () => {
     expect(assemble({ ...baseConfig(), spawn: { worktree: 'auto' } }).engine.spawnWorktree).toBe(WorktreeMode.Auto)
     expect(assemble({ ...baseConfig(), spawn: { worktree: 'off' } }).engine.spawnWorktree).toBe(WorktreeMode.ForceOff)

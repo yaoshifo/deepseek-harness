@@ -79,6 +79,8 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   subtask_settlement_abnormal: { en: '⚠️ The subtask ended abnormally (%s) before it finished.', zh: '⚠️ 子任务异常结束（%s），未完成。' },
   subtask_settlement_diagnostic: { en: 'Diagnostic: %s', zh: '诊断：%s' },
   subtask_settlement_no_output: { en: '(The subtask left no closing output.)', zh: '（子任务未留下收尾输出。）' },
+  subtask_report_truncated: { en: '(report exceeded the %d-character cap; %d middle characters omitted; full text saved at: %s)', zh: '（汇报超 %d 字符上限，中段省略 %d 字符；全文已保存：%s）' },
+  subtask_report_truncated_unsaved: { en: "(report exceeded the %d-character cap and was truncated; the full text could not be saved — the original stays in that child's session log; ask for it via feishu_bridge_subtask action: send)", zh: '（汇报超 %d 字符上限已截断；全文未能落盘——原文仍在该子任务的会话记录中，可用 feishu_bridge_subtask（action: send）向它追问全文）' },
   subtask_turn_failed: { en: '⚠️ The subtask turn failed: %s', zh: '⚠️ 子任务回合失败：%s' },
   subtask_turn_interrupted: { en: '⚠️ The subtask agent process exited mid-turn; the following is its partial output.', zh: '⚠️ 子任务进程中断，以下为部分输出。' },
   subtask_panel_title: { en: 'Background subtasks · %d running', zh: '后台子任务 · %d 个运行中' },
