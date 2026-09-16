@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { fitTextToRect, renderTreemapHTML, squarify, treemapSegments } from '../src/context/treemap.ts'
+import { fitRectText, renderTreemapHTML, squarify, treemapSegments } from '../src/context/treemap.ts'
 import type { ContextSnapshotValues, ContextTimelineValue } from '../src/context/types.ts'
 
 /** One wire-shaped timeline overridable per test. */
@@ -186,27 +186,45 @@ describe('renderTreemapHTML', () => {
   })
 })
 
-describe('fitTextToRect', () => {
+describe('fitRectText', () => {
   it('keeps text that fits the rectangle and truncates what does not', () => {
-    // 200×120 holds five 12px lines over a 192px text column (≈ 80 CJK runes).
     const box = { x: 0, y: 0, w: 200, h: 120 }
-    expect(fitTextToRect('短文本', box)).toBe('短文本')
+    expect(fitRectText('短文本', box)).toEqual({ label: '短文本', tokens: true, bare: false })
     const long = '很长的一段提示词'.repeat(50)
-    const fitted = fitTextToRect(long, box)
-    expect(fitted.endsWith('…')).toBe(true)
-    expect(Array.from(fitted).length).toBeLessThan(Array.from(long).length)
-    expect(long.startsWith(fitted.slice(0, -1))).toBe(true)
+    const fit = fitRectText(long, box)
+    expect(fit.label.endsWith('…')).toBe(true)
+    expect(Array.from(fit.label).length).toBeLessThan(Array.from(long).length)
+    expect(long.startsWith(fit.label.slice(0, -1))).toBe(true)
   })
 
-  it('returns nothing when the rectangle cannot hold one text line', () => {
-    expect(fitTextToRect('文本', { x: 0, y: 0, w: 200, h: 30 })).toBe('')
-    expect(fitTextToRect('文本', { x: 0, y: 0, w: 4, h: 300 })).toBe('')
+  it('renders the text but drops the token row when the box is a hair too short for both', () => {
+    // The reported case: 125×39.7 holds 29.7px of content — one 16.2px text
+    // line fits, the 15.2px token row does not.
+    const fit = fitRectText('帮我看看这个报错是怎么回事', { x: 0, y: 0, w: 125, h: 39.7 })
+    expect(fit.bare).toBe(false)
+    expect(fit.tokens).toBe(false)
+    expect(fit.label).not.toBe('')
+    expect(fit.label.startsWith('帮我看看这个报错是')).toBe(true)
+  })
+
+  it('fills a narrow tall column instead of hiding it behind a width threshold', () => {
+    // The other reported case: a 46px-wide column still fits three runes a line.
+    const fit = fitRectText('好，按这个思路修', { x: 0, y: 0, w: 46, h: 242.7 })
+    expect(fit.bare).toBe(false)
+    expect(fit.label).toBe('好，按这个思路修')
+    expect(fit.tokens).toBe(true)
+  })
+
+  it('marks boxes too small for any text as bare with no label', () => {
+    expect(fitRectText('文本', { x: 0, y: 0, w: 200, h: 25 })).toEqual({ label: '', tokens: false, bare: true })
+    expect(fitRectText('文本', { x: 0, y: 0, w: 4, h: 300 })).toEqual({ label: '', tokens: false, bare: true })
+    expect(fitRectText('文本', { x: 0, y: 0, w: 0, h: 0 })).toEqual({ label: '', tokens: false, bare: true })
   })
 
   it('fits fewer CJK runes than Latin ones in the same box', () => {
     const box = { x: 0, y: 0, w: 200, h: 120 }
-    const cjk = Array.from(fitTextToRect('提'.repeat(200), box)).length
-    const latin = Array.from(fitTextToRect('a'.repeat(200), box)).length
+    const cjk = Array.from(fitRectText('提'.repeat(200), box).label).length
+    const latin = Array.from(fitRectText('a'.repeat(200), box).label).length
     expect(cjk).toBeLessThan(latin)
     expect(cjk).toBeGreaterThan(1)
   })

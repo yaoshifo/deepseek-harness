@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-16-feishu-bridge-context-treemap.md
-2026-09-16-feishu-bridge-context-treemap.md: 294a8f8872da446ab88d396aa0a8570f112992dc
-2026-09-16-feishu-bridge-context-treemap.zh.md: 6aa64ce84b7363ec85fa74d7182cb2e2ee5f8b24
+2026-09-16-feishu-bridge-context-treemap.md: 5ec43c4921ba3cced37c717bf571fcb79e62292a
+2026-09-16-feishu-bridge-context-treemap.zh.md: 164fb01eb9d4527033d55bbf0532c237a79980c9

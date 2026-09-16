@@ -32,17 +32,17 @@ const BAND_GAP = 8
 /** Height of a band's header strip (its label row). */
 const BAND_HEAD_H = 26
 
-/** A rectangle below either threshold renders as a color block (CSS hides its label). */
-const LABEL_MIN_W = 56
-const LABEL_MIN_H = 26
+/** Below either size a rectangle renders as a plain color block. */
+const LABEL_MIN_W = 24
+const LABEL_MIN_H = 27
 
-/** In-rectangle text metrics (must track the body CSS: 12px/1.35 content, 11px token line). */
+/** In-rectangle text metrics (must track the body CSS: 12px/1.35 content, 11px token row). */
 const CONTENT_FONT_PX = 12
 const CONTENT_LINE_PX = 16.2
-const TOKENS_LINE_PX = 16
+const TOKENS_ROW_PX = 15.2
 
-/** Rectangle padding, both sides summed (`.seg { padding: 4px }`). */
-const SEG_PAD_PX = 8
+/** Content-box inset, both sides summed (`.seg` padding 4px + 1px border, border-box). */
+const SEG_INSET_PX = 10
 
 /** The dropped-nodes placeholder's gray (outside the six-bucket palette). */
 const DROPPED_COLOR = '#64748b'
@@ -236,30 +236,42 @@ function runeEm(ch: string): number {
   return wide ? 1 : 0.55
 }
 
+/** How one rectangle renders its text: the fitted label, whether the token row fits, and whether the box is too small for any text. */
+export interface RectTextFit {
+  /** The fitted prompt text, cut with an ellipsis; empty when no line fits. */
+  label: string
+  /** False when the box cannot hold the token row alongside a text line (the text wins). */
+  tokens: boolean
+  /** True when the box is too small for any text. */
+  bare: boolean
+}
+
 /**
- * Fit a prompt text into one rectangle: keep as much of the opening as the
- * box can render (its width × the line count left after the token line) and
- * mark the cut with an ellipsis. Whitespace runs collapse to single spaces,
- * matching the rendered text.
+ * Decide what one rectangle shows: as much of its prompt text as the box can
+ * render (width × available lines; whitespace runs collapse to single
+ * spaces), the token row when it fits alongside, and nothing at all below
+ * the minimum size. The text takes priority — a box a hair too short for
+ * both keeps its text and drops the token row.
  *
  * @param text - The segment's prompt text (already rune-capped).
- * @param rect - The rectangle the text must fit into.
- * @returns The fitted text; empty when no line fits.
+ * @param rect - The rectangle to fill.
+ * @returns The fitted label, the token-row flag, and the bare flag.
  */
-export function fitTextToRect(text: string, rect: TreemapRect): string {
-  const widthBudget = rect.w - SEG_PAD_PX
-  const lines = Math.floor((rect.h - SEG_PAD_PX - TOKENS_LINE_PX) / CONTENT_LINE_PX)
-  if (widthBudget <= 0 || lines < 1) return ''
-  const capacity = widthBudget * lines
-  const runes = Array.from(text.replace(/\s+/g, ' ').trim())
+export function fitRectText(text: string, rect: TreemapRect): RectTextFit {
+  if (rect.w < LABEL_MIN_W || rect.h < LABEL_MIN_H) return { label: '', tokens: false, bare: true }
+  const innerW = rect.w - SEG_INSET_PX
+  const innerH = rect.h - SEG_INSET_PX
+  const bothFit = innerH >= TOKENS_ROW_PX + CONTENT_LINE_PX
+  const lines = Math.floor((innerH - (bothFit ? TOKENS_ROW_PX : 0)) / CONTENT_LINE_PX)
+  const capacity = innerW * lines
   let used = 0
   let out = ''
-  for (const ch of runes) {
+  for (const ch of Array.from(text.replace(/\s+/g, ' ').trim())) {
     used += runeEm(ch) * CONTENT_FONT_PX
-    if (used > capacity) return `${out}…`
+    if (used > capacity) return { label: `${out}…`, tokens: bothFit, bare: false }
     out += ch
   }
-  return out
+  return { label: out, tokens: bothFit, bare: false }
 }
 
 /** One laid-out rectangle: canvas coordinates and size. */
@@ -503,13 +515,13 @@ ${droppedNote(args.snapshot)}
 
 /** One rectangle's markup: coordinates are relative to its band, below the header strip. */
 function rectMarkup(segment: TreemapSegment, rect: TreemapRect): string {
-  const bare = rect.w < LABEL_MIN_W || rect.h < LABEL_MIN_H ? ' bare' : ''
+  const fit = fitRectText(segment.text, rect)
   const figure = segment.seq === undefined
     ? formatTokens(segment.tokens)
     : `#${segment.seq} · ${formatTokens(segment.tokens)}`
-  return `      <div class="seg${bare}" style="left:${round1(rect.x)}px;top:${round1(BAND_HEAD_H + rect.y)}px;width:${round1(rect.w)}px;height:${round1(rect.h)}px;background:${segmentColor(segment)}" title="${escapeHtml(segment.text)}">
-        <span class="label">${escapeHtml(fitTextToRect(segment.text, rect))}</span>
-        <span class="tokens">${figure}</span>
+  const tokenRow = fit.tokens ? `\n        <span class="tokens">${figure}</span>` : ''
+  return `      <div class="seg${fit.bare ? ' bare' : ''}" style="left:${round1(rect.x)}px;top:${round1(BAND_HEAD_H + rect.y)}px;width:${round1(rect.w)}px;height:${round1(rect.h)}px;background:${segmentColor(segment)}" title="${escapeHtml(segment.text)}">
+        <span class="label">${escapeHtml(fit.label)}</span>${tokenRow}
       </div>`
 }
 
