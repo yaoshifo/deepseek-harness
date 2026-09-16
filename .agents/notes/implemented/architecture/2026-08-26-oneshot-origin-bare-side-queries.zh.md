@@ -6,7 +6,7 @@ Status: implemented
 
 ## Problem
 
-feishu-bridge 的旁路查询——群名生成（Go LightweightQuery）、predict-next、turn summary、monitor triage，以及 plan/reply 渲染 fork——都是全新的一次性 dsh 会话，全部任务上下文只经 prompt 传递。但会话组装仍会把所有按 cwd 派生的环境块注入进来：workspace 指令 baseline（agent-instructions）、项目记忆索引（dsh-memory，按 adapter cwd——即项目主 workdir，绝不是 `/spawn -d` 的覆盖目录——取 slug）、`<available_skills>` 清单、完整的基础 system prompt，甚至给这个用完即弃的会话发一次 LLM 标题请求。线上实测一次群名生成：16445 input token 换 14 个 output token。比浪费更糟的是正确性：一个 `/spawn -d books` 建的群被改名「拉取RiskAI最新代码」——命名 fork 在 riskai 项目主目录组装，注入的 riskai 记忆索引把首条消息里的「这个项目」消解成了 RiskAI，而任务会话本身一直在 books 里正确运行、拉的就是 books 的代码。
+feishu-bridge 的旁路查询——群名生成（Go LightweightQuery）、monitor triage，以及 plan/reply 渲染 fork——都是全新的一次性 dsh 会话，全部任务上下文只经 prompt 传递。但会话组装仍会把所有按 cwd 派生的环境块注入进来：workspace 指令 baseline（agent-instructions）、项目记忆索引（dsh-memory，按 adapter cwd——即项目主 workdir，绝不是 `/spawn -d` 的覆盖目录——取 slug）、`<available_skills>` 清单、完整的基础 system prompt，甚至给这个用完即弃的会话发一次 LLM 标题请求。线上实测一次群名生成：16445 input token 换 14 个 output token。比浪费更糟的是正确性：一个 `/spawn -d books` 建的群被改名「拉取RiskAI最新代码」——命名 fork 在 riskai 项目主目录组装，注入的 riskai 记忆索引把首条消息里的「这个项目」消解成了 RiskAI，而任务会话本身一直在 books 里正确运行、拉的就是 books 的代码。
 
 ## Decision
 
@@ -22,7 +22,7 @@ feishu-bridge 的旁路查询——群名生成（Go LightweightQuery）、predi
 
 ## Consequences
 
-- 群名、predict-next、turn-summary、monitor-triage 与渲染请求收缩为 prompt 加极小 system prompt；一次命名请求从 ~16.4k input token 降到 ~1k，群名不再继承项目主目录上下文（`/spawn -d books` 的群得到基于内容的名字）。
+- 群名、monitor-triage 与渲染请求收缩为 prompt 加极小 system prompt；一次命名请求从 ~16.4k input token 降到 ~1k，群名不再继承项目主目录上下文（`/spawn -d books` 的群得到基于内容的名字）。
 - 凡携带 origin 的会话一律不注入记忆索引——未来的 origin 取值按构造继承该策略；普通交互会话不受影响，所有既有的 `origin === 'subagent'` 读取点（subagent lineage、client runtime、UI）都是精确匹配——旧日志回放不受影响。
 - 天花板：未来某个需要工具或 cwd 上下文的轻量查询调用方不能直接套 bare——它需要自己的 toolFilter，或改走 forkQuery 式带父级 seed 的会话。
 

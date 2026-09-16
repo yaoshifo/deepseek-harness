@@ -295,6 +295,44 @@ describe('buildProjectAssembly config wiring', () => {
       .toThrow(/feishu\.progressStyle, which was removed with the structured progress-card path/)
   })
 
+  it('fails loud on a config left with the removed predictNext key (insight card, 2026-09-16)', () => {
+    // Schemastery keeps unknown keys in a validated object, so a leftover
+    // predictNext reaches the assembly instead of being dropped by config
+    // validation: assert both halves — the key survives the schema, and the
+    // assembly refuses it rather than loading an inert knob.
+    const parsed = Config({
+      projects: [{
+        name: 'smoke-project',
+        workdir: '/workspace/project',
+        feishu: { appId: 'cli_test', appSecret: 'sec' },
+        predictNext: { enabled: true },
+      }],
+      providers: {},
+    } as unknown as FeishuBridgeConfig)
+    const stale = parsed.projects[0] as ProjectConfig
+    expect((stale as unknown as Record<string, unknown>).predictNext).toEqual({ enabled: true })
+    expect(() => assemble(baseConfig(), stale))
+      .toThrow(/predictNext, which was removed with the insight card/)
+  })
+
+  it('fails loud on a config left with the removed turnSummary key (insight card, 2026-09-16)', () => {
+    // Same guard class as the predictNext case above: the key survives
+    // schemastery validation, and the assembly refuses the inert knob.
+    const parsed = Config({
+      projects: [{
+        name: 'smoke-project',
+        workdir: '/workspace/project',
+        feishu: { appId: 'cli_test', appSecret: 'sec' },
+        turnSummary: { enabled: true },
+      }],
+      providers: {},
+    } as unknown as FeishuBridgeConfig)
+    const stale = parsed.projects[0] as ProjectConfig
+    expect((stale as unknown as Record<string, unknown>).turnSummary).toEqual({ enabled: true })
+    expect(() => assemble(baseConfig(), stale))
+      .toThrow(/turnSummary, which was removed with the insight card/)
+  })
+
   it('forwards feishu.tag onto the platform name (Go tag)', () => {
     const proj = project()
     proj.feishu = { ...proj.feishu, tag: 'ops' }

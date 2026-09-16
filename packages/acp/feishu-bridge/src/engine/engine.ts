@@ -165,7 +165,6 @@ import { renderDirCardSafe } from './dir-card.ts'
 import { executeCardAction } from './cron-commands.ts'
 import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from './recall.ts'
 import { renderSubtaskPanelCard } from './subtask-panel.ts'
-import { triggerInsights } from './predict.ts'
 import { defaultAutoCompressMinGapMs, maybeAutoResetSessionOnIdle, projectedContextTokens, runCompress } from './session-misc.ts'
 import type { RelayManager } from './relay.ts'
 import { MonitorCore, isMonitorCommand, truncateMonitor } from './monitor.ts'
@@ -411,12 +410,6 @@ export class InteractiveState {
   notificationFooterElements: CardElement[] = []
   /** Header suffix of the last completion notification (Go state.notificationHeaderSuffix). M7. */
   notificationHeaderSuffix: string = ''
-  /** True while a predict-next fork is in-flight for this session (Go state). */
-  predictNextRunning: boolean = false
-  /** True once the user clicked 屏蔽; reset on /new (Go state.predictNextDisabled). */
-  predictNextDisabled: boolean = false
-  /** True while a turn-summary fork is in-flight for this session (Go state). */
-  turnSummaryRunning: boolean = false
   /** Timestamp of the last auto compression (Go state.lastAutoCompressAt). */
   lastAutoCompressAt: number = 0
   /** Projected context occupancy recorded when the last auto compression armed. */
@@ -1274,26 +1267,6 @@ export class Engine {
   providerShortcutHandler: ((p: Platform, msg: Message, providerName: string) => void) | undefined
   /** Persists one session's route override across restarts (Go providerSaveFunc). */
   providerSaveFunc: ((sessionKey: string, name: string) => void) | undefined
-  /** Predict-next config (#33, Go SetPredictNextConfig). */
-  predictNextEnabled: boolean = false
-  /** Provider route for predict-next forks; '' = the active provider. */
-  predictNextProvider: string = ''
-  /** Model override for predict-next forks; '' = the provider default. */
-  predictNextModel: string = ''
-  /** Predict-next fork deadline in ms; 0 = the default timeout. */
-  predictNextTimeout: number = 0
-  /** Prompt template for predict-next forks. */
-  predictNextPrompt: string = ''
-  /** true = fork the live transcript (resume); false = one-shot compact query. */
-  predictNextResume: boolean = false
-  /** Turn-summary config (Go SetTurnSummaryConfig). */
-  turnSummaryEnabled: boolean = false
-  /** Provider route for turn-summary forks; '' = the active provider. */
-  turnSummaryProvider: string = ''
-  /** Turn-summary fork deadline in ms; 0 = the default timeout. */
-  turnSummaryTimeout: number = 0
-  /** Prompt template for turn-summary forks. */
-  turnSummaryPrompt: string = ''
   /** Auto session rotation after idle (Go SetResetOnIdle); 0 disables. */
   resetOnIdle: number = 0
   /** Auto context compression (Go SetAutoCompressConfig). */
@@ -2414,40 +2387,6 @@ export class Engine {
   }
 
   /**
-   * Configure predict-next (#33, Go SetPredictNextConfig). mode 'resume'
-   * forks the live transcript; anything else uses the lightweight one-shot
-   * query.
-   * @param enabled - Whether next-message prediction runs after turns.
-   * @param provider - Provider route; '' = the active provider.
-   * @param model - Model override; '' = the provider default.
-   * @param timeoutMs - Fork deadline in ms; 0 = the default timeout.
-   * @param prompt - Prompt template for the prediction query.
-   * @param mode - 'resume' forks the live transcript; anything else is one-shot.
-   */
-  setPredictNextConfig(enabled: boolean, provider: string, model: string, timeoutMs: number, prompt: string, mode: string): void {
-    this.predictNextEnabled = enabled
-    this.predictNextProvider = provider
-    this.predictNextModel = model
-    this.predictNextTimeout = timeoutMs
-    this.predictNextPrompt = prompt
-    this.predictNextResume = mode === 'resume'
-  }
-
-  /**
-   * Configure turn-summary generation (Go SetTurnSummaryConfig).
-   * @param enabled - Whether turn summaries run after turns.
-   * @param provider - Provider route; '' = the active provider.
-   * @param timeoutMs - Fork deadline in ms; 0 = the default timeout.
-   * @param prompt - Prompt template for the summary query.
-   */
-  setTurnSummaryConfig(enabled: boolean, provider: string, timeoutMs: number, prompt: string): void {
-    this.turnSummaryEnabled = enabled
-    this.turnSummaryProvider = provider
-    this.turnSummaryTimeout = timeoutMs
-    this.turnSummaryPrompt = prompt
-  }
-
-  /**
    * Auto session rotation after idle (Go SetResetOnIdle); <= 0 disables.
    * @param ms - Idle threshold in ms; <= 0 disables rotation.
    */
@@ -2550,16 +2489,6 @@ export class Engine {
     if (cfg.toolInFlightTimeoutMs !== undefined) this.unsolicitedToolInFlightTimeout = cfg.toolInFlightTimeoutMs
     if (cfg.backgroundGraceMs !== undefined) this.unsolicitedBackgroundGrace = cfg.backgroundGraceMs
     if (cfg.spilloverGraceMs !== undefined) this.unsolicitedSpilloverGrace = cfg.spilloverGraceMs
-  }
-
-  /**
-   * Disable predict-next for one session (the 屏蔽 button; Go SetPredictNextDisabled).
-   * @param sessionKey - Session to stop predicting for; unknown keys are ignored.
-   */
-  setPredictNextDisabled(sessionKey: string): void {
-    const st = this.interactiveStates.get(sessionKey)
-    if (st === undefined) return
-    st.predictNextDisabled = true
   }
 
   // ── queueing (#13) ──────────────────────────────────────────────────────
@@ -4459,11 +4388,6 @@ export class Engine {
     if (phasePlatform !== undefined) {
       await this.applyChatPhase(phasePlatform, sessionKey, errored ? 'attention' : this.chatBasePhase(phasePlatform, sessionKey))
     }
-
-    // Insight card (#33 + turn_summary, Go engine_events.go's post-turn
-    // block): fire-and-forget forks for the turn summary and next-message
-    // prediction; both skip silent turns and turns with queued follow-ups.
-    void triggerInsights(this, state, session, p, replyCtx, sessionKey, sendCompletionNotification, isSilent)
 
     // Auto-compress (Go triggerAutoCompress): when the projected context
     // occupancy (the token-meter contextPressure projection — same source as
@@ -9474,14 +9398,6 @@ export class Engine {
       return
     }
 
-    // Predict-next 屏蔽 button (#33): stop predicting for this session until
-    // /new, then re-render the pressed card as the confirmation.
-    if (cmd === '/nopred') {
-      this.setPredictNextDisabled(msg.sessionKey)
-      await this.refreshOrReplyCard(p, msg,
-        newCard().title(this.i18n.t(Msg.NopredTitle), 'red').markdown(this.i18n.t(Msg.NopredBody)).build())
-      return
-    }
     if (cmd !== '/wt') {
       console.info(`engine: card action has no handler yet, ignoring (${msg.sessionKey}: ${cmd})`)
       return

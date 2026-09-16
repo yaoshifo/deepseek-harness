@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-`seedablePrefix`（纯逻辑模块 `agent-dsh/fork-seed.ts`，沿 `fork-at.ts` 先例）为全部三个消费方构建种子——live 父会话、`persistedForkSeed`、`seedForLiveParent`（`/btw`、predict）。无飞行 turn 时与旧完成 turn 前缀逐字节一致；有飞行 turn 时按优先级切到最后一个平衡点：开放 step 的 assistant 消息带调用时切到最后一个悬空 `tool/call`，不带调用时切到该消息本身，只有流式 chunk 时切到最后一个 `step/end`，turn 尚无完成 step 时切到首个 step 前最后一个 `user/message`，什么用户可见内容都没有时整个 turn 丢弃。切点用合成事件收尾：每个悬空调用一条结算事件，逐字复用运行时 `/stop` 中止阻塞工具的形状（isError `AbortError` result，带 `surfaceOp: 'append'`、`sourceEventSeqs` 指向被结算的调用；出处：生产日志 `--home-hm-workspace-money--/cc-20260830-130031` seq 1533-1535），随后 `step/end`、再 `turn/end`（`interrupted`，既有的基础设施收尾标记，不扩展词汇表）。种子契约（无开放 turn/step、无悬空调用、seq 连续）由构造保证；父会话自身日志与仍挂着的卡片永不被触碰——fork 保持非破坏性，Git 分支语义。
+`seedablePrefix`（纯逻辑模块 `agent-dsh/fork-seed.ts`，沿 `fork-at.ts` 先例）为全部三个消费方构建种子——live 父会话、`persistedForkSeed`、`seedForLiveParent`（`/btw`）。无飞行 turn 时与旧完成 turn 前缀逐字节一致；有飞行 turn 时按优先级切到最后一个平衡点：开放 step 的 assistant 消息带调用时切到最后一个悬空 `tool/call`，不带调用时切到该消息本身，只有流式 chunk 时切到最后一个 `step/end`，turn 尚无完成 step 时切到首个 step 前最后一个 `user/message`，什么用户可见内容都没有时整个 turn 丢弃。切点用合成事件收尾：每个悬空调用一条结算事件，逐字复用运行时 `/stop` 中止阻塞工具的形状（isError `AbortError` result，带 `surfaceOp: 'append'`、`sourceEventSeqs` 指向被结算的调用；出处：生产日志 `--home-hm-workspace-money--/cc-20260830-130031` seq 1533-1535），随后 `step/end`、再 `turn/end`（`interrupted`，既有的基础设施收尾标记，不扩展词汇表）。种子契约（无开放 turn/step、无悬空调用、seq 连续）由构造保证；父会话自身日志与仍挂着的卡片永不被触碰——fork 保持非破坏性，Git 分支语义。
 
 ## Alternatives considered
 

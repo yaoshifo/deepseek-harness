@@ -135,9 +135,9 @@ describe('buildProjectAssembly', () => {
   })
 
   it('fails loud when a side provider reference names no configured provider', () => {
-    // groupName/planRender/predictNext/turnSummary/monitor.triageProvider
-    // flow into side forks; a typo there falls back to the active route just
-    // as silently as agent.provider did.
+    // groupName/planRender/monitor.triageProvider flow into side forks; a
+    // typo there falls back to the active route just as silently as
+    // agent.provider did.
     expect(() => buildProjectAssembly(stubContext(), config(), { ...project(), groupName: { provider: 'mify-dhs' } }, '/tmp/fb-root'))
       .toThrow(/groupName\.provider.*'mify-dhs'.*available: mify-dsh/)
     expect(() => buildProjectAssembly(stubContext(), config(), { ...project(), monitor: { triageProvider: 'nope' } }, '/tmp/fb-root'))

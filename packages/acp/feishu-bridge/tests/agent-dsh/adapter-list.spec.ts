@@ -112,9 +112,9 @@ describe('DshAgentAdapter.listSessions persisted view', () => {
   })
 
   it('drops one-shot side-query sessions (origin oneshot) from the persisted view', async () => {
-    // Group naming, predict-next, and turn-summary run on origin:'oneshot'
-    // sessions whose logs land in the project cwd — user-visible /list must
-    // not surface them.
+    // Group naming and monitor triage run on origin:'oneshot' sessions
+    // whose logs land in the project cwd — user-visible /list must not
+    // surface them.
     const adapter = newAdapter([
       header({ id: 'real-1', createdAt: 1000 }),
       header({ id: 'side-1', createdAt: 2000, origin: 'oneshot' }),
@@ -177,12 +177,12 @@ describe('DshAgentAdapter.listSessions persisted view', () => {
   })
 
   /**
-   * Harness for the seeded side-query paths (forkQuery /
-   * forkSessionWithProvider over oneShotQuery): a live parent feeds the seed,
-   * the created side agent parks mid-turn until the test fires its scripted
-   * answer, and the create meta's origin lands in the session header the way
-   * core/session copies it (session.spec "attaches oneshot origin from meta
-   * to the header") — so isOneshot sees what production would persist.
+   * Harness for the seeded side-query path (forkQuery over oneShotQuery):
+   * a live parent feeds the seed, the created side agent parks mid-turn
+   * until the test fires its scripted answer, and the create meta's origin
+   * lands in the session header the way core/session copies it (session.spec
+   * "attaches oneshot origin from meta to the header") — so isOneshot sees
+   * what production would persist.
    */
   function forkSideHarness(parentEvents: SessionEvent[]): {
     ctx: DshContextLike
@@ -261,19 +261,6 @@ describe('DshAgentAdapter.listSessions persisted view', () => {
     // The origin marker changes only the persisted identity: the fork seed
     // still rides the create, and the answer still flows back to the caller.
     expect(h.creates[0]?.seed?.length).toBeGreaterThan(0)
-    h.answer('答')
-    await expect(query).resolves.toBe('答')
-  })
-
-  it('excludes an in-flight forkSessionWithProvider side session from the live view', async () => {
-    const h = forkSideHarness(turn(0))
-    const adapter = new DshAgentAdapter(
-      h.ctx,
-      { agentName: 'a', cwd: PROJECT_DIR, providers: [{ name: 'r', provider: 'p', model: 'm' }], activeProvider: 'r' },
-    )
-    const query = adapter.forkSessionWithProvider('cc-parent-1', '问题', 'r', PROJECT_DIR)
-    await new Promise((r) => { setTimeout(r, 0) })
-    expect((await adapter.listSessions()).map(s => s.id)).toEqual([])
     h.answer('答')
     await expect(query).resolves.toBe('答')
   })

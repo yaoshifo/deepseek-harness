@@ -1113,7 +1113,6 @@ export interface ProviderConfig {
  */
 export interface ForkQuerierWithProvider {
   forkQuery(sessionID: string, question: string, workDir: string): Promise<string>
-  forkSessionWithProvider(sessionID: string, question: string, providerName: string, workDir: string): Promise<string>
   /**
    * `workDir` pins the one-shot session's cwd (the calling chat's effective
    * directory); omitted or empty falls back to the adapter's base cwd.
@@ -1572,7 +1571,7 @@ export function asCronReplyTargetResolver(p: Platform): CronReplyTargetResolver 
 }
 
 /**
- * Structural check for the {@link ForkQuerierWithProvider} capability (all four members required).
+ * Structural check for the {@link ForkQuerierWithProvider} capability (all three members required).
  *
  * @param a - the agent to inspect.
  * @returns the capability view, or undefined when not implemented.
@@ -1581,7 +1580,6 @@ export function asForkQuerierWithProvider(a: Agent): ForkQuerierWithProvider | u
   const candidate = a as Partial<ForkQuerierWithProvider>
   return typeof candidate.lightweightQuery === 'function'
     && typeof candidate.forkQuery === 'function'
-    && typeof candidate.forkSessionWithProvider === 'function'
     && typeof candidate.pollQuery === 'function'
     ? candidate as ForkQuerierWithProvider
     : undefined

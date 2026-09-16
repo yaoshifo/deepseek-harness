@@ -56,9 +56,8 @@ import { registerSendTool } from './tools/send.ts'
 import { registerFollowupsTool } from './tools/followups.ts'
 import { registerLarkTool, type LarkRoute } from './tools/lark.ts'
 import { registerProviderCommands } from './engine/provider-commands.ts'
-import { registerPredictCommands } from './engine/predict.ts'
+import { registerBtwCommands } from './engine/btw.ts'
 import { registerSessionMiscCommands } from './engine/session-misc.ts'
-import { getProviderModel } from './engine/provider.ts'
 import { renderSkillName } from './engine/plan-render.ts'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.ts'
 import type { StreamPreviewCfg } from './streaming.ts'
@@ -194,32 +193,6 @@ export interface PlanRenderConfig {
   timeoutSec?: number
 }
 
-/** Next-message prediction after each turn (Go [projects.predict_next], #33). */
-export interface PredictNextConfig {
-  /** Prediction on; default false. */
-  enabled?: boolean
-  /** Named provider route the prediction fork runs on. */
-  provider?: string
-  /** Prediction timeout in seconds (default 120). */
-  timeoutSec?: number
-  /** Prediction prompt override (default: the built-in Chinese prompt). */
-  prompt?: string
-  /** 'resume' forks the live transcript; default 'lightweight' one-shot query. */
-  mode?: string
-}
-
-/** One-line turn summary appended to the insight card (Go [projects.turn_summary]). */
-export interface TurnSummaryConfig {
-  /** Summary on; default false. */
-  enabled?: boolean
-  /** Named provider route the summary fork runs on. */
-  provider?: string
-  /** Summary timeout in seconds (default 30). */
-  timeoutSec?: number
-  /** Summary prompt override (default: the built-in Chinese prompt). */
-  prompt?: string
-}
-
 /** Automatic context compression (Go [projects.auto_compress]). */
 export interface AutoCompressConfig {
   /** Compression on; default false. */
@@ -273,10 +246,6 @@ export interface ProjectConfig {
   /** Plans directory for presented-plan persistence; '' disables (default ~/.claude/plans). */
   planDir?: string
 
-  /** Next-message prediction after each turn (#33). */
-  predictNext?: PredictNextConfig
-  /** One-line turn summary on the insight card. */
-  turnSummary?: TurnSummaryConfig
   /** Automatic context compression (Go [projects.auto_compress]). */
   autoCompress?: AutoCompressConfig
   /** Quick provider commands: /strong → provider name (Go provider_shortcuts). */
@@ -612,19 +581,6 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     }).description('Plan/reply HTML rendering (Go [projects.plan_render], #47/#48)'),
     planDir: Schema.string().description('Directory presented plans are persisted to as .md; empty string disables (default ~/.claude/plans)'),
 
-    predictNext: Schema.object({
-      enabled: Schema.boolean().description('Predict the next user message after each turn (#33); default false'),
-      provider: Schema.string().description('Named provider route for the prediction fork'),
-      timeoutSec: Schema.natural().description('Prediction timeout in seconds (default 120)'),
-      prompt: Schema.string().description('Prediction prompt override'),
-      mode: Schema.string().description('resume (fork the live transcript) or lightweight (default)'),
-    }).description('Next-message prediction (#33, Go [projects.predict_next])'),
-    turnSummary: Schema.object({
-      enabled: Schema.boolean().description('One-line turn summary on the insight card; default false'),
-      provider: Schema.string().description('Named provider route for the summary fork'),
-      timeoutSec: Schema.natural().description('Summary timeout in seconds (default 30)'),
-      prompt: Schema.string().description('Summary prompt override'),
-    }).description('Turn summary (Go [projects.turn_summary])'),
     autoCompress: Schema.object({
       enabled: Schema.boolean().description('Compress the context when the token estimate crosses the cap; default false'),
       maxTokens: Schema.natural().description('Token estimate threshold that arms compression'),
@@ -1255,15 +1211,12 @@ export function buildProjectAssembly(
   }
   // Side-query provider references share the same self-contained typo class:
   // a bad name falls back to the active route silently (wrong model for the
-  // naming/render/predict/summary/triage forks). agent.spawnProvider is the
-  // spawn-group twin: a typo would leave spawned groups on the project
-  // default route.
+  // naming/render/triage forks). agent.spawnProvider is the spawn-group twin:
+  // a typo would leave spawned groups on the project default route.
   const sideProviderRefs: Array<[string, string | undefined]> = [
     ['agent.spawnProvider', project.agent?.spawnProvider],
     ['groupName.provider', project.groupName?.provider],
     ['planRender.provider', project.planRender?.provider],
-    ['predictNext.provider', project.predictNext?.provider],
-    ['turnSummary.provider', project.turnSummary?.provider],
     ['monitor.triageProvider', project.monitor?.triageProvider],
   ]
   for (const [field, value] of sideProviderRefs) {
@@ -1278,6 +1231,17 @@ export function buildProjectAssembly(
   // instead, before any platform is constructed.
   if ((project.feishu as unknown as Record<string, unknown>).progressStyle !== undefined) {
     throw new Error(`feishu-bridge: project '${project.name}' sets feishu.progressStyle, which was removed with the structured progress-card path (2026-09-14 audit F3); remove the key from the configuration`)
+  }
+  // predictNext and turnSummary (the insight card) were removed with the
+  // 2026-09-16 insight-card removal. Schemastery keeps unknown keys in a
+  // validated object, so a leftover entry would survive load as a
+  // configured-but-inert knob — the same silent misconfiguration class the
+  // progressStyle guard above names. Fail at load instead.
+  if ((project as unknown as Record<string, unknown>).predictNext !== undefined) {
+    throw new Error(`feishu-bridge: project '${project.name}' sets predictNext, which was removed with the insight card (2026-09-16); remove the key from the configuration`)
+  }
+  if ((project as unknown as Record<string, unknown>).turnSummary !== undefined) {
+    throw new Error(`feishu-bridge: project '${project.name}' sets turnSummary, which was removed with the insight card (2026-09-16); remove the key from the configuration`)
   }
   const routeNames = Object.keys(config.providers)
   const projectDataDir = join(dataRoot, project.name)
@@ -1443,9 +1407,9 @@ export function buildProjectAssembly(
   }
   // TS 原生: /context — 会话投影的上下文洞察卡（构成/趋势/事件 + 刷新按钮；无 Go 对应）。
   ctx.effect(() => registerContextCommands(engine))
-  // M7-c: /provider family + shortcuts, /btw + insight forks, /compress.
+  // M7-c: /provider family + shortcuts, /btw, /compress.
   ctx.effect(() => registerProviderCommands(engine))
-  ctx.effect(() => registerPredictCommands(engine))
+  ctx.effect(() => registerBtwCommands(engine))
   ctx.effect(() => registerSessionMiscCommands(engine))
   engine.setProviderSaveFunc((sessionKey, name) => {
     projectState.setProviderOverride(sessionKey, name)
@@ -1472,8 +1436,6 @@ export function buildProjectAssembly(
     engine.setPlanDir(expandHome(project.planDir))
   }
 
-  wirePredictNext(engine, project, config.providers)
-  wireTurnSummary(engine, project)
   wireSessionMisc(engine, project)
   // M6b: monitor domain (#53) — config block → engine MonitorCore + the
   // /monitor command family + runtime persistence via the project state.
@@ -1617,37 +1579,6 @@ function wirePlanRender(ctx: Context, engine: Engine, adapter: DshAgentAdapter, 
     return (await skills?.get(renderSkillName))?.content
   })
   if (r.effort !== undefined && r.effort !== '') adapter.setRenderEffort(r.effort)
-}
-
-/**
- * Configure predict-next (Go wirePredictNext): the model label resolves from
- * the provider route table; timeout defaults to 120s.
- */
-function wirePredictNext(engine: Engine, project: ProjectConfig, providers: FeishuBridgeConfig['providers']): void {
-  const p = project.predictNext
-  if (p?.enabled !== true) {
-    engine.setPredictNextConfig(false, '', '', 0, '', '')
-    return
-  }
-  const timeoutSec = p.timeoutSec !== undefined && p.timeoutSec > 0 ? p.timeoutSec : 120
-  const model = getProviderModel(
-    Object.entries(providers).flatMap(([name, route]) =>
-      route.model !== undefined ? [{ name, model: route.model }] : []),
-    p.provider ?? '',
-    '',
-  )
-  engine.setPredictNextConfig(true, p.provider ?? '', model, timeoutSec * 1000, p.prompt ?? '', p.mode ?? '')
-}
-
-/** Configure turn-summary (Go wireTurnSummary): timeout defaults to 30s. */
-function wireTurnSummary(engine: Engine, project: ProjectConfig): void {
-  const t = project.turnSummary
-  if (t?.enabled !== true) {
-    engine.setTurnSummaryConfig(false, '', 0, '')
-    return
-  }
-  const timeoutSec = t.timeoutSec !== undefined && t.timeoutSec > 0 ? t.timeoutSec : 30
-  engine.setTurnSummaryConfig(true, t.provider ?? '', timeoutSec * 1000, t.prompt ?? '')
 }
 
 /**

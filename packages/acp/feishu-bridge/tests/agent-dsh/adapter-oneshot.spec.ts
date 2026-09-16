@@ -358,7 +358,7 @@ describe('pollQuery', () => {
   })
 })
 
-describe('forkQuery / forkSessionWithProvider', () => {
+describe('forkQuery', () => {
   it('seeds the side query from the live parent completed-turn prefix', async () => {
     const h = createHarness([parentAgent('cc-parent-1', [...turn(0), ...turn(3)])])
     const a = newAdapter(h)
@@ -369,19 +369,6 @@ describe('forkQuery / forkSessionWithProvider', () => {
     expect(answer).toBe('答')
     expect(h.creates[0]!.seed?.map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5])
     expect(h.creates[0]!.meta?.cwd).toBe('/workspace/child')
-  })
-
-  it('forkSessionWithProvider routes the query onto the named provider', async () => {
-    const h = createHarness([parentAgent('cc-parent-1', turn(0))])
-    const a = newAdapter(h)
-    h.script.push({ text: '答' })
-
-    await a.forkSessionWithProvider('cc-parent-1', '问题', 'turbo', '')
-
-    // No lightweight override here: the query inherits the route's
-    // configured effort when one exists.
-    expect(h.creates[0]!.agentOptions).toEqual({ provider: 'turbo-route', model: 'turbo-5', reasoningEffort: 'high' })
-    expect(h.creates[0]!.seed?.map(e => e.seq)).toEqual([0, 1, 2])
   })
 })
 

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-03-feishu-bridge-per-chat-provider-routes.md
-2026-09-03-feishu-bridge-per-chat-provider-routes.md: dfc1112e95109da24f9b3fde06ec618021175eef
-2026-09-03-feishu-bridge-per-chat-provider-routes.zh.md: 9ab13f1f40acbf095574afc2064cef89996233d7
+2026-09-03-feishu-bridge-per-chat-provider-routes.md: 3d44edd9a0cd302ac0f75efd6b4dbd953f3cb1d9
+2026-09-03-feishu-bridge-per-chat-provider-routes.zh.md: 4de4ff0f3aef97f9d6c556048d51a796bf8fe0e6

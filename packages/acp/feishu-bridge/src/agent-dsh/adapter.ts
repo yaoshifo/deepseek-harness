@@ -650,9 +650,9 @@ export const lightweightQueryTimeoutMs = 90_000
 
 /**
  * Complete-replacement system prompt for bare lightweight queries (group
- * naming, predict-next, turn summary, monitor triage): the query's whole
- * contract lives in its prompt, so the assembled baseline (tool-usage
- * discipline, memory strategy) is replaced by this single line.
+ * naming, monitor triage): the query's whole contract lives in its prompt,
+ * so the assembled baseline (tool-usage discipline, memory strategy) is
+ * replaced by this single line.
  */
 const bareQuerySystemPrompt = '你是严格按照用户消息本身完成任务的助手：只依据消息内给出的规则与内容作答，只输出该消息要求的内容。'
 
@@ -1588,8 +1588,8 @@ export class DshAgentAdapter {
 
   /**
    * ForkQuerierWithProvider: a standalone one-shot turn without resuming
-   * anything (Go LightweightQuery — group naming, predict-next): the context
-   * lives in the prompt itself. The query runs bare — session origin
+   * anything (Go LightweightQuery — group naming, monitor triage): the
+   * context lives in the prompt itself. The query runs bare — session origin
    * `oneshot` keeps memory-index injection and LLM title generation off, the
    * complete-prompt replacement drops the assembled system prompt and
    * workspace instructions, and `allow: []` masks every tool (no tool is
@@ -1670,25 +1670,6 @@ export class DshAgentAdapter {
    */
   async forkQuery(sessionID: string, question: string, workDir: string): Promise<string> {
     return this.oneShotQuery({ prompt: question, workDir, seed: this.seedForLiveParent(sessionID), origin: 'oneshot' })
-  }
-
-  /**
-   * ForkQuerierWithProvider: {@link forkQuery} on a named provider route.
-   *
-   * @param sessionID - the native id of the live parent session to seed from.
-   * @param question - the side question asked against the parent's context.
-   * @param providerName - the named provider route to run on.
-   * @param workDir - the working directory for the one-shot session.
-   * @returns the answer text.
-   */
-  async forkSessionWithProvider(sessionID: string, question: string, providerName: string, workDir: string): Promise<string> {
-    return this.oneShotQuery({
-      prompt: question,
-      providerName,
-      workDir,
-      seed: this.seedForLiveParent(sessionID),
-      origin: 'oneshot',
-    })
   }
 
   /**
@@ -2320,7 +2301,7 @@ export class DshAgentAdapter {
    * overridden chat sees its own directory's sessions rather than the
    * base's (Go per-cwd store semantics). Live sessions recorded without a
    * cwd stay visible. One-shot side queries (origin 'oneshot' — group
-   * naming, predict-next, turn-summary) stay unlisted on both sides: they
+   * naming, monitor triage) stay unlisted on both sides: they
    * own no engine session, and their logs land in the project cwd like any
    * other. Summaries/message counts arrive engine-side from the adapter's
    * recent-turn window (`enrichSessionSummaries`). Persisted recency is the

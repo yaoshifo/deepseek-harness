@@ -3,8 +3,7 @@
  * cases): the manager's default/configured/disabled wait timeout, and
  * Engine.handleRelay's partial-response-on-timeout, error-on-timeout, and
  * stale-resume fallback behaviors, each draining the agent session in the
- * background. The insight-card spin-loop test in that file belongs to the
- * turn-summary domain (M7) and stays unported.
+ * background.
  *
  * Extra TS-only cases cover the binding lifecycle and persistence that Go
  * exercised only through the CLI.

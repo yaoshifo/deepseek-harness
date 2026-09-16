@@ -6,7 +6,7 @@ English | [中文](2026-08-26-oneshot-origin-bare-side-queries.zh.md)
 
 ## Problem
 
-feishu-bridge side queries — group naming (Go LightweightQuery), predict-next, turn summary, monitor triage, and the plan/reply render fork — run as fresh one-shot dsh sessions whose whole task context travels in the prompt. The session assembly nevertheless injected every cwd-derived ambient block into them: the workspace instruction baseline (agent-instructions), the project memory index (dsh-memory, keyed by the adapter cwd — the project's main workdir, never a `/spawn -d` override), the `<available_skills>` catalog, the full base system prompt, and even an LLM title request for the throwaway session. A live group-naming query measured ~16.4k input tokens for a 14-token answer. Worse than the cost: a `/spawn -d books` group was renamed 拉取RiskAI最新代码 because the naming fork assembled in the riskai project cwd and the injected riskai memory index resolved the first message's 「这个项目」 to RiskAI — the task session itself had correctly run in books and pulled books' code.
+feishu-bridge side queries — group naming (Go LightweightQuery), monitor triage, and the plan/reply render fork — run as fresh one-shot dsh sessions whose whole task context travels in the prompt. The session assembly nevertheless injected every cwd-derived ambient block into them: the workspace instruction baseline (agent-instructions), the project memory index (dsh-memory, keyed by the adapter cwd — the project's main workdir, never a `/spawn -d` override), the `<available_skills>` catalog, the full base system prompt, and even an LLM title request for the throwaway session. A live group-naming query measured ~16.4k input tokens for a 14-token answer. Worse than the cost: a `/spawn -d books` group was renamed 拉取RiskAI最新代码 because the naming fork assembled in the riskai project cwd and the injected riskai memory index resolved the first message's 「这个项目」 to RiskAI — the task session itself had correctly run in books and pulled books' code.
 
 ## Decision
 
@@ -22,7 +22,7 @@ feishu-bridge side queries — group naming (Go LightweightQuery), predict-next,
 
 ## Consequences
 
-- Naming, predict-next, turn-summary, monitor-triage, and render requests shrink to their prompt plus a minimal system prompt; a naming request drops from ~16.4k input tokens to ~1k, and group names stop inheriting the project-main-cwd context (a `/spawn -d books` group now gets a content-based name).
+- Naming, monitor-triage, and render requests shrink to their prompt plus a minimal system prompt; a naming request drops from ~16.4k input tokens to ~1k, and group names stop inheriting the project-main-cwd context (a `/spawn -d books` group now gets a content-based name).
 - Every session carrying an origin gets no memory index, so a future origin value inherits the skip by construction; plain interactive sessions are unaffected, and all existing `origin === 'subagent'` readers (subagent lineage, client runtime, UI) match exactly — old logs replay unchanged.
 - Ceiling: a future lightweight-query caller that needs tools or cwd context must not opt into bare — it needs its own toolFilter or a forkQuery-style seeded session instead.
 

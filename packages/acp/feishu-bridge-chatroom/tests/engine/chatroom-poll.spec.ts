@@ -66,11 +66,10 @@ function createPollStubAgent(): { agent: ReturnType<typeof createStubAgent>; cal
   const calls: PollCall[] = []
   const agent = createStubAgent()
   const querier = agent as unknown as Record<string, unknown>
-  // The structural ForkQuerierWithProvider check requires all four members;
+  // The structural ForkQuerierWithProvider check requires all three members;
   // only pollQuery is exercised here.
   querier.lightweightQuery = () => Promise.reject(new Error('not implemented'))
   querier.forkQuery = () => Promise.reject(new Error('not implemented'))
-  querier.forkSessionWithProvider = () => Promise.reject(new Error('not implemented'))
   querier.pollQuery = (prompt: string, workDir: string, opts?: { parentSession?: string }) =>
     new Promise<string>((resolve) => { calls.push({ workDir, prompt, opts, resolveWith: resolve }) })
   return { agent, calls }
