@@ -169,6 +169,7 @@
     # subtask:                             # recursive delegation caps
     #   maxDepth: 3
     #   gatherTimeoutSec: 1200
+    #   reportMaxChars: 8192               # report cap: head+tail + spill file; <1024 fails load
     # spawn:                               # /spawn //fork defaults
     #   worktree: auto                     # auto | on | off
     #   memoryWarnPct: 80                  # 0 disables the warning tier
