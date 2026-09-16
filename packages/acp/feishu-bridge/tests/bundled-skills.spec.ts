@@ -32,6 +32,7 @@ describe('mountBundledSkills', () => {
     const names = await skillNames(ctx)
     expect(names).toContain('feishu-bridge-subtask')
     expect(names).toContain('tdd')
+    expect(names).toContain('codebase-design')
     const subtask = (await ctx.skills.list()).find(skill => skill.name === 'feishu-bridge-subtask')
     expect(subtask?.provider).toBe('feishu-bridge-skills')
     expect(subtask?.source).toBe('custom')
@@ -50,6 +51,19 @@ describe('mountBundledSkills', () => {
     // (2026-09-14 audit F2).
     expect(skill?.content).toContain('plan mode **不会**拦住它')
     expect(skill?.content).toContain('批准退出前不得派发改写型 child')
+  })
+
+  it('pins the tdd skill to dsh tool names and the synced tautology guard', async () => {
+    const ctx = await harness()
+    mountBundledSkills(ctx)
+    const skill = await ctx.skills.get('tdd')
+    // The dsh tool is `skill` (lowercase); "the Skill tool" is another
+    // agent's vocabulary and must not come back through skill syncs.
+    expect(skill?.content).toContain('the `skill` tool')
+    expect(skill?.content).not.toContain('the Skill tool')
+    // The reference-only rewrite carries the tautological-test anti-pattern;
+    // a regression to the pre-rewrite body loses it.
+    expect(skill?.content).toContain('Tautological')
   })
 
   it('unregisters the provider when the mounted fiber is disposed', async () => {
