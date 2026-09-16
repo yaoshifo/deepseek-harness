@@ -139,7 +139,9 @@ describe('sendAskQuestionPrompt', () => {
     await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), new Map(), 'test:askq')
 
     const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
-    expect(card.elements.length).toBe(6) // 1 markdown question + 3 list rows + 1 text-input form + 1 chat-text note
+    // 1 markdown question + 3 list rows + 1 chat-answer note; the on-card
+    // text form exists only for optionless questions.
+    expect(card.elements.length).toBe(5)
     const q = card.elements[0] as { kind: string; content: string }
     expect(q.kind).toBe('markdown')
     expect(q.content).toBe('**Which database?**')

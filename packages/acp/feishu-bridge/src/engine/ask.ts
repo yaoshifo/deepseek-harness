@@ -465,10 +465,12 @@ export function buildAskQuestionCardSettled(
 /**
  * Render one live question's elements: the bold question, interactive
  * options (single-select list rows — a recommended option's button renders
- * primary — or the multi-select checker form), and
- * the per-question text-input form — including for option-less questions,
- * where the input is the only on-card answer path — plus the locale-owned
- * free-text hint note on option-bearing questions.
+ * primary — or the multi-select checker form). An option-bearing
+ * single-select question ends at its rows plus the chat-answer hint note —
+ * its on-card text input was removed (the input's relationship to a pressed
+ * option button was ambiguous: a draft typed into the input did not ride
+ * the button click). The per-question text-input form remains only for
+ * option-less questions, where it is the sole on-card answer path.
  */
 function questionElements(q: UserQuestion, qIdx: number, i18n: AskCardI18n): CardElement[] {
   const elements: CardElement[] = [
@@ -502,33 +504,34 @@ function questionElements(q: UserQuestion, qIdx: number, i18n: AskCardI18n): Car
       extra: { askq_label: opt.label, askq_question: q.question },
     })
   }
-  elements.push({
-    kind: 'form',
-    name: `askq_text_form_${qIdx}`,
-    elements: [
-      { kind: 'input', name: `askq_text_${qIdx}`, placeholder: i18n.t(q.options.length > 0 ? Msg.AskqTextPlaceholderOptions : Msg.AskqTextPlaceholder), maxLength: 1000 },
-      {
-        kind: 'actions',
-        buttons: [{
-          text: i18n.t(Msg.AskqTextSubmit),
-          type: 'default',
-          value: `askq_text:${qIdx}`,
-          name: `askq_text_submit_${qIdx}`,
-          actionType: 'form_submit',
-          // Self-describes the form's question for askCardMeta — an
-          // optionless question has no listItems, so its text form is the
-          // only element naming it.
-          extra: { askq_question: q.question },
-        }],
-        layout: 'row',
-      },
-    ],
-  })
-  // Free text also lands in resolveAskAnswer's custom branch, so the block
-  // closes with the hint. A question without options skips it — the form's
-  // input above is its only answer path and already says so.
-  if (q.options.length > 0) {
-    elements.push({ kind: 'note', text: i18n.t(Msg.AskFreeTextHint) })
+  if (q.options.length === 0) {
+    // The sole on-card answer path of an optionless question: free text.
+    // Self-describes its question for askCardMeta — no listItems exist to
+    // name it.
+    elements.push({
+      kind: 'form',
+      name: `askq_text_form_${qIdx}`,
+      elements: [
+        { kind: 'input', name: `askq_text_${qIdx}`, placeholder: i18n.t(Msg.AskqTextPlaceholder), maxLength: 1000 },
+        {
+          kind: 'actions',
+          buttons: [{
+            text: i18n.t(Msg.AskqTextSubmit),
+            type: 'default',
+            value: `askq_text:${qIdx}`,
+            name: `askq_text_submit_${qIdx}`,
+            actionType: 'form_submit',
+            extra: { askq_question: q.question },
+          }],
+          layout: 'row',
+        },
+      ],
+    })
+    return elements
   }
+  // An option-bearing question closes with the chat-answer hint: chat free
+  // text lands in resolveAskAnswer's custom branch, so the card needs no
+  // text input of its own.
+  elements.push({ kind: 'note', text: i18n.t(Msg.AskFreeTextHint) })
   return elements
 }

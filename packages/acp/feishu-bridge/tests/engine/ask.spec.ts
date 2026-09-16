@@ -227,22 +227,17 @@ describe('buildAskQuestionCard', () => {
     expect(card.header?.title).toBe('‼️ Agent 提问')
   })
 
-  it('a question without options renders its heading plus the text-input form', () => {
+  it('a question without options keeps its text-input form as the only on-card answer path', () => {
     const q: UserQuestion = { ...singleQuestion(), options: [] }
     const card = buildAskQuestionCard(q, 0, 1)
     expect(card.elements).toHaveLength(2)
-    expect(card.elements[1]?.kind).toBe('form')
-  })
 
-  it('an interactive single-select question carries a text-input form addressed by askq_text:{q}', () => {
-    const card = buildAskQuestionCard(singleQuestion(), 0, 1)
-
-    const form = card.elements.find(e => e.kind === 'form')
+    const form = card.elements[1] as { name?: string; elements: unknown[] }
     expect(form?.name).toBe('askq_text_form_0')
     const input = form?.elements[0] as { kind: string; name?: string; placeholder?: string } | undefined
     expect(input?.kind).toBe('input')
     expect(input?.name).toBe('askq_text_0')
-    expect(input?.placeholder).toContain('输入你的答案')
+    expect(input?.placeholder).toBe('输入你的答案')
     const actions = form?.elements[1] as { buttons?: Array<{ value: string; name?: string; actionType?: string }> } | undefined
     const submit = actions?.buttons?.[0]
     expect(submit?.value).toBe('askq_text:0')
@@ -250,27 +245,35 @@ describe('buildAskQuestionCard', () => {
     expect(submit?.actionType).toBe('form_submit')
   })
 
-  it('an interactive single-select question localizes its copy through the i18n face', () => {
-    const en = buildAskQuestionCard(singleQuestion(), 0, 1, enAskCardI18n())
+  it('a single-select question with options carries no on-card text form — text answers go through chat', () => {
+    const card = buildAskQuestionCard(singleQuestion(), 0, 1)
 
-    const form = en.elements.find(e => e.kind === 'form') as {
+    expect(card.elements.find(e => e.kind === 'form')).toBeUndefined()
+    expect(card.elements.filter(e => e.kind === 'listItem')).toHaveLength(3)
+  })
+
+  it('the optionless form copy and the with-options hint note localize through the i18n face', () => {
+    const optionless = buildAskQuestionCard({ ...singleQuestion(), options: [] }, 0, 1, enAskCardI18n())
+    const form = optionless.elements.find(e => e.kind === 'form') as {
       elements: Array<{ placeholder?: string; buttons?: Array<{ text?: string }> }>
     }
     const input = form.elements[0] as { placeholder?: string }
-    expect(input.placeholder).toBe('en:askq_text_placeholder_options')
+    expect(input.placeholder).toBe('en:askq_text_placeholder')
     const submit = form.elements[1] as { buttons?: Array<{ text?: string }> }
     expect(submit.buttons?.[0]?.text).toBe('en:askq_text_submit')
-    const note = en.elements[en.elements.length - 1] as { kind: string; text: string }
+
+    const withOptions = buildAskQuestionCard(singleQuestion(), 0, 1, enAskCardI18n())
+    const note = withOptions.elements[withOptions.elements.length - 1] as { kind: string; text: string }
     expect(note.kind).toBe('note')
     expect(note.text).toBe('en:ask_free_text_hint')
   })
 
-  it('an interactive single-select question ends with the free-text hint note', () => {
+  it('a single-select question with options ends with the chat-answer hint note', () => {
     const card = buildAskQuestionCard(singleQuestion(), 0, 1)
 
     const note = card.elements[card.elements.length - 1] as { kind: string; text: string }
     expect(note.kind).toBe('note')
-    expect(note.text).toBe('也可以直接文字输入')
+    expect(note.text).toBe('不选选项？直接在聊天里发消息回答')
   })
 
   it('a multi-select question renders a checker form addressed by askq_multi:{q} with the single-card submit label', () => {

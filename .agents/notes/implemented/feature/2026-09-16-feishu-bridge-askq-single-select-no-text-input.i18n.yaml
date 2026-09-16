@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-16-feishu-bridge-askq-single-select-no-text-input.md
+2026-09-16-feishu-bridge-askq-single-select-no-text-input.md: 5921622f6a70f8f58f7f8adbd3015468ebdc8348
+2026-09-16-feishu-bridge-askq-single-select-no-text-input.zh.md: a597886e11d072f231df8ff73f1ad0c71d696f46
