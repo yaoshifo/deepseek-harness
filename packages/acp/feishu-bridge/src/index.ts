@@ -243,7 +243,7 @@ export interface ProjectConfig {
   groupName?: GroupNameConfig
   /** Plan/reply HTML rendering (#47/#48). */
   planRender?: PlanRenderConfig
-  /** Plans directory for presented-plan persistence; '' disables (default ~/.claude/plans). */
+  /** Plans directory for presented-plan persistence; '' disables; unset resolves to ~/.claude/plans at wiring time. */
   planDir?: string
 
   /** Automatic context compression (Go [projects.auto_compress]). */
@@ -1432,9 +1432,7 @@ export function buildProjectAssembly(
     adapter.setDefaultMode(project.agent.mode)
   }
   wirePlanRender(ctx, engine, adapter, project)
-  if (project.planDir !== undefined) {
-    engine.setPlanDir(expandHome(project.planDir))
-  }
+  engine.setPlanDir(resolvePlanDir(project.planDir))
 
   wireSessionMisc(engine, project)
   // M6b: monitor domain (#53) — config block → engine MonitorCore + the
@@ -1615,6 +1613,21 @@ function expandHome(path: string): string {
   if (trimmed === '~') return home
   if (trimmed.startsWith('~/')) return join(home, trimmed.slice(2))
   return trimmed
+}
+
+/**
+ * Resolve one project's plans directory: unset falls back to the
+ * Claude-Code-aligned user default (~/.claude/plans); a set value passes
+ * through expandHome, so '' stays '' (persistence disabled). This is the
+ * explicit defaulting step for engine plan-file persistence — the Engine
+ * field itself fails safe to ''.
+ *
+ * @param configured - Project-configured planDir; undefined when unset.
+ * @returns Directory presented plans are persisted to; '' disables writing.
+ */
+export function resolvePlanDir(configured: string | undefined): string {
+  if (configured === undefined) return join(homedir(), '.claude', 'plans')
+  return expandHome(configured)
 }
 
 /**

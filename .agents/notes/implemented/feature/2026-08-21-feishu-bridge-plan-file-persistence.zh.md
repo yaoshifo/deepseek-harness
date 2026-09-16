@@ -10,7 +10,7 @@ dsh 的计划只以 `exit_plan_mode` 工具调用的形式存在于 session 日�
 
 ## Decision
 
-由引擎在呈现时确定性地持久化计划：ExitPlanMode 卡片分支（`engine.ts`）中，当没有模型自写的计划文件路径且 `planDir` 非空时，`savePlanFile`（`engine/plan-file.ts`）把完整未截断的 markdown 写入 `planDir`，写出的路径成为 `activePlanFilePath`——卡片从文件发送，plan-render 的 HTML 落在旁边。命名对齐 Claude Code 的实证行为：`<cwd-slug>-<标题slug>.md`，cwd slug 取项目 workdir（`getWorkDir()` 结构探测，`process.cwd()` 兜底），标题 slug 复用 `slugifyTitle`/`extractMarkdownTitle`（保留 CJK，与目录中 Go 时代文件一致）。同名但内容不同的文件追加 `-YYYYMMDD-HHMMSS` 后缀另存——修订永不覆盖；内容相同则原文件不动。`projects[].planDir` 配置目录（默认 `~/.claude/plans`，展开 `~`；`''` 关闭）。写失败记录警告并回退 inline 卡片，回合绝不因此中断。模型自写的计划文件仍然优先且永不被改写。
+由引擎在呈现时确定性地持久化计划：ExitPlanMode 卡片分支（`engine.ts`）中，当没有模型自写的计划文件路径且 `planDir` 非空时，`savePlanFile`（`engine/plan-file.ts`）把完整未截断的 markdown 写入 `planDir`，写出的路径成为 `activePlanFilePath`——卡片从文件发送，plan-render 的 HTML 落在旁边。命名对齐 Claude Code 的实证行为：`<cwd-slug>-<标题slug>.md`，cwd slug 取项目 workdir（`getWorkDir()` 结构探测，`process.cwd()` 兜底），标题 slug 复用 `slugifyTitle`/`extractMarkdownTitle`（保留 CJK，与目录中 Go 时代文件一致）。同名但内容不同的文件追加 `-YYYYMMDD-HHMMSS` 后缀另存——修订永不覆盖；内容相同则原文件不动。`projects[].planDir` 配置目录（默认 `~/.claude/plans`，展开 `~`；`''` 关闭），由装配时的 `resolvePlanDir`（index.ts）解析——Engine 字段本身 fail-safe 为 `''`，未经接线的 Engine（即所有 spec）绝不写入用户 home。写失败记录警告并回退 inline 卡片，回合绝不因此中断。模型自写的计划文件仍然优先且永不被改写。
 
 ## Alternatives considered
 
@@ -26,4 +26,4 @@ dsh 计划记录与真 Claude Code 的计划记录同库，靠 cwd slug 按项�
 
 ## Testing
 
-`tests/engine/plan-file.spec.ts`：helper 的命名/修订/去重/建目录用例，加上事件循环集成——呈现即写入全文文件、`planDir: ''` 跳过持久化、模型自写的 `.claude/plans` 文件永不被覆盖且卡片以其为源、目录不可写时回退 inline 卡片且不抛异常。
+`tests/engine/plan-file.spec.ts`：helper 的命名/修订/去重/建目录用例，加上事件循环集成——呈现即写入全文文件、`planDir: ''` 跳过持久化、默认构造的 Engine 不落任何文件（fail-safe 默认）、模型自写的 `.claude/plans` 文件永不被覆盖且卡片以其为源、目录不可写时回退 inline 卡片且不抛异常；`resolvePlanDir` 钉死未配置→用户默认、`~` 展开、`''` 透传三例。

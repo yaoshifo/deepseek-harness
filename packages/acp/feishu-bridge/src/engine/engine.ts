@@ -152,7 +152,6 @@ import { newAsyncSender, type AsyncSender } from '../async-sender.ts'
 import { RateLimiter } from '../ratelimit.ts'
 import { readFileSync, statSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { join as joinPath } from 'node:path'
 import { createHash } from 'node:crypto'
 import { asCompletionNoticePreference, asCompletionNotifier, asChatPhasePainter, asDeliveryOutcomeClassifier, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
@@ -1131,8 +1130,13 @@ export class Engine {
    */
   planRenderSkillSource: (() => Promise<string | undefined>) | undefined
   // ── plan-file persistence (Claude-Code-aligned plan .md records) ────────
-  /** Directory presented plans are written to; '' disables writing. */
-  planDir: string = joinPath(homedir(), '.claude', 'plans')
+  /**
+   * Directory presented plans are written to; '' disables writing. Fails
+   * safe to '': the production default (~/.claude/plans) is resolved by
+   * plugin wiring (resolvePlanDir in index.ts), so an unwired Engine —
+   * every spec — never writes into the user's home.
+   */
+  planDir: string = ''
   // ── usage + status footer (Go engine usage* fields, M7) ─────────────────
   /** Whether the ctx/cache lines are shown on the completion footer (Go showContextIndicator). */
   showContextIndicator: boolean = true

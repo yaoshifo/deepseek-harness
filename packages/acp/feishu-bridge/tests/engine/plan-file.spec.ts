@@ -11,12 +11,13 @@
 
 import { describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { Card } from '../../src/card.ts'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { savePlanFile } from '../../src/engine/plan-file.ts'
+import { resolvePlanDir } from '../../src/index.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -112,6 +113,24 @@ describe('savePlanFile', () => {
   })
 })
 
+// ── resolvePlanDir (plugin wiring default) ──────────────────────────────────
+
+describe('resolvePlanDir', () => {
+  it('falls back to the user-level default when unset', () => {
+    expect(resolvePlanDir(undefined)).toBe(join(homedir(), '.claude', 'plans'))
+  })
+
+  it('expands a leading ~ so the config stays portable', () => {
+    expect(resolvePlanDir('~')).toBe(homedir())
+    expect(resolvePlanDir('~/x/plans')).toBe(join(homedir(), 'x', 'plans'))
+  })
+
+  it('passes set values through, keeping the disabling empty string', () => {
+    expect(resolvePlanDir('')).toBe('')
+    expect(resolvePlanDir('/srv/plans')).toBe('/srv/plans')
+  })
+})
+
 // ── engine event-loop integration ───────────────────────────────────────────
 
 const planBody = '# 计划标题\n\n步骤一：封装\n步骤二：接入'
@@ -146,6 +165,22 @@ describe('processInteractiveEvents plan persistence', () => {
     await drivePlanReview(e, state, 'slack:C1:U1', [])
 
     expect(readdirSync(plansDir)).toHaveLength(0)
+    expect(p.getSent().join('\n')).toContain(planBody)
+  })
+
+  it('EngineDefaultPlanDirDisabled: a default-constructed Engine persists nothing', async () => {
+    // Fail-safe default: an Engine built without wiring must never write into
+    // the user's real plans directory — the production default is resolved by
+    // plugin wiring (resolvePlanDir in index.ts), not the field initializer.
+    const e = new Engine('test', agentWithWorkDir('/Users/t/Proj A'), [createStubPlatform('test')], '', 'en')
+    const p = createStubPlatform('test')
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+
+    await drivePlanReview(e, state, 'slack:C1:U1', [])
+
+    expect(e.planDir).toBe('')
     expect(p.getSent().join('\n')).toContain(planBody)
   })
 
