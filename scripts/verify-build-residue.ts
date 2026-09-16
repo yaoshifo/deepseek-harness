@@ -160,12 +160,15 @@ export function collectZombiePackages(root: string): string[] {
     for (const group of readdirSync(topDir, { withFileTypes: true })) {
       if (!group.isDirectory() || group.name === 'node_modules') continue
       const groupDir = join(topDir, group.name)
-      // A vendor one-level dir is a package candidate only when nothing
-      // inside it is a package; packages/ one-level dirs are always groups.
+      // vendor/ is a single-level package layout: a dir is a package
+      // candidate only when nothing inside it is a package. packages/ is
+      // grouped — its one-level dirs are groups, never packages.
       if (top === 'vendor' && !carriesPackage(groupDir)) record(groupDir)
-      for (const pkg of readdirSync(groupDir, { withFileTypes: true })) {
-        if (!pkg.isDirectory() || pkg.name === 'node_modules') continue
-        record(join(groupDir, pkg.name))
+      if (top === 'packages') {
+        for (const pkg of readdirSync(groupDir, { withFileTypes: true })) {
+          if (!pkg.isDirectory() || pkg.name === 'node_modules') continue
+          record(join(groupDir, pkg.name))
+        }
       }
     }
   }

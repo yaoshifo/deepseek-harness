@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-`scripts/verify-build-residue.ts` 扫描每个包的 tsc 产物目录（`lib/types`，rootDir `src`——工作区内统一），标记源文件已不存在的产物；覆盖仓库根包、`packages/<group>/<pkg>` 与 `vendor/<pkg>` 两种布局，以及 `src` 整树消失的删包场景。它同时标记僵尸包目录——布局匹配但 package.json 已消失的目录；tsdown 的 workspace glob 仍会匹配它们，孤儿产物被清后它们会让 workspace 打包要么报错、要么静默打包陈旧垃圾。`--prune` 删除被标记产物与条目全为已知残渣的僵尸目录（clean.ts 的安全规则；未知条目拒绝删除）。既无 `packages/` 也无 `vendor/` 的根目录直接报错而非空转通过；完全未构建的树（无任何 `lib/types`）以零计数通过。
+`scripts/verify-build-residue.ts` 扫描每个包的 tsc 产物目录（`lib/types`，rootDir `src`——工作区内统一），标记源文件已不存在的产物；覆盖仓库根包、`packages/<group>/<pkg>` 与单层 `vendor/<pkg>` 布局，以及 `src` 整树消失的删包场景。它同时标记僵尸包目录——布局匹配但 package.json 已消失的目录；tsdown 的 workspace glob 仍会匹配它们，孤儿产物被清后它们会让 workspace 打包要么报错、要么静默打包陈旧垃圾。`--prune` 删除被标记产物与条目全为已知残渣的僵尸目录（clean.ts 的安全规则；未知条目拒绝删除）。既无 `packages/` 也无 `vendor/` 的根目录直接报错而非空转通过；完全未构建的树（无任何 `lib/types`）以零计数通过。
 
 ## Alternatives considered
 

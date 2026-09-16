@@ -149,3 +149,25 @@ describe('zombie package directories', () => {
     expect(existsSync(zombie)).toBe(true)
   })
 })
+
+describe('vendor layout regression', () => {
+  it('does not flag a vendor single-level package or its src/lib children', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-build-residue-'))
+    roots.push(root)
+    const pkg = join(root, 'vendor/cordis')
+    mkdirSync(join(pkg, 'src'), { recursive: true })
+    mkdirSync(join(pkg, 'lib'), { recursive: true })
+    writeFileSync(join(pkg, 'package.json'), '{ "name": "cordis" }\n')
+    writeFileSync(join(pkg, 'src/index.ts'), 'export {}\n')
+
+    expect(collectZombiePackages(root)).toEqual([])
+  })
+
+  it('flags a one-level vendor dir without package.json', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-build-residue-'))
+    roots.push(root)
+    mkdirSync(join(root, 'vendor/dead-pkg/lib'), { recursive: true })
+
+    expect(collectZombiePackages(root)).toEqual(['vendor/dead-pkg/'])
+  })
+})
