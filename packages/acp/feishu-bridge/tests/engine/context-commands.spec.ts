@@ -19,6 +19,7 @@ import type { ContextSnapshotValues } from '../../src/context/types.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
+  createStubMediaPlatform,
   createStubPlatform,
   newControllableSession,
   newStubMessage,
@@ -43,6 +44,8 @@ function snapshot(over: Partial<ContextSnapshotValues> = {}): ContextSnapshotVal
         total: 9_000, prompt: 9_000, cacheRead: 500, output: 800,
       }],
       events: [{ seq: 1, time: 0, kind: 'compaction', tokens: 2_000, turn: 1, name: 'compaction-basic' }],
+      nodes: [],
+      droppedNodes: 0,
       contextWindow: 128_000,
     },
     ...over,
@@ -227,6 +230,98 @@ describe('registerContextCommands', () => {
       expect(p.sentCards.length).toBe(0)
       expect(p.getSent()).toEqual([])
     } finally {
+      disposeSession()
+    }
+  })
+})
+
+describe('/context map', () => {
+  /** The treemap-shaped snapshot: a header epoch plus live surface nodes. */
+  function mapSnapshot(): ContextSnapshotValues {
+    return {
+      timeline: {
+        current: { system: 1_200, tools: 3_000, user: 800, inject: 200, assistant: 1_500, tool: 500, total: 7_200 },
+        requests: [],
+        events: [],
+        nodes: [
+          { seq: 1, cat: 'inject', tokens: 200, text: 'AGENTS.md' },
+          { seq: 2, cat: 'user', tokens: 800, text: '帮我看看' },
+          { seq: 3, cat: 'tool', tokens: 500, tool: 'bash' },
+          { seq: 4, cat: 'assistant', tokens: 1_500, text: '结论如下' },
+        ],
+        droppedNodes: 0,
+      },
+      headers: {
+        headers: [{
+          seq: 1, time: 0, system: 'You are a coding agent.',
+          tools: [{ name: 'bash', tokens: 1_800 }, { name: 'read', tokens: 1_200 }],
+        }],
+      },
+    }
+  }
+
+  /** Engine + media platform + the /context registration (sendFile records). */
+  function newMapFixture(live: { snapshot: ContextSnapshotValues | undefined }) {
+    const p = createStubMediaPlatform('media')
+    const e = new Engine('test', contextAgent(live), [p], '', 'zh')
+    const disposeSession = registerSessionCommands(e)
+    const disposeCommands = registerContextCommands(e)
+    const state = new InteractiveState()
+    state.agentSession = newControllableSession('cc-live-1')
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set('test:ch1', state)
+    return { e, p, disposeSession, disposeCommands }
+  }
+
+  it('sends the treemap document as a .html attachment over the file sender', async () => {
+    const { e, p, disposeSession, disposeCommands } = newMapFixture({ snapshot: mapSnapshot() })
+    try {
+      expect(e.dispatchCommand(p, cmdMsg('/context map'), '/context map')).toBe(true)
+      await flush()
+      expect(p.files.length).toBe(1)
+      const file = p.files[0]
+      expect(file?.mimeType).toBe('text/html')
+      expect(file?.fileName.startsWith('context-map-')).toBe(true)
+      expect(file?.fileName.endsWith('.html')).toBe(true)
+      const html = new TextDecoder().decode(file?.data ?? new Uint8Array())
+      expect(html).toContain('上下文树图')
+      expect(html).toContain('帮我看看')
+    } finally {
+      disposeCommands()
+      disposeSession()
+    }
+  })
+
+  it('replies the mount hint and sends no file without the timeline projection', async () => {
+    const { e, p, disposeSession, disposeCommands } = newMapFixture({
+      snapshot: { pressure: { pressureTokens: 90_000 } },
+    })
+    try {
+      expect(e.dispatchCommand(p, cmdMsg('/context map'), '/context map')).toBe(true)
+      await flush()
+      expect(p.files.length).toBe(0)
+      expect(p.getSent().at(-1) ?? '').toContain('dsh-context')
+    } finally {
+      disposeCommands()
+      disposeSession()
+    }
+  })
+
+  it('replies a text fallback when the platform cannot send files', async () => {
+    const text = createStubPlatform('plain')
+    const e = new Engine('test', contextAgent({ snapshot: mapSnapshot() }), [text], '', 'zh')
+    const disposeSession = registerSessionCommands(e)
+    const disposeCommands = registerContextCommands(e)
+    const state = new InteractiveState()
+    state.agentSession = newControllableSession('cc-live-1')
+    e.interactiveStates.set('test:ch1', state)
+    try {
+      expect(e.dispatchCommand(text, cmdMsg('/context map'), '/context map')).toBe(true)
+      await flush()
+      expect(text.getSent().at(-1) ?? '').toContain('不支持发送文件')
+    } finally {
+      disposeCommands()
       disposeSession()
     }
   })

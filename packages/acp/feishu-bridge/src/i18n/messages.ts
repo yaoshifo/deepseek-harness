@@ -426,6 +426,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   context_plugin_hint: { en: '💡 Mount the dsh-context plugin for the full panel (six-bucket composition, per-turn trend, context events).', zh: '💡 挂载 dsh-context 插件可见完整面板（六桶构成、逐轮趋势、上下文事件）。' },
   context_plugin_hint_short: { en: '💡 Mount the dsh-context plugin for the full panel.', zh: '💡 挂载 dsh-context 插件可见完整面板。' },
   context_refresh: { en: '🔄 Refresh', zh: '🔄 刷新' },
+  context_map_no_file_sender: { en: 'This platform cannot deliver files, so the context treemap cannot be sent.', zh: '当前平台不支持发送文件，无法投递上下文树图。' },
   predict_insight_title: { en: '💡 You might ask (%s)', zh: '💡 猜你想问（%s）' },
   predict_send: { en: 'Send', zh: '发送' },
   predict_block: { en: 'Block', zh: '屏蔽' },

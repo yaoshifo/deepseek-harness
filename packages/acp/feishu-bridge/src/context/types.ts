@@ -10,7 +10,7 @@
  *   (current composition, requests, events, cost raw material),
  *   `RequestRecord`, `ContextEventRecord`, `ContextPressure`,
  *   `SessionCostUsage`/`CostFamilyUsage`/`CostBucketTotals`,
- *   `ContextHeaders`/`HeaderRecord`/`HeaderTool`.
+ *   `ContextHeaders`/`HeaderRecord`/`HeaderTool`, `SurfaceNode`.
  * - token-meter `src/projection.ts`: `ContextBreakdownProjection`
  *   (`ContextBreakdownValue`) and `TokenUsageProjection`
  *   (`TokenUsageValue`); `ContextPressureValue` covers the same
@@ -22,9 +22,11 @@
  *
  * Field optionality mirrors upstream exactly (a projection value from a
  * current dsh-context host feeds these types unchanged); only fields the
- * cards consume survive — surface nodes, archive, and header schema/description
- * payloads are dropped. Token figures are heuristic counts; cost carries raw
- * billed-token totals only, never a currency conversion.
+ * cards and the treemap consume survive — archive entries and the header's
+ * raw tool-schema objects stay dropped (the treemap needs the served node
+ * list and the header's system-prompt text + tool descriptions). Token
+ * figures are heuristic counts; cost carries raw billed-token totals only,
+ * never a currency conversion.
  *
  * @module dsh-feishu-bridge/context/types
  */
@@ -57,6 +59,50 @@ export interface SixBuckets {
 export interface CurrentComposition extends SixBuckets {
   /** Sum of the six buckets. */
   total: number
+}
+
+/**
+ * The four surface categories of a live message node, ported from
+ * dsh-context `src/shared/types.ts` `Category`.
+ */
+export type SurfaceCategory = 'user' | 'inject' | 'assistant' | 'tool'
+
+/**
+ * One model-visible message on the live surface, ported from dsh-context
+ * `src/shared/types.ts` `SurfaceNode` (on the wire since 0.11, the Context
+ * browser's raw material; every field is treemap-visible). The served list
+ * is the newest `maxNodes` tail plus every live inject node older than the
+ * tail — so `nodes` alone under-reports a long session by `droppedNodes`
+ * non-inject messages whose tokens still count in `current`.
+ */
+export interface SurfaceNode {
+  /** Log sequence number; the message's position on the surface. */
+  seq: number
+  /** Log time (epoch ms). */
+  time?: number
+  /** Surface category of the message. */
+  cat: SurfaceCategory
+  /** Heuristic token count of the assembled message. */
+  tokens: number
+  /** Image blocks inside this node's message (absent when zero). */
+  imgs?: number
+  /**
+   * Removal marker, present only on archive entries: the seq of the
+   * replacement surface event that shadowed this node (compaction/prune).
+   */
+  gone?: number
+  /** Injection form tag. */
+  form?: string
+  /** First text block of the message, when it has one. */
+  text?: string
+  /** Tool name of a tool-result node. */
+  tool?: string
+  /** Error marker of a failed tool result. */
+  err?: boolean
+  /** Skill name a skill-tool result loaded. */
+  skill?: string
+  /** Tool-call names of an assistant message that made calls (first three). */
+  calls?: string[]
 }
 
 /**
@@ -165,9 +211,10 @@ export interface SessionCostUsage {
 
 /**
  * Narrow `contextTimeline` projection value (dsh-context's `ContextTimeline`):
- * the current composition, per-step request history, context events, and the
- * session-cost raw material. `requests` is seq-ordered oldest-first and
- * bounded by whole turns; `events` is the newest tail.
+ * the current composition, per-step request history, context events, the
+ * served live surface, and the session-cost raw material. `requests` is
+ * seq-ordered oldest-first and bounded by whole turns; `events` is the
+ * newest tail.
  */
 export interface ContextTimelineValue {
   /** Current context composition (heuristic sums). */
@@ -176,6 +223,10 @@ export interface ContextTimelineValue {
   requests: RequestRecord[]
   /** Notable context events, oldest first. */
   events: TimelineEvent[]
+  /** The served live surface: newest `maxNodes` tail plus pinned live injects, seq-ordered. */
+  nodes: SurfaceNode[]
+  /** Live nodes not served (the overflow beyond `maxNodes`, minus pinned injects). */
+  droppedNodes: number
   /** Route capacity, when a provider reported one. */
   contextWindow?: number
   /** Session-cost raw material; absent until a request reports usage. */
@@ -199,8 +250,8 @@ export interface ContextPressureValue {
 
 /**
  * One tool schema as assembled into a request header, ported from
- * dsh-context `src/shared/types.ts` `HeaderTool` minus the browser-only
- * `description`/`schema` payloads.
+ * dsh-context `src/shared/types.ts` `HeaderTool` minus the raw `schema`
+ * object (the treemap shows the description, not the JSON).
  */
 export interface HeaderToolValue {
   /** Tool name as the model sees it. */
@@ -209,17 +260,22 @@ export interface HeaderToolValue {
   tokens: number
   /** Registering plugin's label (`mcp:<server>` for MCP tools), when known. */
   plugin?: string
+  /** Producer-declared description (may be long; the treemap truncates). */
+  description?: string
 }
 
 /**
  * One request-header epoch ported from dsh-context `src/shared/types.ts`
- * `HeaderRecord` minus the full system-prompt text.
+ * `HeaderRecord` minus nothing the bridge consumes (the treemap reads the
+ * system-prompt text; the raw schema objects stay dropped per tool above).
  */
 export interface HeaderRecordValue {
   /** Log sequence number the epoch took effect at. */
   seq: number
   /** Log time (epoch ms). */
   time: number
+  /** The full assembled system prompt in force from this epoch until the next. */
+  system?: string
   /** Tool schemas in force from this epoch until the next. */
   tools: HeaderToolValue[]
 }

@@ -23,6 +23,8 @@ function timeline(over: Partial<ContextTimelineValue> = {}): ContextTimelineValu
     current: { system: 10, tools: 20, user: 30, inject: 0, assistant: 40, tool: 0, total: 100 },
     requests: [],
     events: [],
+    nodes: [],
+    droppedNodes: 0,
     ...over,
   }
 }

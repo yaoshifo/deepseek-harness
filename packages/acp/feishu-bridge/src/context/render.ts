@@ -379,7 +379,7 @@ function appendRefresh(cb: ReturnType<typeof newCard>, args: ContextCardArgs): R
  * @param tokens - Raw token count.
  * @returns The compact display form.
  */
-function formatTokens(tokens: number): string {
+export function formatTokens(tokens: number): string {
   if (tokens < 1000) return `${Math.max(0, Math.round(tokens))}`
   const k = tokens / 1000
   return k < 100 ? `${k.toFixed(1)}k` : `${Math.round(k)}k`
@@ -391,7 +391,7 @@ function formatTokens(tokens: number): string {
  * @param maxLen - Maximum rune count.
  * @returns The capped string.
  */
-function capRunes(value: string, maxLen: number): string {
+export function capRunes(value: string, maxLen: number): string {
   const runes = Array.from(value)
   if (runes.length <= maxLen) return value
   return `${runes.slice(0, maxLen - 1).join('')}…`

@@ -35,6 +35,8 @@ function timeline(over: Partial<ContextTimelineValue> = {}): ContextTimelineValu
     current: { system: 10_000, tools: 20_000, user: 30_000, inject: 0, assistant: 40_000, tool: 0, total: 100_000 },
     requests: [req({ turn: 1, step: 1, prompt: 96_000, cacheRead: 20_000, output: 3_500 })],
     events: [],
+    nodes: [],
+    droppedNodes: 0,
     contextWindow: 128_000,
     ...over,
   }
