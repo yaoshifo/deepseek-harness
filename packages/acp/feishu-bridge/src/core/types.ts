@@ -260,6 +260,13 @@ export interface Event {
   /** Tool result success; absent means success (emitters without failure identity). */
   toolSuccess?: boolean
   toolID?: string
+  /**
+   * Terminal-frame flag; on `compaction` events it splits the lifecycle:
+   * false is `compaction/start` (attempt in flight), true is
+   * `compaction/end` — whose `errorText` distinguishes a failed attempt
+   * (no checkpoint landed, retried at the next step boundary) from a
+   * successful one.
+   */
   done: boolean
   error?: Error
   errorText?: string

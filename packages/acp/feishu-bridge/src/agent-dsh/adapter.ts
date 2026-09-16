@@ -2901,6 +2901,17 @@ export class DshAgentSession implements AgentSession {
         this.channel.push({ type: 'compaction', content: '', done: false })
         break
       }
+      case 'compaction/end': {
+        // Failure identity rides errorText (e.g. summarization truncated at
+        // the token cap); absent when the checkpoint landed.
+        this.channel.push({
+          type: 'compaction',
+          content: '',
+          done: true,
+          ...data.error !== undefined ? { errorText: toStr(data.error) } : {},
+        })
+        break
+      }
       case 'turn/end': {
         // The turn's final reply is its last assistant text (the Go SDK
         // `result` field equivalent); carry the turn's usage with it. An

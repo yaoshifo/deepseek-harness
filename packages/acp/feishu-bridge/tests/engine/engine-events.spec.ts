@@ -2387,9 +2387,10 @@ describe('processInteractiveEvents native signals (tool failure / compaction / t
     expect(p.messages.join('\n')).not.toContain('🔴调用失败')
   })
 
-  it('counts a compaction event on state and the card summary line', async () => {
+  it('counts a landed compaction on state and the card summary line', async () => {
     const { e, p, session, state, agentSession, sessionKey } = newQuietState()
     agentSession.channel.push({ type: 'compaction', content: '', done: false })
+    agentSession.channel.push({ type: 'compaction', content: '', done: true })
     agentSession.channel.push({ type: 'result', content: 'done', done: true })
     await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
 
@@ -2397,14 +2398,52 @@ describe('processInteractiveEvents native signals (tool failure / compaction / t
     expect(p.messages.join('\n')).toContain('🗜上下文压缩：1次')
   })
 
+  it('counts a failed compaction attempt as a retry, not a second compaction', async () => {
+    const { e, p, session, state, agentSession, sessionKey } = newQuietState()
+    agentSession.channel.push({ type: 'compaction', content: '', done: false })
+    agentSession.channel.push({ type: 'compaction', content: '', done: true, errorText: 'summarization truncated at the token cap (incomplete checkpoint)' })
+    agentSession.channel.push({ type: 'compaction', content: '', done: false })
+    agentSession.channel.push({ type: 'compaction', content: '', done: true })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(state.compactionCount).toBe(1)
+    const joined = p.messages.join('\n')
+    expect(joined).toContain('🗜上下文压缩：1次（含1次重试）')
+    expect(joined).not.toContain('🗜上下文压缩：2次')
+  })
+
+  it('shows the retry line when every attempt in the turn failed', async () => {
+    const { e, p, session, state, agentSession, sessionKey } = newQuietState()
+    agentSession.channel.push({ type: 'compaction', content: '', done: false })
+    agentSession.channel.push({ type: 'compaction', content: '', done: true, errorText: 'summarization truncated at the token cap (incomplete checkpoint)' })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(state.compactionCount).toBe(0)
+    expect(p.messages.join('\n')).toContain('🗜上下文压缩重试：1次')
+  })
+
   it('sends the compaction summary to chat when no preview card is active', async () => {
     const { e, p, session, state, agentSession, sessionKey } = newQuietState()
     e.setDisplayConfig({ toolMessages: false, toolProgress: false })
     agentSession.channel.push({ type: 'compaction', content: '', done: false })
+    agentSession.channel.push({ type: 'compaction', content: '', done: true })
     agentSession.channel.push({ type: 'result', content: 'done', done: true })
     await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
 
     expect(p.getSent().some(s => s.includes('🗜 Context auto-compacted'))).toBe(true)
+  })
+
+  it('sends the retry notice to chat when a compaction fails without a preview card', async () => {
+    const { e, p, session, state, agentSession, sessionKey } = newQuietState()
+    e.setDisplayConfig({ toolMessages: false, toolProgress: false })
+    agentSession.channel.push({ type: 'compaction', content: '', done: false })
+    agentSession.channel.push({ type: 'compaction', content: '', done: true, errorText: 'summarization truncated' })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(p.getSent().some(s => s.includes('🗜 Context compaction failed'))).toBe(true)
   })
 
   it('replaces the todo section from a todo_update event', async () => {

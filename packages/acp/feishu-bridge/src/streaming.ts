@@ -163,6 +163,8 @@ export class ProgressEntry {
   isTool: boolean = false
   /** True for compaction entries (counted in summary line). */
   isCompact: boolean = false
+  /** True for failed compaction attempts (counted as 重试, not a landed compaction). */
+  isCompactRetry: boolean = false
   /** Tool call sequence number within this turn (0 = not assigned). */
   seq: number = 0
   /** Full tool name when header name was truncated. */
@@ -587,6 +589,7 @@ export class StreamPreview {
   private toolCallSeq = 0
   private failureCount = 0
   private compactCount = 0
+  private compactRetryCount = 0
   /**
    * Skill names invoked this turn (deduped, insertion-ordered).
    * @internal White-box: ported same-package tests read/write this directly.
@@ -1461,6 +1464,7 @@ export class StreamPreview {
         if (entry.skillName !== '') this.addSkillName(entry.skillName)
       }
       if (entry.isCompact) this.compactCount++
+      if (entry.isCompactRetry) this.compactRetryCount++
       if (this.progressEntries.length < maxProgressLines) {
         this.progressEntries.push(entry)
         this.progressLatestIdx = this.progressEntries.length - 1
@@ -2106,12 +2110,19 @@ export class StreamPreview {
     // Section 1: 待办事项 + 状态计数（失败/压缩/技能/子代理）in one code block.
     const hasToolEntries = this.progressEntries.some(e => e.isTool)
     const hasStatus = this.todoItems.length > 0 || this.failureCount > 0 || this.compactCount > 0
+      || this.compactRetryCount > 0
       || this.skillNames.length > 0 || this.subagentCount > 0
     if (hasStatus) {
       b += '```\n'
       // 摘要统计置顶（失败/压缩/技能/子代理）；待办跟在后面
       if (this.failureCount > 0) b += `🔴调用失败：${this.failureCount}/${this.progressTotalCount}\n`
-      if (this.compactCount > 0) b += `🗜上下文压缩：${this.compactCount}次\n`
+      if (this.compactCount > 0) {
+        b += `🗜上下文压缩：${this.compactCount}次`
+        if (this.compactRetryCount > 0) b += `（含${this.compactRetryCount}次重试）`
+        b += '\n'
+      } else if (this.compactRetryCount > 0) {
+        b += `🗜上下文压缩重试：${this.compactRetryCount}次\n`
+      }
       if (this.skillNames.length > 0) b += `📚 技能：${this.skillNames.join('、')}\n`
       if (this.subagentCount > 0) b += `🤖 累计派发：${this.subagentCount}\n`
       for (const item of this.todoItems) {

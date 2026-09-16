@@ -3830,11 +3830,25 @@ export class Engine {
 
           case 'compaction': {
           // Native compaction lifecycle replaces Go's stream-json text mining
-          // (Go engine_events.go EventCompaction).
-            state.compactionCount++
-            const summary = this.i18n.t(Msg.ContextCompacted)
+          // (Go engine_events.go EventCompaction). done:false is the start
+          // (attempt in flight — progress entry only, no count); done:true is
+          // the end, where errorText separates a failed attempt (no checkpoint
+          // landed, retried at the next step boundary) from a landed one.
+            if (!event.done) {
+              if (this.display.toolProgress && sp.canPreview()) {
+                await sp.appendProgress(new ProgressEntry({ text: this.i18n.t(Msg.ContextCompacting) }))
+              }
+              break
+            }
+            const failed = event.errorText !== undefined
+            if (!failed) state.compactionCount++
+            const summary = this.i18n.t(failed ? Msg.ContextCompactionRetried : Msg.ContextCompacted)
             if (this.display.toolProgress && sp.canPreview()) {
-              await sp.appendProgress(new ProgressEntry({ text: summary, isCompact: true }))
+              await sp.appendProgress(new ProgressEntry({
+                text: summary,
+                isCompact: !failed,
+                isCompactRetry: failed,
+              }))
             } else if (p !== undefined) {
               await this.send(p, replyCtx, summary)
             }
