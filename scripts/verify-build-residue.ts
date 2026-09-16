@@ -3,10 +3,10 @@
  * deleted `src/<file>.ts` leaves its `lib/types/<file>.{js,d.ts,.js.map,.d.ts.map}`
  * behind as build residue. The tsdown bundles only pull files the fresh entry
  * chain imports, so the poison path is a lib consumer reading deleted symbols
- * from a stale output. Scan every workspace package's tsc output dir
- * (`lib/types`, rootDir `src`) and flag outputs whose source no longer
- * exists. tsdown's root-level `lib/*.js` bundles and chunks regenerate
- * wholesale per build and stay out of scope.
+ * from a stale output. Scan the repository-root package and every workspace
+ * package's tsc output dir (`lib/types`, rootDir `src`) and flag outputs
+ * whose source no longer exists. tsdown's root-level `lib/*.js` bundles and
+ * chunks regenerate wholesale per build and stay out of scope.
  */
 
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
@@ -40,15 +40,16 @@ function collectFiles(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * Package roots under `root` that carry a `lib/types` dir, covering the
- * `packages/<group>/<pkg>`, `vendor/<pkg>`, and `vendor/<group>/<pkg>`
- * layouts. Sorted for deterministic output.
+ * Package roots under `root` that carry a `lib/types` dir: the repository
+ * root itself plus the `packages/<group>/<pkg>`, `vendor/<pkg>`, and
+ * `vendor/<group>/<pkg>` layouts. Sorted for deterministic output.
  *
  * @param root - Workspace root to scan.
  * @returns package roots with a tsc output dir.
  */
 function discoverPackages(root: string): string[] {
   const found = new Set<string>()
+  addIfBuilt(found, root)
   for (const top of ['packages', 'vendor']) {
     const topDir = join(root, top)
     if (!existsSync(topDir)) continue

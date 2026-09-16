@@ -94,3 +94,19 @@ describe('build residue gate', () => {
     expect(existsSync(join(pkg, 'lib/types/gone.js'))).toBe(false)
   })
 })
+
+describe('repository-root package coverage', () => {
+  it('flags orphaned outputs under the root package lib/types', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-build-residue-'))
+    roots.push(root)
+    mkdirSync(join(root, 'packages/core/agent/src'), { recursive: true })
+    mkdirSync(join(root, 'lib/types'), { recursive: true })
+    writeFileSync(join(root, 'lib/types/gone.js'), '')
+    writeFileSync(join(root, 'lib/types/gone.d.ts'), '')
+
+    expect(collectBuildResidue(root)).toEqual([
+      'lib/types/gone.d.ts',
+      'lib/types/gone.js',
+    ])
+  })
+})

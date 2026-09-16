@@ -10,7 +10,7 @@ English | [中文](2026-09-16-build-residue-gate.zh.md)
 
 ## Decision
 
-`scripts/verify-build-residue.ts` scans every package's tsc output dir (`lib/types`, rootDir `src` — uniform across the workspace) and flags outputs whose source file no longer exists, covering both `packages/<group>/<pkg>` and `vendor/<pkg>` layouts and the deleted-package case where `src` is gone entirely. `--prune` deletes the flagged outputs. A root with neither `packages/` nor `vendor/` fails instead of passing vacuously; an unbuilt tree (no `lib/types` anywhere) passes with a zero-count report.
+`scripts/verify-build-residue.ts` scans every package's tsc output dir (`lib/types`, rootDir `src` — uniform across the workspace) and flags outputs whose source file no longer exists, covering the repository-root package, the `packages/<group>/<pkg>` and `vendor/<pkg>` layouts, and the deleted-package case where `src` is gone entirely. `--prune` deletes the flagged outputs. A root with neither `packages/` nor `vendor/` fails instead of passing vacuously; an unbuilt tree (no `lib/types` anywhere) passes with a zero-count report.
 
 ## Alternatives considered
 

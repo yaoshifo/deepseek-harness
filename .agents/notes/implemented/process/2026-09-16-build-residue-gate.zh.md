@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-`scripts/verify-build-residue.ts` 扫描每个包的 tsc 产物目录（`lib/types`，rootDir `src`——工作区内统一），标记源文件已不存在的产物；覆盖 `packages/<group>/<pkg>` 与 `vendor/<pkg>` 两种布局，以及 `src` 整树消失的删包场景。`--prune` 删除被标记的产物。既无 `packages/` 也无 `vendor/` 的根目录直接报错而非空转通过；完全未构建的树（无任何 `lib/types`）以零计数通过。
+`scripts/verify-build-residue.ts` 扫描每个包的 tsc 产物目录（`lib/types`，rootDir `src`——工作区内统一），标记源文件已不存在的产物；覆盖仓库根包、`packages/<group>/<pkg>` 与 `vendor/<pkg>` 两种布局，以及 `src` 整树消失的删包场景。`--prune` 删除被标记的产物。既无 `packages/` 也无 `vendor/` 的根目录直接报错而非空转通过；完全未构建的树（无任何 `lib/types`）以零计数通过。
 
 ## Alternatives considered
 
