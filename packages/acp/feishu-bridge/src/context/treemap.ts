@@ -20,11 +20,8 @@ import { capRunes, formatTokens } from './render.ts'
 import { BUCKET_COLORS, BUCKET_KEYS, BUCKET_LABELS } from './chartspec.ts'
 import type { ContextSnapshotValues, HeaderToolValue, SurfaceCategory, SurfaceNode } from './types.ts'
 
-/** In-rectangle label cap (runes) for node and tool segments. */
-const SEGMENT_LABEL_MAX_RUNES = 80
-
-/** Hover-preview cap (runes) for every segment kind. */
-const SEGMENT_PREVIEW_MAX_RUNES = 400
+/** Cap (runes) of a segment's prompt text before per-rectangle fitting. */
+const SEGMENT_TEXT_MAX_RUNES = 400
 
 /** Treemap canvas size in CSS pixels (the map scales down on narrow windows). */
 const TREEMAP_CANVAS = { w: 1_280, h: 800 } as const
@@ -39,6 +36,14 @@ const BAND_HEAD_H = 26
 const LABEL_MIN_W = 56
 const LABEL_MIN_H = 26
 
+/** In-rectangle text metrics (must track the body CSS: 12px/1.35 content, 11px token line). */
+const CONTENT_FONT_PX = 12
+const CONTENT_LINE_PX = 16.2
+const TOKENS_LINE_PX = 16
+
+/** Rectangle padding, both sides summed (`.seg { padding: 4px }`). */
+const SEG_PAD_PX = 8
+
 /** The dropped-nodes placeholder's gray (outside the six-bucket palette). */
 const DROPPED_COLOR = '#64748b'
 
@@ -51,10 +56,13 @@ export interface TreemapSegment {
   kind: 'system' | 'tool' | 'dropped' | 'node'
   /** Heuristic token count; the rectangle's area weight. */
   tokens: number
-  /** Primary in-rectangle label (first line of the preview material). */
-  label: string
-  /** Longer hover text (the HTML title attribute), rune-capped. */
-  preview: string
+  /**
+   * The segment's prompt text: the system prompt's opening, a tool's
+   * name + description, or the message's opening text. Rune-capped here,
+   * then fitted to each rectangle's capacity by {@link fitTextToRect}; the
+   * hover title carries the full capped text.
+   */
+  text: string
   /** Surface category ('node' segments only); drives the bucket color. */
   cat?: SurfaceCategory
   /** Session-log sequence number ('node' segments only); shown beside the token count. */
@@ -136,8 +144,9 @@ export function treemapSegments(snapshot: ContextSnapshotValues): TreemapSegment
     segments.push({
       kind: 'system',
       tokens: timeline.current.system,
-      label: '系统提示词',
-      preview: capRunes(epoch?.system ?? '', SEGMENT_PREVIEW_MAX_RUNES),
+      // The prompt itself fills the rectangle; without a header epoch (an
+      // older host) the phase name is all there is to show.
+      text: capRunes(epoch?.system ?? '', SEGMENT_TEXT_MAX_RUNES) || '系统提示词',
     })
   }
   if (epoch !== undefined) {
@@ -156,8 +165,7 @@ export function treemapSegments(snapshot: ContextSnapshotValues): TreemapSegment
     segments.push({
       kind: 'dropped',
       tokens: droppedTokens,
-      label: `更早的 ${timeline.droppedNodes} 条消息`,
-      preview: `未进入快照服务范围的 ${timeline.droppedNodes} 条消息，约 ${droppedTokens} tokens（估算差额）`,
+      text: `更早的 ${timeline.droppedNodes} 条消息（约 ${droppedTokens} tokens）`,
     })
   }
 
@@ -175,30 +183,29 @@ function pushToolSegment(segments: TreemapSegment[], tool: HeaderToolValue): voi
   segments.push({
     kind: 'tool',
     tokens: tool.tokens,
-    label: capRunes(tool.name, SEGMENT_LABEL_MAX_RUNES),
-    preview: capRunes(tool.description ?? tool.name, SEGMENT_PREVIEW_MAX_RUNES),
+    text: capRunes(
+      tool.description === undefined ? tool.name : `${tool.name} — ${tool.description}`,
+      SEGMENT_TEXT_MAX_RUNES,
+    ),
   })
 }
 
-/** One surface-node segment: text preview first, then the tool name, then the call names. */
+/** One surface-node segment: the message's text first, then the tool name, then the call names. */
 function nodeSegment(node: SurfaceNode): TreemapSegment {
-  const label = nodeLabel(node)
-  const preview = node.text !== undefined && node.text !== ''
-    ? capRunes(node.text, SEGMENT_PREVIEW_MAX_RUNES)
-    : label
+  const text = node.text !== undefined && node.text !== ''
+    ? capRunes(node.text, SEGMENT_TEXT_MAX_RUNES)
+    : nodeLabel(node)
   return {
     kind: 'node',
     tokens: node.tokens,
-    label,
-    preview,
+    text,
     cat: node.cat,
     seq: node.seq,
   }
 }
 
-/** The in-rectangle label of a surface node. */
+/** The in-rectangle fallback text of a surface node without a text block. */
 function nodeLabel(node: SurfaceNode): string {
-  if (node.text !== undefined && node.text !== '') return capRunes(node.text, SEGMENT_LABEL_MAX_RUNES)
   if (node.tool !== undefined && node.tool !== '') {
     return node.err === true ? `⚠ ${node.tool}` : node.tool
   }
@@ -208,6 +215,51 @@ function nodeLabel(node: SurfaceNode): string {
   if (node.skill !== undefined && node.skill !== '') return node.skill
   if (node.form !== undefined && node.form !== '') return node.form
   return surfaceCategoryLabel(node.cat)
+}
+
+/**
+ * The advance width of one rune in em units: fullwidth scripts (CJK,
+ * hangul, fullwidth forms, emoji) take a full em, everything else about
+ * 0.55em — a fixed estimator, not a font metric.
+ */
+function runeEm(ch: string): number {
+  const cp = ch.codePointAt(0) ?? 0
+  const wide = (cp >= 0x1100 && cp <= 0x115f)
+    || (cp >= 0x2e80 && cp <= 0xa4cf)
+    || (cp >= 0xac00 && cp <= 0xd7a3)
+    || (cp >= 0xf900 && cp <= 0xfaff)
+    || (cp >= 0xfe30 && cp <= 0xfe4f)
+    || (cp >= 0xff00 && cp <= 0xff60)
+    || (cp >= 0xffe0 && cp <= 0xffe6)
+    || (cp >= 0x1f300 && cp <= 0x1f9ff)
+    || (cp >= 0x20000 && cp <= 0x3fffd)
+  return wide ? 1 : 0.55
+}
+
+/**
+ * Fit a prompt text into one rectangle: keep as much of the opening as the
+ * box can render (its width × the line count left after the token line) and
+ * mark the cut with an ellipsis. Whitespace runs collapse to single spaces,
+ * matching the rendered text.
+ *
+ * @param text - The segment's prompt text (already rune-capped).
+ * @param rect - The rectangle the text must fit into.
+ * @returns The fitted text; empty when no line fits.
+ */
+export function fitTextToRect(text: string, rect: TreemapRect): string {
+  const widthBudget = rect.w - SEG_PAD_PX
+  const lines = Math.floor((rect.h - SEG_PAD_PX - TOKENS_LINE_PX) / CONTENT_LINE_PX)
+  if (widthBudget <= 0 || lines < 1) return ''
+  const capacity = widthBudget * lines
+  const runes = Array.from(text.replace(/\s+/g, ' ').trim())
+  let used = 0
+  let out = ''
+  for (const ch of runes) {
+    used += runeEm(ch) * CONTENT_FONT_PX
+    if (used > capacity) return `${out}…`
+    out += ch
+  }
+  return out
 }
 
 /** One laid-out rectangle: canvas coordinates and size. */
@@ -414,7 +466,7 @@ h1 { margin: 0 0 4px; font-size: 18px; }
 .band-head { box-sizing: border-box; height: ${BAND_HEAD_H}px; padding: 4px 6px 0; font-size: 11px; font-weight: 600; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .seg { position: absolute; box-sizing: border-box; overflow: hidden; padding: 4px; border: 1px solid rgba(255,255,255,.6); color: #fff; }
 .seg:hover { outline: 2px solid #0f172a; z-index: 1; }
-.label { display: block; font-size: 12px; line-height: 1.35; max-height: 3.9em; overflow: hidden; word-break: break-all; }
+.label { display: block; font-size: 12px; line-height: 1.35; overflow: hidden; word-break: break-all; }
 .tokens { display: block; margin-top: 2px; font-size: 11px; opacity: .85; }
 .bare .label, .bare .tokens { visibility: hidden; }
 footer { padding: 4px 24px 24px; font-size: 13px; color: #334155; }
@@ -455,8 +507,8 @@ function rectMarkup(segment: TreemapSegment, rect: TreemapRect): string {
   const figure = segment.seq === undefined
     ? formatTokens(segment.tokens)
     : `#${segment.seq} · ${formatTokens(segment.tokens)}`
-  return `      <div class="seg${bare}" style="left:${round1(rect.x)}px;top:${round1(BAND_HEAD_H + rect.y)}px;width:${round1(rect.w)}px;height:${round1(rect.h)}px;background:${segmentColor(segment)}" title="${escapeHtml(segment.preview)}">
-        <span class="label">${escapeHtml(segment.label)}</span>
+  return `      <div class="seg${bare}" style="left:${round1(rect.x)}px;top:${round1(BAND_HEAD_H + rect.y)}px;width:${round1(rect.w)}px;height:${round1(rect.h)}px;background:${segmentColor(segment)}" title="${escapeHtml(segment.text)}">
+        <span class="label">${escapeHtml(fitTextToRect(segment.text, rect))}</span>
         <span class="tokens">${figure}</span>
       </div>`
 }

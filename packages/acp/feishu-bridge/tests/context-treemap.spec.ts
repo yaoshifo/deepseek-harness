@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { renderTreemapHTML, squarify, treemapSegments } from '../src/context/treemap.ts'
+import { fitTextToRect, renderTreemapHTML, squarify, treemapSegments } from '../src/context/treemap.ts'
 import type { ContextSnapshotValues, ContextTimelineValue } from '../src/context/types.ts'
 
 /** One wire-shaped timeline overridable per test. */
@@ -59,7 +59,7 @@ describe('treemapSegments', () => {
     // The dropped placeholder's tokens are the message-bucket sum minus the
     // served nodes' sum (4_000 − 3_000).
     const dropped = segments.find(s => s.kind === 'dropped')
-    expect(dropped?.label).toContain('2')
+    expect(dropped?.text).toContain('2')
   })
 
   it('omits the dropped placeholder when every live node is served', () => {
@@ -186,6 +186,32 @@ describe('renderTreemapHTML', () => {
   })
 })
 
+describe('fitTextToRect', () => {
+  it('keeps text that fits the rectangle and truncates what does not', () => {
+    // 200×120 holds five 12px lines over a 192px text column (≈ 80 CJK runes).
+    const box = { x: 0, y: 0, w: 200, h: 120 }
+    expect(fitTextToRect('短文本', box)).toBe('短文本')
+    const long = '很长的一段提示词'.repeat(50)
+    const fitted = fitTextToRect(long, box)
+    expect(fitted.endsWith('…')).toBe(true)
+    expect(Array.from(fitted).length).toBeLessThan(Array.from(long).length)
+    expect(long.startsWith(fitted.slice(0, -1))).toBe(true)
+  })
+
+  it('returns nothing when the rectangle cannot hold one text line', () => {
+    expect(fitTextToRect('文本', { x: 0, y: 0, w: 200, h: 30 })).toBe('')
+    expect(fitTextToRect('文本', { x: 0, y: 0, w: 4, h: 300 })).toBe('')
+  })
+
+  it('fits fewer CJK runes than Latin ones in the same box', () => {
+    const box = { x: 0, y: 0, w: 200, h: 120 }
+    const cjk = Array.from(fitTextToRect('提'.repeat(200), box)).length
+    const latin = Array.from(fitTextToRect('a'.repeat(200), box)).length
+    expect(cjk).toBeLessThan(latin)
+    expect(cjk).toBeGreaterThan(1)
+  })
+})
+
 describe('renderTreemapHTML — phase bands', () => {
   /** Band blocks in document order with their kind, left edge, and width. */
   function bandsOf(html: string): Array<{ kind: string; left: number; width: number }> {
@@ -217,6 +243,34 @@ describe('renderTreemapHTML — phase bands', () => {
     const messagesBand = html.slice(html.indexOf('class="band band-messages"'))
     const firstLabel = messagesBand.match(/<span class="label">([\s\S]*?)<\/span>/)?.[1] ?? ''
     expect(firstLabel).toContain('更早的')
+  })
+
+  it('fills the system rectangle with the system prompt text instead of a bare phase name', () => {
+    const html = renderTreemapHTML({ sessionTitle: 't', model: 'm', snapshot: snapshot(), time: 0 })
+    // The visible span carries the prompt itself; a phase name alone would not.
+    expect(html).toMatch(/<span class="label">You are a coding agent powered by the deepseek model\.<\/span>/)
+  })
+
+  it('truncates a long prompt to its rectangle while the hover title keeps more', () => {
+    const long = '内容'.repeat(200)
+    const nodes = Array.from({ length: 40 }, (_v, i) => ({
+      seq: i + 1, cat: 'user' as const, tokens: 100, ...(i === 0 ? { text: long } : {}),
+    }))
+    const crowded = snapshot({
+      timeline: timeline({
+        droppedNodes: 0,
+        nodes,
+        current: { system: 0, tools: 0, user: 4_000, inject: 0, assistant: 0, tool: 0, total: 4_000 },
+      }),
+      headers: { headers: [] },
+    })
+    const html = renderTreemapHTML({ sessionTitle: 't', model: 'm', snapshot: crowded, time: 0 })
+    // The visible box shows a truncated prefix, the title attribute the longer text.
+    expect(html).toContain('…')
+    const visible = html.match(/<span class="label">([^<]*…)<\/span>/)?.[1] ?? ''
+    expect(visible.endsWith('…')).toBe(true)
+    const title = html.match(/title="([^"]{100,})"/)?.[1] ?? ''
+    expect(Array.from(title).length).toBeGreaterThan(Array.from(visible).length)
   })
 
   it('shows each message rectangle its session-log seq beside the token count', () => {
