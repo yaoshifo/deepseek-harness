@@ -14,6 +14,37 @@ function newSession(): DshAgentSession {
   return new DshAgentSession('test:u1', { agent: { id: 'a1' } } as never)
 }
 
+describe('pendingBackgroundJobs', () => {
+  const job = (over: Record<string, unknown>): Record<string, unknown> => ({
+    id: 'bash-1', kind: 'bash', label: 'build', status: 'running',
+    ownerSession: 'a1', startedAt: 0, reported: false, ...over,
+  })
+
+  function newSessionWithJobs(list: () => Array<Record<string, unknown>>): DshAgentSession {
+    const ctx = { get: (name: string) => (name === 'jobs' ? { list } : undefined) }
+    return new DshAgentSession('test:u1', { agent: { id: 'a1' } } as never, '', ctx as never)
+  }
+
+  it("counts this session's live jobs only (running or stopping)", () => {
+    const s = newSessionWithJobs(() => [
+      job({ id: 'bash-1' }),
+      job({ id: 'bash-2', status: 'stopping' }),
+      job({ id: 'bash-3', status: 'completed', finishedAt: 1 }),
+      job({ id: 'bash-4', status: 'failed', finishedAt: 1 }),
+      job({ id: 'bash-5', ownerSession: 'other-session' }),
+      job({ id: 'bash-6', ownerSession: undefined }),
+    ])
+    expect(s.pendingBackgroundJobs()).toBe(2)
+  })
+
+  it('returns 0 when the registry is absent from the context, and without a context at all', () => {
+    const noRegistry = new DshAgentSession('test:u1', { agent: { id: 'a1' } } as never, '',
+      { get: () => undefined } as never)
+    expect(noRegistry.pendingBackgroundJobs()).toBe(0)
+    expect(newSession().pendingBackgroundJobs()).toBe(0)
+  })
+})
+
 /** Project one wrapped session event and drain buffered bridge events (bounded: the channel stays open). */
 async function project(session: DshAgentSession, wrapped: Record<string, unknown>): Promise<Event[]> {
   session.projectSessionEvent(wrapped)

@@ -1816,6 +1816,35 @@ describe('idle reaper', () => {
     e.reapIdleInteractiveStates()
     expect(e.interactiveStates.has('test:reap')).toBe(true)
   })
+
+  it('skips a session with a pending background count or a live background job', () => {
+    const { e } = newEngine()
+    e.setInteractiveIdleTimeout(30_000)
+    const counted = new InteractiveState()
+    counted.agentSession = newControllableSession('reap-counted')
+    counted.lastActivity = Date.now() - 100_000
+    counted.backgroundTasksPending = 1
+    e.interactiveStates.set('test:reap-counted', counted)
+    const live = new InteractiveState()
+    const liveSession = newControllableSession('reap-live')
+    liveSession.pendingBackgroundJobs = () => 1
+    live.agentSession = liveSession
+    live.lastActivity = Date.now() - 100_000
+    e.interactiveStates.set('test:reap-live', live)
+
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      e.reapIdleInteractiveStates()
+      // The live-job shield must not depend on the count: the grace-exhausted
+      // reader zeroes the count while a slow job still runs, and reaping its
+      // owner discards the completion notice with it (2026-09-16 oc_3c16b).
+      expect(infoSpy.mock.calls.some(c => String(c[0]).includes('test:reap-counted'))).toBe(false)
+      expect(infoSpy.mock.calls.some(c => String(c[0]).includes('test:reap-live'))).toBe(false)
+      expect(liveSession.closed).toBe(false)
+    } finally {
+      infoSpy.mockRestore()
+    }
+  })
 })
 
 /** Stub platform with preview start/update capture (permission-spec pattern). */

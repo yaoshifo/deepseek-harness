@@ -206,6 +206,7 @@ describe('stageAttachments', () => {
           currentSessionID: () => 's1',
           alive: () => true,
           close: async () => {},
+          pendingBackgroundJobs: () => 0,
         }
         return session
       },

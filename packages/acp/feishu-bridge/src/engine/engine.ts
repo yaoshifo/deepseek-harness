@@ -2833,9 +2833,22 @@ export class Engine {
           if (state.backgroundTasksPending > 0 && this.unsolicitedBackgroundGrace > 0) {
             if (state.bgWaitStartedAt === 0) state.bgWaitStartedAt = Date.now()
             if (Date.now() - state.bgWaitStartedAt < this.unsolicitedBackgroundGrace) continue
+            // The cap separates slow from hung by asking the registry, not
+            // the clock: a job still running or stopping keeps the reader
+            // armed so its completion notice stays deliverable — the notice
+            // of a reaped owner is discarded with the owner (2026-09-16
+            // oc_3c16b: a 39-minute build outlived the 30-minute cap).
+            if ((state.agentSession?.pendingBackgroundJobs() ?? 0) > 0) continue
             console.info(`engine: unsolicited reader background-task grace exhausted (${interactiveKey}: ${state.backgroundTasksPending} pending)`)
             state.backgroundTasksPending = 0
             state.bgWaitStartedAt = 0
+            // The card keeps rendering the 💡 N hint until it is cleared
+            // here; the count alone does not touch it (2026-09-16 oc_3c16b:
+            // the settled card froze on 💡 1 for 40+ minutes).
+            const sp = state.preview
+            if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
+              await sp.setBackgroundHint('')
+            }
           }
           // Exit and mark resync: any event buffered after this point is
           // drained by the next foreground turn instead of leaking into it.
@@ -4926,10 +4939,12 @@ export class Engine {
       // Skip sessions waiting for a permission response — the user may take
       // a long time to decide, and reaping would lose the pending prompt.
       if (state.pendingAsk !== undefined) continue
-      // Skip sessions with pending background tasks: the unsolicited reader
-      // is holding the channel open for the completion turn (bounded by the
-      // background grace, which zeroes the count when it exhausts).
-      if (state.backgroundTasksPending > 0) continue
+      // Skip sessions with pending background work: the unconsumed count,
+      // and the registry's live jobs — the grace-exhausted reader zeroes the
+      // count while a slow job still runs, and reaping its owner discards the
+      // completion notice with it (2026-09-16 oc_3c16b).
+      if (state.backgroundTasksPending > 0
+        || (state.agentSession?.pendingBackgroundJobs() ?? 0) > 0) continue
       if (state.lastActivity !== 0 && state.lastActivity < cutoff) targets.push([key, state])
     }
     for (const [key, state] of targets) {

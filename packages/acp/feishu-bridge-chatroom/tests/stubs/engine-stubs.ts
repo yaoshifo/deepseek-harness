@@ -38,6 +38,7 @@ export function createStubAgentSession(): AgentSession {
     currentSessionID: () => 'stub-session',
     alive: () => true,
     close: async () => {},
+    pendingBackgroundJobs: () => 0,
   }
 }
 
@@ -76,6 +77,7 @@ export function newControllableSession(id: string): ControllableAgentSession {
     events: () => channel,
     currentSessionID: () => s.sessionID,
     alive: () => s.aliveFlag,
+    pendingBackgroundJobs: () => 0,
     close: async () => {
       if (!s.aliveFlag) return
       s.aliveFlag = false

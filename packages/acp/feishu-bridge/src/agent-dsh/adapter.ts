@@ -159,6 +159,15 @@ export interface DshContextLike {
 }
 
 /**
+ * Structural slice of the `jobs` registry the background-count probe reads:
+ * `list` already scopes to the caller's own and unowned jobs, so the owner
+ * and status filters below stay the probe's own responsibility.
+ */
+interface DshJobsRegistryLike {
+  list(caller?: unknown): Array<{ ownerSession?: unknown; status?: unknown }>
+}
+
+/**
  * Structural slice of the `mcpWorkspace` service: directory-scoped MCP
  * discovery. Only `wrap` is consumed here — the service itself resolves the
  * session cwd from the session header inside the returned setup.
@@ -2541,6 +2550,23 @@ export class DshAgentSession implements AgentSession {
 
   currentSessionID(): string {
     return String(this.handle.agent.id)
+  }
+
+  /**
+   * Live-job probe over the jobs registry (ctx.get('jobs')): counts this
+   * session's own running/stopping jobs. 0 when the registry is absent —
+   * unit-test construction and a jobs-less composition have nothing live.
+   */
+  pendingBackgroundJobs(): number {
+    const jobs = this.ctx?.get('jobs') as DshJobsRegistryLike | undefined
+    if (jobs === undefined) return 0
+    const sid = this.currentSessionID()
+    let live = 0
+    for (const snapshot of jobs.list(this.handle.agent)) {
+      if (String(snapshot.ownerSession ?? '') === sid
+        && (snapshot.status === 'running' || snapshot.status === 'stopping')) live++
+    }
+    return live
   }
 
   /**

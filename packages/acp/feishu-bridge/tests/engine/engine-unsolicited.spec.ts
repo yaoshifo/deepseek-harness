@@ -116,8 +116,14 @@ describe('unsolicited reader background grace', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('keeps the reader armed while a background task is pending, then resets the count at the grace cap', async () => {
+  it('keeps the reader armed while a background task is pending, then resets the count and clears the card hint at the grace cap', async () => {
     const { e, state } = armed()
+    const hints: string[] = []
+    state.preview = {
+      canPreview: () => true,
+      setBackgroundHint: (hint: string) => { hints.push(hint) },
+    } as never
+    e.setDisplayConfig({ toolProgress: true })
     state.backgroundTasksPending = 2
     e.startUnsolicitedReader(e.sessions.getOrCreateActive(KEY), e.sessions, KEY)
 
@@ -126,11 +132,35 @@ describe('unsolicited reader background grace', () => {
     expect(state.backgroundTasksPending).toBe(2)
 
     await vi.advanceTimersByTimeAsync(30 * 60_000)
-    // Grace exhausted: the task will never complete; the count drops so the
-    // hint and the reaper shield do not stick forever.
+    // Grace exhausted with no live job left: the count drops so the hint and
+    // the reaper shield do not stick forever — and the card stops showing
+    // the stale 💡 N hint (2026-09-16 oc_3c16b: the card froze on it).
     expect(state.unsolicitedReader).toBeUndefined()
     expect(state.backgroundTasksPending).toBe(0)
     expect(state.bgWaitStartedAt).toBe(0)
+    expect(hints).toEqual([''])
+  })
+
+  it('keeps waiting past the grace cap while the owner still has a live background job', async () => {
+    const { e, state, agentSession } = armed()
+    agentSession.pendingBackgroundJobs = () => 1
+    const hints: string[] = []
+    state.preview = {
+      canPreview: () => true,
+      setBackgroundHint: (hint: string) => { hints.push(hint) },
+    } as never
+    e.setDisplayConfig({ toolProgress: true })
+    state.backgroundTasksPending = 1
+    e.startUnsolicitedReader(e.sessions.getOrCreateActive(KEY), e.sessions, KEY)
+
+    for (let i = 0; i < 35; i++) await vi.advanceTimersByTimeAsync(60_000)
+    // Past the 30-minute grace the job is still live (a slow build outlives
+    // the cap, 2026-09-16 oc_3c16b): the count, the hint, and the reader all
+    // stay so the completion notice remains deliverable.
+    expect(state.unsolicitedReader).toBeDefined()
+    expect(state.backgroundTasksPending).toBe(1)
+    expect(state.bgWaitStartedAt).not.toBe(0)
+    expect(hints).toEqual([])
   })
 })
 

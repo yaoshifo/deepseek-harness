@@ -498,6 +498,17 @@ export interface AgentSession {
    * @returns milliseconds since epoch of the last projected event or streamed chunk.
    */
   lastStreamActivity?(): number
+  /**
+   * Count this session's still-live background jobs (`running` or `stopping`
+   * in the jobs registry). The grace-exhausted reader and the idle reaper
+   * ask before giving up on a pending background count: a slow job that
+   * outlives the grace keeps its completion notice deliverable, while a
+   * count with no live job left is abandoned (2026-09-16 oc_3c16b: a
+   * 39-minute build outlived the 30-minute grace, the agent was reaped
+   * with the shield gone, and the completion notice was discarded with it).
+   * @returns number of this session's running/stopping jobs.
+   */
+  pendingBackgroundJobs(): number
 }
 
 /**
