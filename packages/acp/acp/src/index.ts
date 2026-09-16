@@ -230,7 +230,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
         assertOpen()
         // The response is the initial config state; config_option_update
         // notifications start only after it.
-        record.armTopologyNotifications()
+        record.armTopologyNotifications(configOptions)
         return { sessionId, configOptions }
       } catch (error: unknown) {
         sessions.delete(sessionId)
@@ -286,7 +286,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
           const configOptions = await record.configOptions(signal)
           // The response is the initial config state; config_option_update
           // notifications start only after it.
-          record.armTopologyNotifications()
+          record.armTopologyNotifications(configOptions)
           return { configOptions }
         } catch (error: unknown) {
           sessions.delete(sessionId)

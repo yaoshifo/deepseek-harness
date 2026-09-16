@@ -568,6 +568,28 @@ describe('automation-only ACP bridge', () => {
     }
   })
 
+  it('suppresses topology notifications that leave the config state unchanged', async () => {
+    harness = await makeBridgeHarness()
+    await harness.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
+    const created = await harness.client.newSession({ cwd: process.cwd(), mcpServers: [] })
+    // An assembly-time registration can race past the arming point (a provider
+    // directory commit landing after the creating response); its update would
+    // carry the identical config state, so only the state-changing
+    // registration below may notify.
+    harness.replacePrimaryProviders(['mock'])
+    harness.registerCatalogProvider('real-change')
+    await vi.waitFor(() => {
+      const configUpdates = harness!.updates.filter(item => item.sessionUpdate === 'config_option_update')
+      expect(configUpdates).toHaveLength(1)
+      const update = configUpdates.at(-1)
+      if (update?.sessionUpdate !== 'config_option_update') throw new Error('expected config update')
+      const notified = update.configOptions.find(option => option.id === 'model')
+      if (notified?.type !== 'select') throw new Error('expected a model select option')
+      expect(notified.options.some(option => 'group' in option && option.group === 'real-change')).toBe(true)
+    })
+    expect(created.sessionId).toBeDefined()
+  })
+
   it('publishes complete config options when adapter topology changes', async () => {
     harness = await makeBridgeHarness()
     await harness.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })

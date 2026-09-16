@@ -111,6 +111,15 @@ export class AcpSession {
    * response and its arrival would race a fast cancellation or close.
    */
   private topologyArmed = false
+  /**
+   * The config state the client last received: the creating response, then
+   * each notified update. An assembly-time registration can land its
+   * `llm/adapters-updated` after the creating response resolved (a provider
+   * directory commit scheduled past the arming point); recomputing the state
+   * for that echo yields no net change, and notifying it would only leak the
+   * registration's racy timing, so an unchanged state is absorbed.
+   */
+  private lastNotified: SessionConfigOption[] | undefined
   private readonly pendingSelections = new Map<string, ModelSelection>()
 
   private constructor(
@@ -221,9 +230,11 @@ export class AcpSession {
    * Arm topology notifications once the session's creating response has
    * resolved its config state; the response itself is the initial
    * config_option_update, so only later topology changes notify.
+   * @param initial - the config state carried by the creating response.
    */
-  armTopologyNotifications(): void {
+  armTopologyNotifications(initial: SessionConfigOption[]): void {
     this.topologyArmed = true
+    this.lastNotified = initial
   }
 
   /** Resolve topology state off-chain, then serialize its notification without blocking execution updates. */
@@ -232,6 +243,10 @@ export class AcpSession {
     void this.modelControl.options()
       .then((configOptions) => {
         if (this.closing !== undefined) return
+        // `state()` builds options with a fixed key order, so JSON equality is
+        // a stable net-change signature here.
+        if (this.lastNotified !== undefined && JSON.stringify(configOptions) === JSON.stringify(this.lastNotified)) return
+        this.lastNotified = configOptions
         const previous = this.outputTail
         this.outputTail = previous
           .then(() => this.notify({
