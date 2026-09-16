@@ -10,7 +10,7 @@ English | [中文](2026-09-16-build-residue-gate.zh.md)
 
 ## Decision
 
-`scripts/verify-build-residue.ts` scans every package's tsc output dir (`lib/types`, rootDir `src` — uniform across the workspace) and flags outputs whose source file no longer exists, covering the repository-root package, the `packages/<group>/<pkg>` and `vendor/<pkg>` layouts, and the deleted-package case where `src` is gone entirely. `--prune` deletes the flagged outputs. A root with neither `packages/` nor `vendor/` fails instead of passing vacuously; an unbuilt tree (no `lib/types` anywhere) passes with a zero-count report.
+`scripts/verify-build-residue.ts` scans every package's tsc output dir (`lib/types`, rootDir `src` — uniform across the workspace) and flags outputs whose source file no longer exists, covering the repository-root package, the `packages/<group>/<pkg>` and `vendor/<pkg>` layouts, and the deleted-package case where `src` is gone entirely. It also flags zombie package directories — layout-matched dirs whose package.json is gone; the tsdown workspace globs still match them, so they break (or silently "build" stale junk in) the workspace bundle pass once their orphaned outputs are pruned. `--prune` deletes the flagged outputs and the zombie dirs whose entries are all known residue (the `clean.ts` safety rule; unknown entries refuse the prune). A root with neither `packages/` nor `vendor/` fails instead of passing vacuously; an unbuilt tree (no `lib/types` anywhere) passes with a zero-count report.
 
 ## Alternatives considered
 
@@ -20,4 +20,4 @@ English | [中文](2026-09-16-build-residue-gate.zh.md)
 
 ## Consequences
 
-Run the gate after builds that follow source deletions (`tsx scripts/verify-build-residue.ts`, `--prune` to delete). Empty directories left by fully pruned packages remain `clean.ts` territory. The gate reads only the workspace trees, never `node_modules`.
+Run the gate after builds that follow source deletions (`tsx scripts/verify-build-residue.ts`, `--prune` to delete). Empty group directories and zombie dirs carrying unknown entries remain `clean.ts` territory. The gate reads only the workspace trees, never `node_modules`.

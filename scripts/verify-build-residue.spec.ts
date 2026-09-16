@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { collectBuildResidue, pruneBuildResidue } from './verify-build-residue.ts'
+import { collectBuildResidue, collectZombiePackages, pruneBuildResidue, pruneZombiePackages } from './verify-build-residue.ts'
 
 const roots: string[] = []
 
@@ -108,5 +108,44 @@ describe('repository-root package coverage', () => {
       'lib/types/gone.d.ts',
       'lib/types/gone.js',
     ])
+  })
+})
+
+describe('zombie package directories', () => {
+  it('flags a package directory whose package.json is gone', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-build-residue-'))
+    roots.push(root)
+    mkdirSync(join(root, 'packages/e2b/subprocess-e2b/lib/types'), { recursive: true })
+    mkdirSync(join(root, 'packages/core/agent/src'), { recursive: true })
+    writeFileSync(join(root, 'packages/core/agent/package.json'), '{ "name": "live" }\n')
+
+    expect(collectZombiePackages(root)).toEqual(['packages/e2b/subprocess-e2b/'])
+  })
+
+  it('prune removes a zombie whose entries are all known residue', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-build-residue-'))
+    roots.push(root)
+    const zombie = join(root, 'packages/e2b/e2b')
+    mkdirSync(join(zombie, 'lib'), { recursive: true })
+    mkdirSync(join(zombie, 'node_modules'), { recursive: true })
+    writeFileSync(join(zombie, 'lib/index.js'), '')
+    mkdirSync(join(root, 'packages/core/agent/src'), { recursive: true })
+    writeFileSync(join(root, 'packages/core/agent/package.json'), '{ "name": "live" }\n')
+
+    expect(pruneZombiePackages(root)).toEqual(['packages/e2b/e2b/'])
+    expect(existsSync(zombie)).toBe(false)
+  })
+
+  it('prune refuses a zombie carrying unknown entries and leaves it in place', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-build-residue-'))
+    roots.push(root)
+    const zombie = join(root, 'packages/e2b/e2b')
+    mkdirSync(join(zombie, 'lib'), { recursive: true })
+    writeFileSync(join(zombie, 'wip-notes.txt'), 'someone may be working here\n')
+    mkdirSync(join(root, 'packages/core/agent/src'), { recursive: true })
+    writeFileSync(join(root, 'packages/core/agent/package.json'), '{ "name": "live" }\n')
+
+    expect(() => pruneZombiePackages(root)).toThrow(/unknown entries remain:.*wip-notes\.txt/)
+    expect(existsSync(zombie)).toBe(true)
   })
 })
