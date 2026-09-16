@@ -291,7 +291,8 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     expect(sections[0]?.name).toBe('feishu-bridge-agent-conventions')
     expect(sections[0]?.order).toBe(10)
     expect(sections[0]?.complete).toBeUndefined()
-    // Verbatim pin of the model-visible text.
+    // Verbatim pin of the model-visible text: rewording agentConventionsPrompt()
+    // in agent-conventions.ts must update this pin in the same change.
     expect(sections[0]?.text).toBe(`
 ### 异步自主的工作方式
 你在异步聊天里工作——用户不实时盯着，"要不要我……？"式请示会阻塞工作直到用户回来。
@@ -342,7 +343,8 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     expect(sections[1]?.name).toBe('feishu-bridge-tdd-default')
     expect(sections[1]?.order).toBe(20)
     expect(sections[1]?.complete).toBeUndefined()
-    // Verbatim pin of the model-visible text.
+    // Verbatim pin of the model-visible text: rewording tddDefaultPrompt()
+    // in agent-conventions.ts must update this pin in the same change.
     expect(sections[1]?.text).toBe(`
 ### 默认测试驱动
 在实现功能、修改行为或修复 bug 时，默认用 \`tdd\` skill 的 red-green-refactor 循环驱动——不等用户先说"test"或"TDD"，自己驱动全过程，不停下来请求许可，也不等测试清单被批准。动手前先用 \`skill\` 工具加载 \`tdd\`，循环细节以其全文为准。开始时用一句话说明你正在测试的接口与行为，仅当公开接口或预期行为确实含糊时才提一个聚焦的问题。
