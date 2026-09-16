@@ -2617,23 +2617,6 @@ export class DshAgentSession implements AgentSession {
   }
 
   /**
-   * SessionCompressor (Go ContextCompressor "/compact"): trigger dsh's
-   * native manual compaction on this session's agent. Throws when the
-   * compaction service is not loaded in the runtime tree.
-   *
-   * @param signal - abort forwarded to the compaction service.
-   */
-  async compress(signal?: AbortSignal): Promise<void> {
-    const compaction = this.ctx?.get('compaction') as
-      | { compactNow(agent: unknown, signal: AbortSignal, sourceCommandId?: unknown): Promise<unknown> }
-      | undefined
-    if (compaction === undefined) {
-      throw new Error('compaction service not available')
-    }
-    await compaction.compactNow(this.handle.agent, signal ?? new AbortController().signal)
-  }
-
-  /**
    * Switch the native session's permission preset — the plan-approval
    * elevation (cfg.planApprovalPreset). The composed permission-presets
    * service owns the write path: the switch lands as durable

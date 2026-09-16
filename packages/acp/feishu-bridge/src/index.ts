@@ -57,7 +57,6 @@ import { registerFollowupsTool } from './tools/followups.ts'
 import { registerLarkTool, type LarkRoute } from './tools/lark.ts'
 import { registerProviderCommands } from './engine/provider-commands.ts'
 import { registerBtwCommands } from './engine/btw.ts'
-import { registerSessionMiscCommands } from './engine/session-misc.ts'
 import { renderSkillName } from './engine/plan-render.ts'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.ts'
 import type { StreamPreviewCfg } from './streaming.ts'
@@ -193,16 +192,6 @@ export interface PlanRenderConfig {
   timeoutSec?: number
 }
 
-/** Automatic context compression (Go [projects.auto_compress]). */
-export interface AutoCompressConfig {
-  /** Compression on; default false. */
-  enabled?: boolean
-  /** Token estimate threshold that arms compression. */
-  maxTokens?: number
-  /** Minimum minutes between compressions (default 30). */
-  minGapMins?: number
-}
-
 /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
 export interface UnsolicitedConfig {
   /** Quiet seconds before the reader disarms (default 60; 0 = never). */
@@ -246,8 +235,6 @@ export interface ProjectConfig {
   /** Plans directory for presented-plan persistence; '' disables; unset resolves to ~/.claude/plans at wiring time. */
   planDir?: string
 
-  /** Automatic context compression (Go [projects.auto_compress]). */
-  autoCompress?: AutoCompressConfig
   /** Quick provider commands: /strong → provider name (Go provider_shortcuts). */
   providerShortcuts?: Record<string, string>
   /** Rotate the chat to a fresh session after N idle minutes (Go reset_on_idle_mins). */
@@ -581,11 +568,6 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     }).description('Plan/reply HTML rendering (Go [projects.plan_render], #47/#48)'),
     planDir: Schema.string().description('Directory presented plans are persisted to as .md; empty string disables (default ~/.claude/plans)'),
 
-    autoCompress: Schema.object({
-      enabled: Schema.boolean().description('Compress the context when the token estimate crosses the cap; default false'),
-      maxTokens: Schema.natural().description('Token estimate threshold that arms compression'),
-      minGapMins: Schema.natural().description('Minimum minutes between compressions (default 30)'),
-    }).description('Automatic context compression (Go [projects.auto_compress])'),
     providerShortcuts: Schema.dict(Schema.string()).description('Quick provider commands: /strong → provider name (Go provider_shortcuts)'),
     resetOnIdleMins: Schema.natural().description('Rotate the chat to a fresh session after N idle minutes; 0 disables'),
     sessionCleanupDays: Schema.natural().description('Prune sessions idle beyond N days (cron new-per-run records accumulate otherwise); 0 keeps everything'),
@@ -1243,6 +1225,9 @@ export function buildProjectAssembly(
   if ((project as unknown as Record<string, unknown>).turnSummary !== undefined) {
     throw new Error(`feishu-bridge: project '${project.name}' sets turnSummary, which was removed with the insight card (2026-09-16); remove the key from the configuration`)
   }
+  if ((project as unknown as Record<string, unknown>).autoCompress !== undefined) {
+    throw new Error(`feishu-bridge: project '${project.name}' sets autoCompress, which was removed with the bridge compress path (2026-09-16); the core-layer compaction owns this defense — remove the key from the configuration`)
+  }
   const routeNames = Object.keys(config.providers)
   const projectDataDir = join(dataRoot, project.name)
   // The engine/platform stores assume the data dirs exist (Go main created
@@ -1407,10 +1392,9 @@ export function buildProjectAssembly(
   }
   // TS 原生: /context — 会话投影的上下文洞察卡（构成/趋势/事件 + 刷新按钮；无 Go 对应）。
   ctx.effect(() => registerContextCommands(engine))
-  // M7-c: /provider family + shortcuts, /btw, /compress.
+  // M7-c: /provider family + shortcuts, /btw.
   ctx.effect(() => registerProviderCommands(engine))
   ctx.effect(() => registerBtwCommands(engine))
-  ctx.effect(() => registerSessionMiscCommands(engine))
   engine.setProviderSaveFunc((sessionKey, name) => {
     projectState.setProviderOverride(sessionKey, name)
     projectState.save()
@@ -1581,7 +1565,7 @@ function wirePlanRender(ctx: Context, engine: Engine, adapter: DshAgentAdapter, 
 
 /**
  * Configure the session misc domain (Go wire.go): reset_on_idle rotation,
- * auto_compress thresholds, and the unsolicited-reader budgets.
+ * and the unsolicited-reader budgets.
  */
 function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
   if (project.resetOnIdleMins !== undefined) {
@@ -1590,10 +1574,6 @@ function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
   engine.sessions.setCleanupDays(project.sessionCleanupDays ?? 30)
   if (project.agentCloseSec !== undefined) {
     engine.setAgentCloseTimeout(project.agentCloseSec * 1000)
-  }
-  const a = project.autoCompress
-  if (a?.enabled === true) {
-    engine.setAutoCompressConfig(true, a.maxTokens ?? 0, (a.minGapMins ?? 0) * 60_000)
   }
   // Spillover grace defaults ON at the assembly layer like Go's wire.go (the
   // engine-level default is 0 so unit tests construct it disabled).

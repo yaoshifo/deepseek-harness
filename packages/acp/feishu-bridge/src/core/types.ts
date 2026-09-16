@@ -604,15 +604,6 @@ export interface Agent {
 }
 
 /**
- * Agent session whose context can be compacted on demand (Go
- * ContextCompressor, whose "/compact" message round-trip becomes a direct
- * ctx.compaction.compactNow call in the dsh adapter).
- */
-export interface SessionCompressor {
-  compress(signal?: AbortSignal): Promise<void>
-}
-
-/**
  * Optional: agent can delete one of its persisted sessions (Go
  * SessionDeleter). The dsh adapter does not implement it — the native
  * sessionPersistence service is append-only — so deletion falls back to the
@@ -1755,17 +1746,6 @@ export function asRecallNotifier(p: Platform): RecallNotifier | undefined {
   return withMethod<RecallNotifier>(p, 'setRecallHandler')
 }
 
-/**
- * Structural check for the {@link SessionCompressor} capability.
- *
- * @param s - the session to inspect; undefined passes through as undefined.
- * @returns the capability view, or undefined when not implemented.
- */
-export function asSessionCompressor(s: AgentSession | undefined): SessionCompressor | undefined {
-  return s !== undefined && typeof (s as Partial<SessionCompressor>).compress === 'function'
-    ? s as AgentSession & SessionCompressor
-    : undefined
-}
 
 /**
  * Structural check for the {@link SessionDeleter} capability.

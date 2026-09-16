@@ -315,6 +315,24 @@ describe('buildProjectAssembly config wiring', () => {
       .toThrow(/predictNext, which was removed with the insight card/)
   })
 
+  it('fails loud on a config left with the removed autoCompress key (2026-09-16)', () => {
+    // Same guard class as the insight-card keys above: the key survives
+    // schemastery validation, and the assembly refuses the inert knob.
+    const parsed = Config({
+      projects: [{
+        name: 'smoke-project',
+        workdir: '/workspace/project',
+        feishu: { appId: 'cli_test', appSecret: 'sec' },
+        autoCompress: { enabled: true },
+      }],
+      providers: {},
+    } as unknown as FeishuBridgeConfig)
+    const stale = parsed.projects[0] as ProjectConfig
+    expect((stale as unknown as Record<string, unknown>).autoCompress).toEqual({ enabled: true })
+    expect(() => assemble(baseConfig(), stale))
+      .toThrow(/autoCompress, which was removed with the bridge compress path/)
+  })
+
   it('fails loud on a config left with the removed turnSummary key (insight card, 2026-09-16)', () => {
     // Same guard class as the predictNext case above: the key survives
     // schemastery validation, and the assembly refuses the inert knob.

@@ -164,7 +164,7 @@ import { renderDirCardSafe } from './dir-card.ts'
 import { executeCardAction } from './cron-commands.ts'
 import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from './recall.ts'
 import { renderSubtaskPanelCard } from './subtask-panel.ts'
-import { defaultAutoCompressMinGapMs, maybeAutoResetSessionOnIdle, projectedContextTokens, runCompress } from './session-misc.ts'
+import { maybeAutoResetSessionOnIdle } from './session-misc.ts'
 import type { RelayManager } from './relay.ts'
 import { MonitorCore, isMonitorCommand, truncateMonitor } from './monitor.ts'
 import {
@@ -409,10 +409,6 @@ export class InteractiveState {
   notificationFooterElements: CardElement[] = []
   /** Header suffix of the last completion notification (Go state.notificationHeaderSuffix). M7. */
   notificationHeaderSuffix: string = ''
-  /** Timestamp of the last auto compression (Go state.lastAutoCompressAt). */
-  lastAutoCompressAt: number = 0
-  /** Projected context occupancy recorded when the last auto compression armed. */
-  lastAutoCompressTokens: number = 0
   /** Per-state async sender serializing platform PATCHes (Go state.sender). */
   sender: AsyncSender | undefined
   /** The turn's active streaming preview (bound for bump routing). */
@@ -1273,12 +1269,6 @@ export class Engine {
   providerSaveFunc: ((sessionKey: string, name: string) => void) | undefined
   /** Auto session rotation after idle (Go SetResetOnIdle); 0 disables. */
   resetOnIdle: number = 0
-  /** Auto context compression (Go SetAutoCompressConfig). */
-  autoCompressEnabled: boolean = false
-  /** Token estimate that triggers auto compression; 0 = off. */
-  autoCompressMaxTokens: number = 0
-  /** Minimum gap between auto compressions in ms. */
-  autoCompressMinGap: number = 0
 
   private reaperTimer: ReturnType<typeof setInterval> | undefined
   /** Disposer of the process-level SIGTERM save flush; runs on {@link Engine.stop}. */
@@ -2398,18 +2388,6 @@ export class Engine {
     this.resetOnIdle = ms > 0 ? ms : 0
   }
 
-  /**
-   * Auto context compression (Go SetAutoCompressConfig); minGap <= 0 falls back to 30min.
-   * @param enabled - Whether auto compression is armed.
-   * @param maxTokens - Projected context occupancy (token-meter contextPressure
-   *   projection) that triggers compression; 0 = off.
-   * @param minGapMs - Minimum gap between compressions; <= 0 uses the 30min default.
-   */
-  setAutoCompressConfig(enabled: boolean, maxTokens: number, minGapMs: number): void {
-    this.autoCompressEnabled = enabled
-    this.autoCompressMaxTokens = maxTokens
-    this.autoCompressMinGap = minGapMs > 0 ? minGapMs : defaultAutoCompressMinGapMs
-  }
 
   /**
    * Agent session id a session-scoped recent-turn read should use: the live
@@ -4406,23 +4384,6 @@ export class Engine {
       await this.applyChatPhase(phasePlatform, sessionKey, errored ? 'attention' : this.chatBasePhase(phasePlatform, sessionKey))
     }
 
-    // Auto-compress (Go triggerAutoCompress): when the projected context
-    // occupancy (the token-meter contextPressure projection — same source as
-    // the /context card) crosses the configured cap outside the min gap,
-    // compact the live session's context before the queued messages continue
-    // this loop. Without a readable projection there is no anchored occupancy
-    // to compare, so the check stays idle.
-    if (this.autoCompressEnabled && this.autoCompressMaxTokens > 0) {
-      const occupancy = projectedContextTokens(this, sessionKey, session)
-      const last = state.lastAutoCompressAt
-      const overCap = occupancy !== undefined && occupancy >= this.autoCompressMaxTokens
-      if (overCap && (last === 0 || Date.now() - last >= this.autoCompressMinGap)) {
-        state.lastAutoCompressAt = Date.now()
-        state.lastAutoCompressTokens = occupancy
-        if (pendingSend !== undefined) await pendingSend.catch(() => undefined)
-        await runCompress(this, state, p, replyCtx, true)
-      }
-    }
 
     // Queued messages take over this loop as a fresh turn (Go in-loop drain).
     const queued = state.pendingMessages.shift()

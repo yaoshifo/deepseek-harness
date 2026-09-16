@@ -68,7 +68,6 @@ const helpGroupOf = new Map<string, HelpGroup>([
   // 'chatroom' declares its group at registration (Engine.registerCommand),
   // so it moves with its owning plugin instead of this static table.
   ['provider', 'agent'],
-  ['compress', 'agent'],
   ['btw', 'agent'],
   ['hint', 'agent'],
   ['shell', 'tools'],

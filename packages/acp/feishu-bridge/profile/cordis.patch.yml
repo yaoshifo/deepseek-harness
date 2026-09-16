@@ -258,10 +258,6 @@
     #   providerShortcuts:                 # quick switch + new session (/strong → glm)
     #     strong: glm
     #     weak: mimo
-    #   autoCompress:                      # compress context past a token threshold
-    #     enabled: true
-    #     maxTokens: 80000
-    #     minGapMins: 30
 
     #   dirScanPaths:                      # parent dirs auto-listed in /dir (#3)
     #     - ~/workspace                    # subdirs become /dir suggestions and

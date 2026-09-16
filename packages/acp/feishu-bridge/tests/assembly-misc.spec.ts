@@ -1,7 +1,7 @@
 /**
  * M7-c assembly wiring tests: the provider/session-misc config blocks
- * (reset_on_idle, auto_compress, filter_external_sessions,
- * provider_shortcuts, /provider persistence) forward from the plugin Config
+ * (reset_on_idle, filter_external_sessions, provider_shortcuts,
+ * /provider persistence) forward from the plugin Config
  * into the engine and adapter.
  *
  * @module dsh-feishu-bridge/tests-assembly-misc
@@ -54,16 +54,6 @@ describe('session misc wiring', () => {
     const { engine } = assemble(baseConfig(), { ...project(), resetOnIdleMins: 90 })
     expect(engine.resetOnIdle).toBe(90 * 60_000)
   })
-
-  it('auto_compress forwards enabled/max_tokens/min_gap (Go wireAutoCompress)', () => {
-    const { engine } = assemble(baseConfig(), {
-      ...project(),
-      autoCompress: { enabled: true, maxTokens: 80_000, minGapMins: 60 },
-    })
-    expect(engine.autoCompressEnabled).toBe(true)
-    expect(engine.autoCompressMaxTokens).toBe(80_000)
-    expect(engine.autoCompressMinGap).toBe(60 * 60_000)
-  })
 })
 
 describe('provider wiring', () => {
@@ -75,11 +65,10 @@ describe('provider wiring', () => {
     expect(engine.providerShortcuts).toEqual({ strong: 'mify-dsh', weak: 'turbo' })
   })
 
-  it('the /provider family, /btw and /compress commands are registered', () => {
+  it('the /provider family and /btw commands are registered', () => {
     const { engine } = assemble(baseConfig())
     expect(engine.commandResolver?.('provider')).toBe('provider')
     expect(engine.commandResolver?.('btw')).toBe('btw')
-    expect(engine.commandResolver?.('compress')).toBe('compress')
   })
 
   it('a provider-card action pins the assembled adapter route for that chat (Go executeCardAction "/provider")', async () => {
