@@ -66,6 +66,20 @@ describe('mountBundledSkills', () => {
     expect(skill?.content).toContain('Tautological')
   })
 
+  it('pins prototype as a deploy-side original the upstream skill must not overwrite', async () => {
+    const ctx = await harness()
+    mountBundledSkills(ctx)
+    const skill = await ctx.skills.get('prototype')
+    // The upstream skills repo ships an unrelated English "prototype"
+    // (LOGIC.md/UI.md branches, capture-on-a-throwaway-branch rule 6);
+    // this one is written for the deployment's grill → prototype →
+    // tdd/diagnose flow with a delete-after-folding rule 6. A sync that
+    // copies the upstream file over this deploy-side original fails here.
+    expect(skill?.content).toContain('原型代码绝不迁移进产品')
+    expect(skill?.content).not.toContain('LOGIC.md')
+    expect(skill?.content).not.toContain('primary source')
+  })
+
   it('unregisters the provider when the mounted fiber is disposed', async () => {
     const ctx = await harness()
     const fiber = mountBundledSkills(ctx)
