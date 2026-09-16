@@ -1177,9 +1177,10 @@ async function spawnGroupCommon(
     e.sessions.save()
   }
 
-  // Pin the configured spawn-default route before the injected first message
-  // starts the child's agent session (agent.spawnProvider).
-  e.seedSpawnProvider(syntheticMsg.sessionKey)
+  // Pin the child's route before the injected first message starts its agent
+  // session: the parent chat's own route when it sits off the project default
+  // (/provider switched), else the configured agent.spawnProvider.
+  e.seedSpawnProvider(syntheticMsg.sessionKey, msg.sessionKey)
 
   // Parent-chat jump notice: the new group is a separate chat the user would
   // otherwise have to find in the chat list; a card whose sole element is the

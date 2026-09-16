@@ -1075,8 +1075,10 @@ export class Engine {
   /**
    * Route name pinned as the provider override of every group this bot
    * spawns (/spawn, //fork, subtask children, chatroom roles, monitor
-   * subgroups); '' keeps spawned groups on the project default route
-   * (profile `projects[].agent.spawnProvider`).
+   * subgroups); a /spawn //fork child whose parent chat sits on another route
+   * inherits that one instead ({@link Engine.seedSpawnProvider}). '' keeps
+   * spawned groups on the project default route (profile
+   * `projects[].agent.spawnProvider`).
    */
   spawnProvider: string = ''
   /** Integrate-branch override for /done merged auto-removal; '' uses each worktree's recorded base branch. */
@@ -6909,31 +6911,52 @@ export class Engine {
   }
 
   /**
-   * Pin the configured spawn-default route onto a freshly created child
-   * group, before its first agent turn resolves the route. A real provider
-   * override entry: it persists across restarts, survives /new, and the
-   * child chat's /provider can switch or clear it (clear falls back to the
-   * project default, not this spawn default). Callers must invoke it before
-   * injecting the child's first message. No-op without a configured
-   * {@link Engine.spawnProvider}.
+   * Pin the route a freshly created child group starts on, before its first
+   * agent turn resolves the route. A parent chat sitting off the project
+   * default route passes its own route down; otherwise the configured
+   * {@link Engine.spawnProvider} applies. A real provider override entry
+   * either way: it persists across restarts, survives /new, and the child
+   * chat's /provider can switch or clear it (clear falls back to the project
+   * default, not to the inherited route). Callers must invoke it before
+   * injecting the child's first message. No-op when neither route resolves.
    * @param childKey - Engine session key of the newly spawned child group.
+   * @param parentKey - Engine session key of the parent chat; '' skips inheritance.
    */
-  seedSpawnProvider(childKey: string): void {
-    if (this.spawnProvider === '') return
+  seedSpawnProvider(childKey: string, parentKey = ''): void {
+    const route = this.childSpawnRoute(parentKey)
+    if (route === '') return
     const switcher = asProviderSwitcher(this.agent)
     if (switcher === undefined) {
       console.warn(`spawn: agent has no provider switcher; spawned group ${childKey} keeps the project default route`)
       return
     }
-    if (!switcher.setSessionProvider(childKey, this.spawnProvider)) {
-      console.warn(`spawn: route '${this.spawnProvider}' not found; spawned group ${childKey} keeps the project default route`)
+    if (!switcher.setSessionProvider(childKey, route)) {
+      console.warn(`spawn: route '${route}' not found; spawned group ${childKey} keeps the project default route`)
       return
     }
     try {
-      this.providerSaveFunc?.(childKey, this.spawnProvider)
+      this.providerSaveFunc?.(childKey, route)
     } catch (error) {
       console.error(`spawn: failed to save spawned group provider: ${String(error)}`)
     }
+  }
+
+  /**
+   * The route a fresh child group starts on: the parent chat's effective
+   * route when the parent sits off the project default (a /provider switch),
+   * else the configured spawn default. A stale parent override that no longer
+   * resolves to a configured route reads as "on the project default" through
+   * the switcher's own fallback, so the spawn default still applies.
+   * @param parentKey - Engine session key of the parent chat; '' skips inheritance.
+   * @returns Route name to pin, or '' to leave the child on the project default.
+   */
+  private childSpawnRoute(parentKey: string): string {
+    if (parentKey === '') return this.spawnProvider
+    const switcher = asProviderSwitcher(this.agent)
+    if (switcher === undefined) return this.spawnProvider
+    const parent = switcher.getActiveProvider(parentKey)?.name ?? ''
+    if (parent === '') return this.spawnProvider
+    return parent !== (switcher.getActiveProvider()?.name ?? '') ? parent : this.spawnProvider
   }
 
   /**
@@ -7085,7 +7108,9 @@ export class Engine {
     this.sessions.save()
 
     // Pin the configured spawn-default route before the injected first
-    // message starts the child's agent session (agent.spawnProvider).
+    // message starts the child's agent session (agent.spawnProvider). No
+    // parent key on purpose: an unattended subtask child is a fresh worker,
+    // not a continuation of wherever the parent chat was switched to.
     this.seedSpawnProvider(syntheticMsg.sessionKey)
 
     // Fold a late-spawned child into an armed gather barrier so gather also

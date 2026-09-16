@@ -136,8 +136,10 @@ export interface AgentOptions {
   /**
    * Route name pinned as the provider override of every group this project's
    * bot spawns (/spawn, //fork, subtask children, chatroom roles, monitor
-   * subgroups); '' or absent keeps spawned groups on the project default
-   * route. Key into the top-level `providers` map.
+   * subgroups); a /spawn //fork child whose parent chat was switched off the
+   * project default route inherits the parent's route instead. '' or absent
+   * keeps spawned groups on the project default route. Key into the
+   * top-level `providers` map.
    */
   spawnProvider?: string
 }
@@ -1409,7 +1411,9 @@ export function buildProjectAssembly(
     engine.setProviderShortcuts(project.providerShortcuts)
   }
   // Spawned groups default to the configured route instead of the project
-  // default (agent.spawnProvider; validated against config.providers above).
+  // default; a /spawn //fork child whose parent chat sits off the project
+  // default inherits the parent's own route (agent.spawnProvider, validated
+  // against config.providers above).
   engine.spawnProvider = project.agent?.spawnProvider ?? ''
   wireGroupName(engine, project)
   if (project.agent?.mode !== undefined && project.agent.mode !== '') {

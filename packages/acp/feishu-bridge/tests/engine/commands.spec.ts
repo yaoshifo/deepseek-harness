@@ -1184,4 +1184,106 @@ describe('/spawn //fork default provider for spawned groups', () => {
       dispose()
     }
   })
+
+  it('inherits the parent chat route when the parent sits off the project default', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const agent = switcherAgent('/w/repo', ['mify-dsh', 'mify-flash', 'deepseek-flash'], 'mify-dsh')
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    const saved: Array<{ key: string; name: string }> = []
+    e.setProviderSaveFunc((key, name) => { saved.push({ key, name }) })
+    e.spawnProvider = 'mify-flash'
+    agent.setSessionProvider('feishu:oc_parent:ou_u', 'deepseek-flash')
+    try {
+      await cmdSpawn(e, p, spawnParentMsg(), ['delegated task'])
+
+      // The parent's switched route wins over the configured spawn default...
+      expect(agent.getActiveProvider('test:role-1')?.name).toBe('deepseek-flash')
+      // ...the seeded choice is persisted for the next daemon start...
+      expect(saved).toContainEqual({ key: 'test:role-1', name: 'deepseek-flash' })
+      // ...and the parent chat stays on its own route.
+      expect(agent.getActiveProvider('feishu:oc_parent:ou_u')?.name).toBe('deepseek-flash')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('inherits the parent chat route on a //fork group too', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const agent = switcherAgent('/w/repo', ['mify-dsh', 'mify-flash', 'deepseek-flash'], 'mify-dsh')
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    const saved: Array<{ key: string; name: string }> = []
+    e.setProviderSaveFunc((key, name) => { saved.push({ key, name }) })
+    e.spawnProvider = 'mify-flash'
+    agent.setSessionProvider('feishu:oc_parent:ou_u', 'deepseek-flash')
+    try {
+      e.sessions.getOrCreateActive('feishu:oc_parent:ou_u').setAgentSessionID('agent-sid-1', 'dsh')
+      await cmdFork(e, p, spawnParentMsg(), ['forked continuation'])
+
+      expect(agent.getActiveProvider('test:role-1')?.name).toBe('deepseek-flash')
+      expect(saved).toContainEqual({ key: 'test:role-1', name: 'deepseek-flash' })
+    } finally {
+      dispose()
+    }
+  })
+
+  it('inherits the parent chat route even with no configured spawn route', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const agent = switcherAgent('/w/repo', ['mify-dsh', 'mify-flash', 'deepseek-flash'], 'mify-dsh')
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    const saved: Array<{ key: string; name: string }> = []
+    e.setProviderSaveFunc((key, name) => { saved.push({ key, name }) })
+    agent.setSessionProvider('feishu:oc_parent:ou_u', 'deepseek-flash')
+    try {
+      await cmdSpawn(e, p, spawnParentMsg(), ['delegated task'])
+
+      expect(agent.getActiveProvider('test:role-1')?.name).toBe('deepseek-flash')
+      expect(saved).toContainEqual({ key: 'test:role-1', name: 'deepseek-flash' })
+    } finally {
+      dispose()
+    }
+  })
+
+  it('keeps the configured spawn route when the parent override names the project default', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const agent = switcherAgent('/w/repo', ['mify-dsh', 'mify-flash'], 'mify-dsh')
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    const saved: Array<{ key: string; name: string }> = []
+    e.setProviderSaveFunc((key, name) => { saved.push({ key, name }) })
+    e.spawnProvider = 'mify-flash'
+    // The parent is pinned to what the project default already resolves to:
+    // indistinguishable from "never switched", so the spawn default applies.
+    agent.setSessionProvider('feishu:oc_parent:ou_u', 'mify-dsh')
+    try {
+      await cmdSpawn(e, p, spawnParentMsg(), ['delegated task'])
+
+      expect(agent.getActiveProvider('test:role-1')?.name).toBe('mify-flash')
+      expect(saved).toContainEqual({ key: 'test:role-1', name: 'mify-flash' })
+    } finally {
+      dispose()
+    }
+  })
+
+  it('falls back to the configured spawn route when the parent resolves no route', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const base = switcherAgent('/w/repo', ['mify-dsh', 'mify-flash'], 'mify-dsh')
+    const agent: Agent & ProviderSwitcher = {
+      ...base,
+      getActiveProvider: (sessionKey?: string) =>
+        sessionKey === 'feishu:oc_parent:ou_u' ? undefined : base.getActiveProvider(sessionKey),
+    }
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    e.spawnProvider = 'mify-flash'
+    try {
+      await cmdSpawn(e, p, spawnParentMsg(), ['delegated task'])
+
+      expect(agent.getActiveProvider('test:role-1')?.name).toBe('mify-flash')
+    } finally {
+      dispose()
+    }
+  })
 })
