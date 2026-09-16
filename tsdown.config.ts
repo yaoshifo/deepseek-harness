@@ -19,9 +19,9 @@ export default defineConfig(({ env }) => {
     workspace: client
       ? ['vendor/*', 'packages/*/*', 'apps/cli']
       : ['vendor/*', 'packages/*/*', 'apps/cli', 'apps/desktop', 'apps/desktop-host'],
-    // The root package has no sources of its own; workspace members build
-    // from their package-local configs.
-    entry: '',
+    // Default entry for workspace members without a package-local config:
+    // each package emits whichever of these tsc outputs it has.
+    entry: client ? '' : ['lib/types/{index,invariant,startup}.js'],
     outDir: 'lib',
     format: ['esm'],
     platform: 'node',
