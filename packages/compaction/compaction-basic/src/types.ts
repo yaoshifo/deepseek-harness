@@ -19,11 +19,11 @@ export interface CompactionPolicyConfig {
   /** Summary model; set together with `summarizationProvider`, or inherit the conversation target. */
   summarizationModel?: string
   /**
-   * Reasoning effort for the summarization request; `''` omits the field so
-   * the provider default applies. A conversation running a reasoning model at
-   * a high effort would otherwise replay that effort into the one-shot
-   * summarization call, whose thinking shares the `maxTokens` cap and can
-   * crowd out the checkpoint text.
+   * Reasoning effort for the summarization request; `''` auto-selects `low`
+   * when the summary target declares that rung and omits the field otherwise.
+   * A conversation running a reasoning model at a high effort would otherwise
+   * replay that effort into the one-shot summarization call, whose thinking
+   * shares the `maxTokens` cap and can crowd out the checkpoint text.
    */
   summarizationEffort?: string
   /** Provider generation cap for summarization. Defaults to `8192`. */

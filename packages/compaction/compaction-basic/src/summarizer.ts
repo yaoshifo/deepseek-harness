@@ -14,7 +14,10 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 interface SummaryConfig {
   readonly summarizationProvider: string
   readonly summarizationModel: string
-  /** Reasoning effort for the one-shot call; '' omits the field (provider default). */
+  /**
+   * Reasoning effort for the one-shot call; `''` auto-selects `low` when the
+   * summary target declares that rung and omits the field otherwise.
+   */
   readonly summarizationEffort: string
   readonly maxTokens: number
 }
@@ -143,6 +146,20 @@ export async function summarizeWithLlm(
     )
   }
 
+  // An unset effort inherits the conversation's (often a reasoning profile's
+  // high rung), whose thinking shares the summarization maxTokens cap with the
+  // checkpoint text and can crowd the text out of the cap entirely. When the
+  // summary target declares a low rung, select it; models without one (no
+  // reasoning, or a different ladder) keep the field omitted — the runtime's
+  // fail-loud effort validation would reject an unconditional value there.
+  let effort: string | undefined
+  if (config.summarizationEffort !== '') {
+    effort = config.summarizationEffort
+  } else {
+    const info = await ctx.llm.resolveModelInfo(target.provider, target.model, signal)
+    effort = info.reasoning?.efforts.some(rung => rung.id === 'low') ? 'low' : undefined
+  }
+
   const assembler = new BlockAssembler()
   const messages: Message[] = [
     ...input.messages,
@@ -157,9 +174,7 @@ export async function summarizeWithLlm(
     messages,
     ...input.tools === undefined ? {} : { tools: [...input.tools] },
     maxTokens: config.maxTokens,
-    ...config.summarizationEffort === ''
-      ? {}
-      : { reasoningEffort: ReasoningEffortId(config.summarizationEffort) },
+    ...effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) },
     sessionId: agent.session.id,
     purpose: 'compaction',
     ...signal === undefined ? {} : { signal },

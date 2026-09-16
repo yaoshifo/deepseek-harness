@@ -1230,6 +1230,18 @@ class ScriptedAdapter extends LlmAdapter {
   }
 }
 
+/** A scripted model declaring a low/max reasoning ladder (the runtime rejects undeclared efforts). */
+class LowMaxAdapter extends ScriptedAdapter {
+  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return Promise.resolve({
+      provider,
+      id: model,
+      name: model,
+      reasoning: { efforts: [{ id: ReasoningEffortId('low'), name: 'low' }, { id: ReasoningEffortId('max'), name: 'max' }] },
+    })
+  }
+}
+
 class ExposedCompactionEngine extends BasicCompactionEngine {
   runSummarize(
     input: SummarizationInput,
@@ -1390,23 +1402,11 @@ describe('default one-shot summarizer', () => {
   })
 
   it('passes the configured summarization effort to the one-shot request', async () => {
-    // The runtime rejects an effort the resolved model does not declare, so
-    // the scripted model must advertise it (mirrors a real catalog entry).
-    class EffortAdapter extends ScriptedAdapter {
-      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-        return Promise.resolve({
-          provider,
-          id: model,
-          name: model,
-          reasoning: { efforts: [{ id: ReasoningEffortId('low'), name: 'low' }, { id: ReasoningEffortId('max'), name: 'max' }] },
-        })
-      }
-    }
     const ctx = new Context()
     await ctx.plugin(LlmRuntime)
     await ctx.plugin(SessionProjectionRegistry)
     void new TokenMeter(ctx)
-    const adapter = new EffortAdapter([{ type: 'text', text: 'summary' }])
+    const adapter = new LowMaxAdapter([{ type: 'text', text: 'summary' }])
     ctx.llm.registerAdapter([MODEL], adapter)
     const compact = new ExposedCompactionEngine(ctx, { auto: false, summarizationEffort: 'low' })
 
@@ -1415,7 +1415,45 @@ describe('default one-shot summarizer', () => {
     expect(adapter.lastOptions).toMatchObject({ reasoningEffort: 'low' })
   })
 
-  it('omits reasoningEffort when no summarization effort is configured', async () => {
+  it('auto-selects low for an unconfigured effort when the summary model declares it', async () => {
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(SessionProjectionRegistry)
+    void new TokenMeter(ctx)
+    const adapter = new LowMaxAdapter([{ type: 'text', text: 'summary' }])
+    ctx.llm.registerAdapter([MODEL], adapter)
+    const compact = new ExposedCompactionEngine(ctx, { auto: false })
+
+    await compact.runSummarize({ messages: [] }, agent(conversation(1), MODEL))
+
+    expect(adapter.lastOptions).toMatchObject({ reasoningEffort: 'low' })
+  })
+
+  it('omits the effort when the summary model declares no low rung', async () => {
+    class OffMaxAdapter extends ScriptedAdapter {
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({
+          provider,
+          id: model,
+          name: model,
+          reasoning: { efforts: [{ id: ReasoningEffortId('off'), name: 'off' }, { id: ReasoningEffortId('max'), name: 'max' }] },
+        })
+      }
+    }
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(SessionProjectionRegistry)
+    void new TokenMeter(ctx)
+    const adapter = new OffMaxAdapter([{ type: 'text', text: 'summary' }])
+    ctx.llm.registerAdapter([MODEL], adapter)
+    const compact = new ExposedCompactionEngine(ctx, { auto: false })
+
+    await compact.runSummarize({ messages: [] }, agent(conversation(1), MODEL))
+
+    expect(adapter.lastOptions).not.toHaveProperty('reasoningEffort')
+  })
+
+  it('omits the effort when the summary model declares no reasoning at all', async () => {
     const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }])
     await compact.runSummarize({ messages: [] }, agent(conversation(1), MODEL))
 
