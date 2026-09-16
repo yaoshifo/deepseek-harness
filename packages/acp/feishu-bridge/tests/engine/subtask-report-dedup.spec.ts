@@ -163,4 +163,26 @@ describe('subtask report dedup against a prior direct send_message', () => {
     expect(summary, `summary=${summary}`).toContain('内容与刚才的直发消息相同')
     expect(summary, `summary=${summary}`).not.toContain('细节行')
   })
+
+  it('an oversized report still degrades to the one-line status against a prior identical direct send', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newTestEngine(p)
+    const parentKey = 'test:parent-chat:user-1'
+    const child = linkedChild(e, parentKey, 'test:child-chat')
+    const huge = '汇报正文。'.repeat(2200) // 11000 code points, over the report cap
+
+    // The child already woke the parent directly with the same oversized
+    // body; the dedup decision must hash the raw report, not the capped
+    // delivery, or the wake would re-inject the (truncated) body.
+    e.noteAgentDirectMessage(parentKey, 'test:child-chat', huge)
+
+    const wake = vi.spyOn(e, 'deliverMachineMessage')
+    expect(e.replyToParent(p, child, huge)).toBe(true)
+    await settle()
+
+    expect(wake).toHaveBeenCalledTimes(1)
+    const wakeContent = wake.mock.calls[0]![1].content
+    expect(wakeContent).toContain('与刚才的直发消息相同')
+    expect(wakeContent).not.toContain('汇报正文。'.repeat(300))
+  })
 })

@@ -117,7 +117,7 @@ import type { UsageProvider } from './usage.ts'
 import { hookSigtermFlush, Session, SessionManager } from './session.ts'
 import { pendingDirFor, saveFilesToDir, saveImagesToDir, spliceStagedAttachments, type StagedAttachment } from './attachments.ts'
 import { childLabel, failureBriefForAgentContext, SubtaskGather } from './subtask.ts'
-import { DEFAULT_SUBTASK_REPORT_MAX_CHARS, MIN_SUBTASK_REPORT_MAX_CHARS } from './subtask-report-cap.ts'
+import { DEFAULT_SUBTASK_REPORT_MAX_CHARS, MIN_SUBTASK_REPORT_MAX_CHARS, planSubtaskReportCap, type SubtaskReportCapPlan } from './subtask-report-cap.ts'
 import {
   createWorktree,
   gitDiffShortstat,
@@ -153,7 +153,8 @@ import { newAsyncSender, type AsyncSender } from '../async-sender.ts'
 import { RateLimiter } from '../ratelimit.ts'
 import { readFileSync, statSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
-import { join as joinPath } from 'node:path'
+import { dirname, join as joinPath } from 'node:path'
+import { atomicWriteFileSync } from '../atomicwrite.ts'
 import { createHash } from 'node:crypto'
 import { asCompletionNoticePreference, asCompletionNotifier, asChatPhasePainter, asDeliveryOutcomeClassifier, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.ts'
@@ -8532,6 +8533,40 @@ export class Engine {
     silentCard: boolean,
     cardDetail?: string,
   ): Promise<void> {
+    // Cap the report before anything downstream reads it (card, dedup,
+    // gather banking, wake assembly): an oversized body is delivered as
+    // head+tail plus a notice naming the spill file, bounding the parent's
+    // context spend per report. The spill write must not throw — a rejection
+    // here escapes to the caller's rollback and re-delivers the same
+    // oversized report forever.
+    const raw = content
+    const cap = this.subtaskReportMaxChars()
+    const rawRunes = Array.from(raw).length
+    if (rawRunes > cap) {
+      const spillPath = this.saveSubtaskReport(childKey, raw)
+      // The ?? arm is unreachable (rawRunes > cap) but keeps the type honest;
+      // it mirrors the plan's own notice-only degradation.
+      const planWith = (notice: string): SubtaskReportCapPlan =>
+        planSubtaskReportCap(raw, cap, notice) ?? { delivered: notice, omitted: rawRunes }
+      let plan: SubtaskReportCapPlan
+      if (spillPath !== undefined) {
+        // The saved notice names the omitted count, which shifts the
+        // head/tail split through the notice's own length; re-plan until
+        // the count it reports is the count it drops (a digit-count change
+        // moves the split one rune, so this settles in one round).
+        let omitted = rawRunes - cap
+        plan = planWith(this.i18n.tf(Msg.SubtaskReportTruncated, cap, omitted, spillPath))
+        while (plan.omitted !== omitted) {
+          omitted = plan.omitted
+          plan = planWith(this.i18n.tf(Msg.SubtaskReportTruncated, cap, omitted, spillPath))
+        }
+        console.info(`subtask: report capped (parent=${parentKey} child=${childKey} chars=${rawRunes} cap=${cap} saved=${spillPath})`)
+      } else {
+        plan = planWith(this.i18n.tf(Msg.SubtaskReportTruncatedUnsaved, cap))
+      }
+      content = plan.delivered
+    }
+
     // A blocking gather holds the parent turn open with the child activity
     // already streaming on its live card; per-child settlement cards would
     // only duplicate that stream. Non-creating lookup stays: a dangling
@@ -8582,7 +8617,10 @@ export class Engine {
     const childAgentSID = this.sessions.findActive(childKey)?.getAgentSessionID() ?? ''
     const repeatsDirect = last !== undefined
       && (last.fromKey === childKey || (childAgentSID !== '' && last.fromKey === childAgentSID))
-      && last.hash === createHash('sha256').update(content).digest('hex')
+      // Hash the raw report, not the capped delivery: the direct message was
+      // recorded against the original text, and the dedup must still match
+      // an oversized report against it.
+      && last.hash === createHash('sha256').update(raw).digest('hex')
 
     // Gather barrier: bank this report and wake the parent only when all
     // expected children have reported (or the timeout fires).
@@ -8618,6 +8656,35 @@ export class Engine {
       content: agentContent,
       replyCtx: parentRctx,
     })
+  }
+
+  /**
+   * Spill an oversized subtask report's full text into a `subtask-reports/`
+   * directory beside the session store (the chatroom-research placement), so
+   * the capped delivery can point the parent at the complete report. Never
+   * throws: without a session store, or on a failed write, the caller falls
+   * back to the not-saved notice — a rejection here would escape to the
+   * caller's reported-flag rollback and re-deliver the same oversized report
+   * forever.
+   * @param childKey - Session key (or native child id) of the reporting child.
+   * @param text - The report's full text.
+   * @returns The written file path, or undefined when persistence is
+   *   unavailable or the write failed.
+   */
+  private saveSubtaskReport(childKey: string, text: string): string | undefined {
+    const store = this.sessions.storePath()
+    if (store === '') return undefined
+    try {
+      const dir = joinPath(dirname(store), 'subtask-reports')
+      const stamp = new Date().toISOString().replace(/:/g, '')
+      const file = joinPath(dir, `report-${createHash('sha256').update(childKey).digest('hex').slice(0, 12)}-${stamp}.md`)
+      mkdirSync(dir, { recursive: true })
+      atomicWriteFileSync(file, Buffer.from(text, 'utf8'), 0o644)
+      return file
+    } catch (error) {
+      console.warn(`subtask: report spill failed (child=${childKey}): ${String(error)}`)
+      return undefined
+    }
   }
 
   /**
