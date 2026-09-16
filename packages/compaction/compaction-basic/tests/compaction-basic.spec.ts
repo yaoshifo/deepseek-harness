@@ -13,7 +13,7 @@ import {
   resolveTargetPolicy,
 } from '@deepseek-ai/dsh-compaction-basic/src/config.ts'
 import type { CompactionResult } from '@deepseek-ai/dsh-compaction'
-import LlmRuntime, { createUserMessage, ToolCallId, CONTEXT_WINDOW_EXCEEDED_CODE, createSystemMessage, createToolResultMessage, LlmAdapter , createMessage } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, ToolCallId, CONTEXT_WINDOW_EXCEEDED_CODE, createSystemMessage, createToolResultMessage, LlmAdapter , createMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {
   ContentBlock,
   GenerateOptions,
@@ -313,6 +313,7 @@ describe('compact configuration and defaults', () => {
       retainRatio: 0.16,
       summarizationProvider: '',
       summarizationModel: '',
+      summarizationEffort: '',
       maxTokens: 8192,
       compactionRetries: 1,
       maxOverflowRetries: 1,
@@ -379,6 +380,7 @@ describe('compact configuration and defaults', () => {
         retainRatio: 0.2,
         summarizationProvider: 'summary-provider',
         summarizationModel: 'summary-model',
+        summarizationEffort: 'low',
         maxTokens: 512,
         compactionRetries: 2,
         maxOverflowRetries: 3,
@@ -389,6 +391,7 @@ describe('compact configuration and defaults', () => {
       retainTokens: 400,
       summarizationProvider: 'summary-provider',
       summarizationModel: 'summary-model',
+      summarizationEffort: 'low',
       maxTokens: 512,
       compactionRetries: 2,
       maxOverflowRetries: 3,
@@ -457,6 +460,8 @@ describe('compact configuration and defaults', () => {
       [{ modelPolicies: [{ provider: MODEL, model: 1 }] }, /model must be a non-empty string/],
       [{ modelPolicies: [{ provider: MODEL, model: '' }] }, /model must be a non-empty string/],
       [{ modelPolicies: [{ provider: MODEL, model: MODEL, summarizationProvider: 1 }] }, /summarizationProvider must be a string/],
+      [{ summarizationEffort: 1 }, /summarizationEffort must be a string/],
+      [{ modelPolicies: [{ provider: MODEL, model: MODEL, summarizationEffort: 2 }] }, /summarizationEffort must be a string/],
       [{
         summarizationProvider: 'default-provider',
         summarizationModel: 'default-model',
@@ -1382,6 +1387,39 @@ describe('default one-shot summarizer', () => {
     const last = adapter.lastOptions?.messages.at(-1)?.content[0]
     const lastText = last?.type === 'text' ? last.text : ''
     expect(lastText).toContain('The verbatim approved-plan copy is the one exception: carry it forward unchanged while any of its work remains unexecuted.')
+  })
+
+  it('passes the configured summarization effort to the one-shot request', async () => {
+    // The runtime rejects an effort the resolved model does not declare, so
+    // the scripted model must advertise it (mirrors a real catalog entry).
+    class EffortAdapter extends ScriptedAdapter {
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({
+          provider,
+          id: model,
+          name: model,
+          reasoning: { efforts: [{ id: ReasoningEffortId('low'), name: 'low' }, { id: ReasoningEffortId('max'), name: 'max' }] },
+        })
+      }
+    }
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(SessionProjectionRegistry)
+    void new TokenMeter(ctx)
+    const adapter = new EffortAdapter([{ type: 'text', text: 'summary' }])
+    ctx.llm.registerAdapter([MODEL], adapter)
+    const compact = new ExposedCompactionEngine(ctx, { auto: false, summarizationEffort: 'low' })
+
+    await compact.runSummarize({ messages: [] }, agent(conversation(1), MODEL))
+
+    expect(adapter.lastOptions).toMatchObject({ reasoningEffort: 'low' })
+  })
+
+  it('omits reasoningEffort when no summarization effort is configured', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }])
+    await compact.runSummarize({ messages: [] }, agent(conversation(1), MODEL))
+
+    expect(adapter.lastOptions).not.toHaveProperty('reasoningEffort')
   })
 
   it('applies the routed model policy without changing the replayed prefix', async () => {

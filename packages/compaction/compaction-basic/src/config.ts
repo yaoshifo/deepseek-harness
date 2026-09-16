@@ -29,6 +29,7 @@ const POLICY_CONFIG_KEYS = [
   'retainTokens',
   'summarizationProvider',
   'summarizationModel',
+  'summarizationEffort',
   'maxTokens',
   'compactionRetries',
   'maxOverflowRetries',
@@ -88,6 +89,7 @@ export function resolveConfig(config: BasicCompactionConfig = {}): ResolvedConfi
     ...retention,
     summarizationProvider: config.summarizationProvider ?? '',
     summarizationModel: config.summarizationModel ?? '',
+    summarizationEffort: config.summarizationEffort ?? '',
     maxTokens: config.maxTokens ?? 8192,
     compactionRetries: config.compactionRetries ?? 1,
     maxOverflowRetries: config.maxOverflowRetries ?? 1,
@@ -118,6 +120,7 @@ export function resolveTargetPolicy(
     ...resolveRetention(override ?? {}, inheritedRetention),
     summarizationProvider: override?.summarizationProvider ?? config.summarizationProvider,
     summarizationModel: override?.summarizationModel ?? config.summarizationModel,
+    summarizationEffort: override?.summarizationEffort ?? config.summarizationEffort,
     maxTokens: override?.maxTokens ?? config.maxTokens,
     compactionRetries: override?.compactionRetries ?? config.compactionRetries,
     maxOverflowRetries: override?.maxOverflowRetries ?? config.maxOverflowRetries,
@@ -160,6 +163,7 @@ export function resolveCompactSpec(
     retainTokens,
     summarizationProvider: policy.summarizationProvider,
     summarizationModel: policy.summarizationModel,
+    summarizationEffort: policy.summarizationEffort,
     maxTokens: policy.maxTokens,
     compactionRetries: policy.compactionRetries,
     maxOverflowRetries: policy.maxOverflowRetries,
@@ -249,6 +253,10 @@ function validatePolicy(
   }
 
   validateSummarizationPair(config, name)
+  const summarizationEffort = config.summarizationEffort
+  if (summarizationEffort !== undefined && typeof summarizationEffort !== 'string') {
+    throw new Error(`${name}.summarizationEffort must be a string`)
+  }
 }
 
 /** Require one scope to omit, clear, or replace the summarization target as a pair. */

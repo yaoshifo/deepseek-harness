@@ -5,7 +5,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { contentHasImage, createUserMessage, BlockAssembler, LlmError } from '@deepseek-ai/dsh-llm'
+import { contentHasImage, createUserMessage, BlockAssembler, LlmError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {
   ContentBlock, FinishReason, GenerateOptions, Message, TokenUsage, ToolSchema,
 } from '@deepseek-ai/dsh-llm'
@@ -14,6 +14,8 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 interface SummaryConfig {
   readonly summarizationProvider: string
   readonly summarizationModel: string
+  /** Reasoning effort for the one-shot call; '' omits the field (provider default). */
+  readonly summarizationEffort: string
   readonly maxTokens: number
 }
 
@@ -155,6 +157,9 @@ export async function summarizeWithLlm(
     messages,
     ...input.tools === undefined ? {} : { tools: [...input.tools] },
     maxTokens: config.maxTokens,
+    ...config.summarizationEffort === ''
+      ? {}
+      : { reasoningEffort: ReasoningEffortId(config.summarizationEffort) },
     sessionId: agent.session.id,
     purpose: 'compaction',
     ...signal === undefined ? {} : { signal },
