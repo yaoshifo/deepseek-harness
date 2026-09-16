@@ -173,6 +173,9 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     expect(sections[0]?.text).toContain('默认测试驱动')
     expect(sections[1]?.complete).toBeUndefined()
     expect(sections[1]?.text).toContain('被派发子任务的子 agent')
+    // Report-cap line: the subtask preamble echoes the adapter's report cap
+    // (default DEFAULT_SUBTASK_REPORT_MAX_CHARS) as model-visible text.
+    expect(sections[1]?.text).toContain('汇报请控制在 8192 字符以内')
     expect(sections[1]?.text).toContain('并行研究作战室的研究助手')
     // Data-reliability hard constraints, distilled from the production
     // commodity-research practice: the assistant is the only participant
@@ -264,6 +267,21 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     expect(sections[1]?.complete).toBeUndefined()
     expect(sections[1]?.text).toContain('被派发子任务的子 agent')
     expect(sections[1]?.text).toContain('feishu_bridge_subtask')
+    expect(sections[1]?.text).toContain('汇报请控制在 8192 字符以内')
+  })
+
+  it('echoes a configured report cap into the subtask preamble', async () => {
+    const sections: RecordedSection[] = []
+    const a = newAdapter(createHarness({ sections }), '/ws')
+    a.setSubtaskReportMaxChars(4096)
+    await a.startSession('', {
+      sessionKey: 'test:child-4',
+      subtask: { attended: false, noReport: false, researchAssistant: false },
+    })
+    // The persona's number tracks the engine's delivery cap: a mismatch would
+    // tell the child to write reports the parent then truncates differently.
+    expect(sections[1]?.text).toContain('汇报请控制在 4096 字符以内')
+    expect(sections[1]?.text).not.toContain('8192')
   })
 
   it('registers the no-report preamble for a no-report subtask child', async () => {

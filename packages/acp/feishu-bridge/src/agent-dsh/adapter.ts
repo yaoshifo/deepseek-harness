@@ -47,6 +47,7 @@ import {
   subtaskNoReportAgentSystemPrompt,
   subtaskResearchAssistantPrompt,
 } from '../engine/subtask-prompts.ts'
+import { DEFAULT_SUBTASK_REPORT_MAX_CHARS } from '../engine/subtask-report-cap.ts'
 import { appendFileRefs, saveFilesToDisk, saveImagesToDisk } from '../engine/attachments.ts'
 import type {
   AgentSession,
@@ -440,12 +441,13 @@ export function feishuWorkspaceSection(options: SessionStartOptions | undefined)
  * child.
  *
  * @param workspaceText - The #18 workspace routing section; '' omits it.
+ * @param reportMaxChars - The report cap echoed into the report preamble.
  * @returns The composed persona text.
  */
-export function unattendedSubtaskPersona(workspaceText: string): string {
+export function unattendedSubtaskPersona(workspaceText: string, reportMaxChars: number): string {
   const parts: string[] = []
   if (workspaceText !== '') parts.push(workspaceText)
-  parts.push(subtaskAgentSystemPrompt())
+  parts.push(subtaskAgentSystemPrompt(reportMaxChars))
   return parts.join('\n\n')
 }
 
@@ -564,7 +566,7 @@ function withDeniedSkills(
  * section (order 20); and, when a Feishu workspace is configured, the #18
  * routing section on top.
  */
-function buildSessionSetup(options: SessionStartOptions | undefined): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
+function buildSessionSetup(options: SessionStartOptions | undefined, reportMaxChars: number): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
   const persona = options?.persona
   const isSubtask = options?.subtask !== undefined
   const isResearchAssistant = options?.subtask?.researchAssistant === true
@@ -587,7 +589,7 @@ function buildSessionSetup(options: SessionStartOptions | undefined): import('@d
     const venvPython = options.venv !== undefined ? `${options.venv.virtualEnv}/bin/python` : ''
     const preamble = isNoReport
       ? subtaskNoReportAgentSystemPrompt()
-      : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt(venvPython, options.subtask?.researchRunDir ?? '', options.playbook ?? '') : ''}`
+      : `${subtaskAgentSystemPrompt(reportMaxChars)}${isResearchAssistant ? subtaskResearchAssistantPrompt(venvPython, options.subtask?.researchRunDir ?? '', options.playbook ?? '') : ''}`
     return (agentCtx) => {
       // Research assistants are coding agents: their workspace lives under
       // the project data dir, off every persona's ancestor chain, so they
@@ -798,6 +800,8 @@ export class DshAgentAdapter {
   private defaultMode = ''
   /** Raw plan_render.effort alias consumed by {@link renderQuery} (Go renderEffort). */
   private renderEffort = ''
+  /** Report cap echoed into every subtask persona; tracks the engine's delivery cap. */
+  private subtaskReportMaxChars = DEFAULT_SUBTASK_REPORT_MAX_CHARS
   /** Mutable work dir: the engine's per-chat override switches it around StartSession (Go WorkDirSwitcher). */
   private workDir: string
   private readonly disposers: Array<() => void> = []
@@ -1460,7 +1464,7 @@ export class DshAgentAdapter {
         maxDepth: request.maxDepth,
         persona: unattendedSubtaskPersona(feishuWorkspaceSection(
           request.workspace === undefined ? undefined : { sessionKey: '', feishuWorkspace: request.workspace },
-        )),
+        ), this.subtaskReportMaxChars),
         // '' means "no override" — the runtime rejects a non-absolute cwd, and
         // the child then inherits the parent's working directory.
         ...(request.cwd !== '' ? { cwd: request.cwd } : {}),
@@ -1691,6 +1695,19 @@ export class DshAgentAdapter {
    */
   setRenderEffort(effort: string): void {
     this.renderEffort = effort
+  }
+
+  /**
+   * Store the report cap the subtask personas echo (Go wiring feeds the same
+   * `subtask.reportMaxChars` to the engine's delivery cap): a persona
+   * promising more than the engine delivers would mislead children into
+   * writing reports the parent then truncates. Validation against the floor
+   * is the engine setter's load-time job; this is the persona-side echo.
+   *
+   * @param n - the configured report cap in code points.
+   */
+  setSubtaskReportMaxChars(n: number): void {
+    this.subtaskReportMaxChars = n
   }
 
   /**
@@ -2058,7 +2075,7 @@ export class DshAgentAdapter {
     // mcpServers allowlist — the two visibility axes are independent.
     const setup = this.withModelSelection(
       this.withWorkspaceMcp(withDeniedSkills(
-        withProjectToolMask(buildSessionSetup(options), this.cfg.mcpServers, this.deniedTools()),
+        withProjectToolMask(buildSessionSetup(options, this.subtaskReportMaxChars), this.cfg.mcpServers, this.deniedTools()),
         this.deniedSkills(),
       )),
       key,

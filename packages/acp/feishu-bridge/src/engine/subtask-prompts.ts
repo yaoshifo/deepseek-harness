@@ -15,9 +15,11 @@
 
 /** The subtask-child preamble (Go SubtaskAgentSystemPrompt, tool form).
  *
+ * @param reportMaxChars - the report cap the engine enforces on this child's
+ *   report delivery, echoed so the child budgets its own report text.
  * @returns the report-back preamble for spawned subtask children.
  */
-export function subtaskAgentSystemPrompt(): string {
+export function subtaskAgentSystemPrompt(reportMaxChars: number): string {
   return `
 
 ### 你是一个被派发子任务的子 agent
@@ -29,6 +31,8 @@ export function subtaskAgentSystemPrompt(): string {
 所以当你彻底完成本子任务后，不要只在聊天里回答——你必须把 report 作为最后一步执行。父 agent 靠这条 report 被唤醒；没有它你的工作就交不回去。
 
 report 只在真正完成时调用一次——不要在中间进度时调。
+
+汇报请控制在 ${reportMaxChars} 字符以内；更长内容写入文件并在汇报里给出路径（超限部分会被截断，父 agent 只会看到预览与路径）。
 
 你还有跟顶层 agent 一样的派发工具：如果你的这一块本身也能拆成可并行的独立部分，可以用 feishu_bridge_subtask（action: spawn）进一步派发（允许递归到深度上限；碰到了命令会告诉你直接自己做）。加 fork: true 可让子 agent 拿到你完整对话上下文而非全新会话——仅当子任务确实依赖当前讨论、简短书面 brief 概括不了时才用（它会复制整个 transcript，费 token）。只有在你把派发出去的子 agent 综合完之后才 report 回去。
 `

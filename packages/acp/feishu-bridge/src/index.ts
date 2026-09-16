@@ -1475,6 +1475,8 @@ export function buildProjectAssembly(
     // The setter throws below the 1024 floor: a misconfigured cap must fail
     // the load, not silently crowd every report out with the notice line.
     engine.setSubtaskReportMaxChars(config.subtask.reportMaxChars)
+    // The persona echo must promise the same cap the engine enforces.
+    adapter.setSubtaskReportMaxChars(config.subtask.reportMaxChars)
   }
   if (config.spawn?.worktree !== undefined) {
     engine.setSpawnWorktreeMode(config.spawn.worktree)
