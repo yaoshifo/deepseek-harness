@@ -1,10 +1,12 @@
 /**
  * Treemap rendering for the /context map command: shapes the projection
  * snapshot into context-ordered segments (system prompt → per-tool schemas →
- * dropped-nodes placeholder → surface nodes by seq), lays them out as a
- * squarified treemap (rect areas ∝ token counts, reading order ≈ context
- * order), and emits the self-contained zero-JS HTML document the command
- * sends as a .html attachment.
+ * dropped-nodes placeholder → surface nodes by seq), groups them into the
+ * three assembly phases (① system prompt, ② tool schemas, ③ history), lays
+ * each phase out as its own squarified band (band width ∝ phase tokens,
+ * rectangle area ∝ segment tokens, rectangles in seq order inside a band),
+ * and emits the self-contained zero-JS HTML document the command sends as a
+ * .html attachment.
  *
  * Every function here is pure over its arguments — the engine-side command
  * only assembles them; no engine state is read. HTML copy is Chinese-only,
@@ -26,6 +28,12 @@ const SEGMENT_PREVIEW_MAX_RUNES = 400
 
 /** Treemap canvas size in CSS pixels (the map scales down on narrow windows). */
 const TREEMAP_CANVAS = { w: 1_280, h: 800 } as const
+
+/** Horizontal gap between two phase bands. */
+const BAND_GAP = 8
+
+/** Height of a band's header strip (its label row). */
+const BAND_HEAD_H = 26
 
 /** A rectangle below either threshold renders as a color block (CSS hides its label). */
 const LABEL_MIN_W = 56
@@ -49,6 +57,63 @@ export interface TreemapSegment {
   preview: string
   /** Surface category ('node' segments only); drives the bucket color. */
   cat?: SurfaceCategory
+  /** Session-log sequence number ('node' segments only); shown beside the token count. */
+  seq?: number
+}
+
+/**
+ * One assembly phase of the request context — the treemap's top level. Bands
+ * render left to right in {@link treemapBands} order (system → tools →
+ * history), so their horizontal position reads as the assembly order.
+ */
+export interface TreemapBand {
+  /** Phase discriminant. */
+  kind: 'system' | 'tools' | 'messages'
+  /** Ordinal marker shown in the band header (①/②/③). */
+  marker: string
+  /** Band header label. */
+  label: string
+  /** Phase token sum; the band's width weight. */
+  tokens: number
+  /** The phase's segments in assembly order. */
+  segments: TreemapSegment[]
+}
+
+/** The phase a segment belongs to. */
+function bandOf(segment: TreemapSegment): TreemapBand['kind'] {
+  switch (segment.kind) {
+    case 'system': return 'system'
+    case 'tool': return 'tools'
+    case 'dropped':
+    case 'node': return 'messages'
+  }
+}
+
+/**
+ * Group ordered segments into the three assembly phases, dropping empty
+ * phases (a session with no request yet has no tool band). The dropped-nodes
+ * placeholder stays inside the messages phase — it is the oldest messages.
+ *
+ * @param segments - Ordered segments from {@link treemapSegments}.
+ * @returns The non-empty phases in assembly order.
+ */
+export function treemapBands(segments: readonly TreemapSegment[]): TreemapBand[] {
+  const phases: ReadonlyArray<Pick<TreemapBand, 'kind' | 'marker' | 'label'>> = [
+    { kind: 'system', marker: '①', label: '系统提示词' },
+    { kind: 'tools', marker: '②', label: '工具定义' },
+    { kind: 'messages', marker: '③', label: '历史消息' },
+  ]
+  const bands: TreemapBand[] = []
+  for (const phase of phases) {
+    const inside = segments.filter(segment => bandOf(segment) === phase.kind)
+    if (inside.length === 0) continue
+    bands.push({
+      ...phase,
+      tokens: inside.reduce((sum, segment) => sum + segment.tokens, 0),
+      segments: inside,
+    })
+  }
+  return bands
 }
 
 /**
@@ -127,6 +192,7 @@ function nodeSegment(node: SurfaceNode): TreemapSegment {
     label,
     preview,
     cat: node.cat,
+    seq: node.seq,
   }
 }
 
@@ -295,9 +361,11 @@ function segmentColor(segment: TreemapSegment): string {
 
 /**
  * Render the context treemap as a self-contained zero-JS HTML document:
- * header (title, model, totals), the squarified rectangles (label + token
- * count inside, full preview on hover, CSS hides labels too small to read),
- * and the legend/footer with the six-bucket figures and coverage notes.
+ * header (title, model, totals), one labeled band per assembly phase laid
+ * left to right (band width ∝ phase tokens) with the phase's squarified
+ * rectangles inside (label + token count, full preview on hover, CSS hides
+ * labels too small to read), and the legend/footer with the six-bucket
+ * figures and coverage notes.
  *
  * @param args - Session title/model, the projection snapshot, and the
  *   generation time.
@@ -305,16 +373,29 @@ function segmentColor(segment: TreemapSegment): string {
  */
 export function renderTreemapHTML(args: TreemapHTMLArgs): string {
   const segments = treemapSegments(args.snapshot)
-  const rects = squarify(segments.map(segment => segment.tokens), { x: 0, y: 0, w: TREEMAP_CANVAS.w, h: TREEMAP_CANVAS.h })
+  const bands = treemapBands(segments)
   const total = args.snapshot.timeline?.current.total ?? segments.reduce((sum, s) => sum + s.tokens, 0)
-  const cells = segments.map((segment, i) => {
-    const rect = rects[i]
-    if (rect === undefined) return ''
-    const bare = rect.w < LABEL_MIN_W || rect.h < LABEL_MIN_H ? ' bare' : ''
-    return `      <div class="seg${bare}" style="left:${round1(rect.x)}px;top:${round1(rect.y)}px;width:${round1(rect.w)}px;height:${round1(rect.h)}px;background:${segmentColor(segment)}" title="${escapeHtml(segment.preview)}">
-        <span class="label">${escapeHtml(segment.label)}</span>
-        <span class="tokens">${formatTokens(segment.tokens)}</span>
-      </div>`
+  const weightTotal = bands.reduce((sum, band) => sum + band.tokens, 0)
+  // The last band takes the rounded remainder so the bands tile the canvas
+  // exactly instead of leaving a fractional sliver.
+  const innerW = TREEMAP_CANVAS.w - BAND_GAP * Math.max(0, bands.length - 1)
+  const contentH = TREEMAP_CANVAS.h - BAND_HEAD_H
+  let left = 0
+  const bandMarkup = bands.map((band, index) => {
+    const width = index === bands.length - 1
+      ? TREEMAP_CANVAS.w - left
+      : round1(innerW * (band.tokens / weightTotal))
+    const rects = squarify(band.segments.map(segment => segment.tokens), { x: 0, y: 0, w: width, h: contentH })
+    const cells = band.segments.map((segment, i) => {
+      const rect = rects[i]
+      return rect === undefined ? '' : rectMarkup(segment, rect)
+    }).join('\n')
+    const block = `    <div class="band band-${band.kind}" style="left:${round1(left)}px;width:${round1(width)}px">
+      <div class="band-head">${band.marker} ${band.label} · ${formatTokens(band.tokens)}</div>
+${cells}
+    </div>`
+    left += width + BAND_GAP
+    return block
   }).join('\n')
   return `<!doctype html>
 <html lang="zh">
@@ -329,6 +410,8 @@ header { padding: 20px 24px 8px; }
 h1 { margin: 0 0 4px; font-size: 18px; }
 .meta { margin: 0; color: #64748b; font-size: 13px; }
 #map { position: relative; width: ${TREEMAP_CANVAS.w}px; height: ${TREEMAP_CANVAS.h}px; margin: 12px 24px; background: #e2e8f0; }
+.band { position: absolute; top: 0; height: ${TREEMAP_CANVAS.h}px; background: #cbd5e1; }
+.band-head { box-sizing: border-box; height: ${BAND_HEAD_H}px; padding: 4px 6px 0; font-size: 11px; font-weight: 600; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .seg { position: absolute; box-sizing: border-box; overflow: hidden; padding: 4px; border: 1px solid rgba(255,255,255,.6); color: #fff; }
 .seg:hover { outline: 2px solid #0f172a; z-index: 1; }
 .label { display: block; font-size: 12px; line-height: 1.35; max-height: 3.9em; overflow: hidden; word-break: break-all; }
@@ -342,6 +425,8 @@ footer { padding: 4px 24px 24px; font-size: 13px; color: #334155; }
 @media (prefers-color-scheme: dark) {
   body { background: #0b1220; color: #e2e8f0; }
   #map { background: #1e293b; }
+  .band { background: #334155; }
+  .band-head { color: #cbd5e1; }
   footer { color: #94a3b8; }
 }
 </style>
@@ -352,16 +437,28 @@ footer { padding: 4px 24px 24px; font-size: 13px; color: #334155; }
   <p class="meta">${escapeHtml(args.model)} · 估算 ${formatTokens(total)} tokens · 生成于 ${formatTime(args.time)}</p>
 </header>
 <main id="map">
-${cells}
+${bandMarkup}
   </main>
 <footer>
     <div class="legend">${legend(args.snapshot)}</div>
-    <p class="note">token 数为启发式估算；矩形面积 ∝ token 数，阅读顺序 ≈ 上下文装配顺序（系统提示词 → 工具定义 → 历史消息）。悬停可看该部分的开头文本。</p>
+    <p class="note">token 数为启发式估算；色带宽度 ∝ 该阶段 token，矩形面积 ∝ 该块 token。①→②→③ 自左向右即上下文装配顺序，阶段内矩形按会话顺序排列（#数字为会话日志 seq）。悬停可看该部分的开头文本。</p>
 ${droppedNote(args.snapshot)}
   </footer>
 </body>
 </html>
 `
+}
+
+/** One rectangle's markup: coordinates are relative to its band, below the header strip. */
+function rectMarkup(segment: TreemapSegment, rect: TreemapRect): string {
+  const bare = rect.w < LABEL_MIN_W || rect.h < LABEL_MIN_H ? ' bare' : ''
+  const figure = segment.seq === undefined
+    ? formatTokens(segment.tokens)
+    : `#${segment.seq} · ${formatTokens(segment.tokens)}`
+  return `      <div class="seg${bare}" style="left:${round1(rect.x)}px;top:${round1(BAND_HEAD_H + rect.y)}px;width:${round1(rect.w)}px;height:${round1(rect.h)}px;background:${segmentColor(segment)}" title="${escapeHtml(segment.preview)}">
+        <span class="label">${escapeHtml(segment.label)}</span>
+        <span class="tokens">${figure}</span>
+      </div>`
 }
 
 /** One legend entry per six-bucket key with its current figure. */

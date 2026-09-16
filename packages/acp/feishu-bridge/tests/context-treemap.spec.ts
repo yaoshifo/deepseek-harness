@@ -185,3 +185,43 @@ describe('renderTreemapHTML', () => {
     expect(html).toContain('巨大')
   })
 })
+
+describe('renderTreemapHTML — phase bands', () => {
+  /** Band blocks in document order with their kind, left edge, and width. */
+  function bandsOf(html: string): Array<{ kind: string; left: number; width: number }> {
+    return [...html.matchAll(/class="band band-(\w+)" style="left:([\d.]+)px;width:([\d.]+)px"/g)]
+      .map(m => ({ kind: m[1] ?? '', left: Number(m[2]), width: Number(m[3]) }))
+  }
+
+  it('lays the three assembly phases out as labeled bands in order', () => {
+    const html = renderTreemapHTML({ sessionTitle: '开发虾', model: 'm', snapshot: snapshot(), time: 0 })
+    expect(bandsOf(html).map(b => b.kind)).toEqual(['system', 'tools', 'messages'])
+    expect(html).toContain('① 系统提示词')
+    expect(html).toContain('② 工具定义')
+    expect(html).toContain('③ 历史消息')
+  })
+
+  it('sizes each band by its phase token share, ordered left to right', () => {
+    const bands = bandsOf(renderTreemapHTML({ sessionTitle: 't', model: 'm', snapshot: snapshot(), time: 0 }))
+    const [system, tools, messages] = bands
+    expect(system?.left).toBe(0)
+    expect(tools?.left).toBeGreaterThan(system?.left ?? 0)
+    expect(messages?.left).toBeGreaterThan(tools?.left ?? 0)
+    // The fixture's phases weigh 1_200 / 3_000 / 4_000 tokens.
+    expect((tools?.width ?? 0) / (system?.width ?? 1)).toBeCloseTo(2.5, 1)
+    expect((messages?.left ?? 0) + (messages?.width ?? 0)).toBeLessThanOrEqual(1_280)
+  })
+
+  it('places the dropped placeholder at the head of the messages band', () => {
+    const html = renderTreemapHTML({ sessionTitle: 't', model: 'm', snapshot: snapshot(), time: 0 })
+    const messagesBand = html.slice(html.indexOf('class="band band-messages"'))
+    const firstLabel = messagesBand.match(/<span class="label">([\s\S]*?)<\/span>/)?.[1] ?? ''
+    expect(firstLabel).toContain('更早的')
+  })
+
+  it('shows each message rectangle its session-log seq beside the token count', () => {
+    const html = renderTreemapHTML({ sessionTitle: 't', model: 'm', snapshot: snapshot(), time: 0 })
+    expect(html).toContain('#3 · 200')
+    expect(html).toContain('#11 · 1.5k')
+  })
+})

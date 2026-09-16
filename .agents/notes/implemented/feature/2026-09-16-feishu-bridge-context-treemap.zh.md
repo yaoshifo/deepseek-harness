@@ -13,10 +13,10 @@
 `/context map`（现有命令的参数形态）：同一 `ContextSnapshotReader` 取数，纯渲染层产出自包含零 JS 的 HTML 文档，经平台的 FileSender 能力以 `.html` 附件发出（`deliverReplyHTML` 同款链路）。三层设计：
 
 - **窄类型放行而非新建数据面**：`ContextTimelineValue` 增补 `nodes`/`droppedNodes`（上游 0.11+ 必填，忠实对齐），`HeaderRecordValue.system`、`HeaderToolValue.description` 按上游可选放行。适配器逐字段拷贝 wire 对象，类型放行即通、零运行时改动；同步补齐四个既有 fixture 的必填字段。
-- **squarify 手写**（`squarify`，约 80 行，Bruls 算法）：保序（列左→右、栈上→下，阅读顺序≈装配顺序）、面积严格∝token、贪心行装填压扁长宽比。不引 d3/echarts：产物要求离线自包含，且算法体量小于依赖接线。
+- **两层布局，全手写**：顶层把画布切成三条带标签的阶段色带、自左向右排列（带宽∝该阶段 token）——① 系统提示词、② 工具定义、③ 历史消息——水平位置本身就是装配顺序；第二层在每个带内 squarify（`squarify`，约 80 行，Bruls 算法：带内保序、面积严格∝token、贪心行装填压扁长宽比）。不引 d3/echarts：产物要求离线自包含，且算法体量小于依赖接线。
 - **覆盖诚实**：`current` 的四桶合计覆盖全部存活消息而 `nodes` 只服务最新尾部——差额（连同 `droppedNodes` 条数）画成开头一块灰色「更早的 N 条消息」占位矩形，树图永不假装完整。
 
-分段顺序：系统提示词（`current.system` 计价、epoch 全文做悬停预览）→ 最新 epoch 的工具 schema（声明顺序）→ 灰色占位 → 已服务消息按 seq；0-token 节点跳过（空 assistant 消息计 0、无矩形）。HTML 文案仅中文，与 chartspec 图表标签同一先例；聊天侧降级文案走桥 i18n（复用 `ContextEmpty`/`ContextPluginHint`，新增 `ContextMapNoFileSender`）。所有插值经 `escapeHtml`（消息预览是任意内容→HTML 注入边界，截断先于转义防止切断实体）。文件名由命令层用 `slugifyTitle` 组装——纯渲染模块不反向依赖 engine 层。
+分段顺序：系统提示词（`current.system` 计价、epoch 全文做悬停预览）→ 最新 epoch 的工具 schema（声明顺序）→ 灰色占位 → 已服务消息按 seq；0-token 节点跳过（空 assistant 消息计 0、无矩形）。消息矩形在 token 数旁标注会话日志 seq，阶段顺序精确、带内顺序可对着日志核对。HTML 文案仅中文，与 chartspec 图表标签同一先例；聊天侧降级文案走桥 i18n（复用 `ContextEmpty`/`ContextPluginHint`，新增 `ContextMapNoFileSender`）。所有插值经 `escapeHtml`（消息预览是任意内容→HTML 注入边界，截断先于转义防止切断实体）。文件名由命令层用 `slugifyTitle` 组装——纯渲染模块不反向依赖 engine 层。
 
 ## 备选方案
 
