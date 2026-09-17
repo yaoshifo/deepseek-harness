@@ -63,7 +63,7 @@ export interface PlanShadowRequest {
 function sectionOf(session: Session | undefined): PlanShadowSection {
   const raw = session?.featureState['planShadow']
   if (raw === null || typeof raw !== 'object') return {}
-  return raw as PlanShadowSection
+  return raw
 }
 
 /** Merge one patch into a session's plan-shadow section and persist. */

@@ -28,7 +28,7 @@ export interface StubJobSnapshot {
   status: 'running' | 'stopping' | 'completed' | 'killed' | 'failed'
   startedAt: number
   finishedAt?: number
-  reported: boolean
+  reported?: boolean
 }
 
 /** The adapter's live-job filter over a stub job list (mirrors pendingBackgroundJobs). */

@@ -386,8 +386,8 @@ function settledOptionMarks(q: UserQuestion, indices: number[], includeLocator =
   return q.options.map((opt, i) => {
     const checked = indices.includes(i + 1)
     return `${checked ? '✅' : '◻️'} **${opt.label}**`
-      + `${opt.description !== '' ? `\n${opt.description}` : ''}`
-      + `${includeLocator && checked && opt.locator !== undefined && opt.locator !== '' ? `\n📍 ${opt.locator}` : ''}`
+      + (opt.description !== '' ? `\n${opt.description}` : '')
+      + (includeLocator && checked && opt.locator !== undefined && opt.locator !== '' ? `\n📍 ${opt.locator}` : '')
   })
 }
 
@@ -504,9 +504,7 @@ function foldTagForm(s: string): string {
  */
 function recommendedDisplayLabel(opt: UserQuestionOption, i18n: AskCardI18n): string {
   if (opt.recommended !== true) return opt.label
-  const forms = Object.values(messages.ask_recommended_suffix)
-    .filter((form): form is string => form !== undefined)
-    .map(foldTagForm)
+  const forms = Object.values(messages.ask_recommended_suffix).map(foldTagForm)
   return forms.some(form => foldTagForm(opt.label).includes(form)) ? opt.label
     : `${opt.label}${i18n.t(Msg.AskRecommendedSuffix)}`
 }
