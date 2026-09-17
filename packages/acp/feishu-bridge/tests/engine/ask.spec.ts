@@ -264,6 +264,8 @@ describe('buildAskQuestionCard', () => {
         { label: '探针并发化 (推荐)', description: '', recommended: true },
         { label: '探针并发化 [Recommended]', description: '', recommended: true },
         { label: '探针并发化 ( 推薦 )', description: '', recommended: true },
+        { label: '「推荐」', description: '', recommended: true },
+        { label: '『推荐』', description: '', recommended: true },
       ],
     }
     const card = buildAskQuestionCard(variants, 0, 1)
@@ -271,6 +273,21 @@ describe('buildAskQuestionCard', () => {
     expect((card.elements[1] as { text: string }).text).toBe('探针并发化 (推荐)')
     expect((card.elements[2] as { text: string }).text).toBe('探针并发化 [Recommended]')
     expect((card.elements[3] as { text: string }).text).toBe('探针并发化 ( 推薦 )')
+    expect((card.elements[4] as { text: string }).text).toBe('「推荐」')
+    expect((card.elements[5] as { text: string }).text).toBe('『推荐』')
+  })
+
+  // Pinning assertion: the bare marker word 不推荐 (no brackets) never matches
+  // the folded standard forms, so it must keep gaining the suffix — future
+  // foldTagForm edits must not start reading the bare word as already tagged.
+  it('a bare marker word like 不推荐 never reads as already tagged', () => {
+    const bare: UserQuestion = {
+      ...singleQuestion(),
+      options: [{ label: '不推荐', description: '', recommended: true }],
+    }
+    const card = buildAskQuestionCard(bare, 0, 1)
+
+    expect((card.elements[1] as { text: string }).text).toBe('不推荐（推荐）')
   })
 
   it('a multi-question ask titles its per-question card with the progress suffix (2/5)', () => {
