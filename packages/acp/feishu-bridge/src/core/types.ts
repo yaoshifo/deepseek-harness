@@ -82,6 +82,10 @@ export interface UserQuestionOption {
   description: string
   /** Presentation flag: multi-select cards render this option pre-checked. */
   recommended?: boolean
+  /** Executing-agent locator (`path:line`); rendered on neither the live nor
+   * the settled followups card — only the dispatched selection message
+   * carries it. */
+  locator?: string
 }
 
 /** A structured question from AskUserQuestion (Go UserQuestion). */

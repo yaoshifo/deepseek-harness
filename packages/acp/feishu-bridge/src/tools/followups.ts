@@ -30,8 +30,12 @@ const DESCRIPTION =
   'Register the closing follow-ups suggestion card for this turn. '
   + 'Call it right after delivering your final reply, when the「发现的问题 / 可优化点」'
   + '(problems / improvement findings) section of that reply is non-empty; skip it when there are no findings. '
-  + 'Pass one option per finding: label = short title, description = `path:line` plus the suggested action '
-  + 'in one sentence, recommended = true on the ones worth handling (recommended options render pre-checked). '
+  + 'Pass one option per finding: label = a short plain-language title from the user\'s '
+  + 'perspective (expand jargon into everyday words). description = plain language only — what '
+  + 'the problem is, what handling it would do, and its cost, for a non-coder making the check '
+  + 'decision (it renders verbatim on the card; no code identifiers or file paths). locator = '
+  + 'the `path:line` for the executing agent (never shown on the card). '
+  + 'recommended = true on the ones worth handling (recommended options render pre-checked). '
   + 'The tool returns immediately with a registration confirmation — end the turn normally and do not wait: '
   + 'the card ships after this turn\'s completion notice, and the user\'s selections arrive as new '
   + '[后续处理] messages, where a checked option is authorization to start that item.'
@@ -58,12 +62,16 @@ export function registerFollowupsTool(ctx: Context, route: (caller: unknown) => 
             label: {
               type: 'string',
               required: true,
-              description: 'Short option title naming the finding.',
+              description: 'Short plain-language option title from the user\'s perspective.',
             },
             description: {
               type: 'string',
               required: true,
-              description: '`path:line` plus the suggested action in one sentence.',
+              description: 'Plain language only: what the problem is, what handling it would do, and its cost — for a non-coder making the check decision. Renders verbatim on the card, so no code identifiers or file paths.',
+            },
+            locator: {
+              type: 'string',
+              description: 'The `path:line` locator for the executing agent. Never rendered on the card; only the dispatched selection message carries it.',
             },
             recommended: {
               type: 'boolean',

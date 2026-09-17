@@ -372,14 +372,23 @@ export function buildFollowupsCard(q: UserQuestion, i18n: AskCardI18n = zhAskCar
 /**
  * Frozen selection marks shared by the settled cards and the dispatched
  * followups selection message: `✅/◻️ **label**` plus the option description.
+ * With {@link includeLocator}, each checked option also carries its locator
+ * (`📍 path:line`) — the dispatch is the executing agent's only locator
+ * source, while both card faces stay plain-language.
  *
  * @param q - The question whose options render.
  * @param indices - 1-based option indices marked checked.
+ * @param includeLocator - Append `📍 locator` lines for checked options
+ * (dispatched selection message only; never the card faces).
  * @returns One mark string per option.
  */
-function settledOptionMarks(q: UserQuestion, indices: number[]): string[] {
-  return q.options.map((opt, i) =>
-    `${indices.includes(i + 1) ? '✅' : '◻️'} **${opt.label}**${opt.description !== '' ? `\n${opt.description}` : ''}`)
+function settledOptionMarks(q: UserQuestion, indices: number[], includeLocator = false): string[] {
+  return q.options.map((opt, i) => {
+    const checked = indices.includes(i + 1)
+    return `${checked ? '✅' : '◻️'} **${opt.label}**`
+      + `${opt.description !== '' ? `\n${opt.description}` : ''}`
+      + `${includeLocator && checked && opt.locator !== undefined && opt.locator !== '' ? `\n📍 ${opt.locator}` : ''}`
+  })
 }
 
 /**
@@ -413,8 +422,10 @@ export function buildFollowupsCardSettled(
 /**
  * Compose the self-contained「[后续处理]」message a followups suggestion-card
  * submission dispatches as: the selection headline, the question, the frozen
- * option marks (labels and descriptions, never raw wire indices), and the
- * in-form note. The agent reads this text as its next prompt.
+ * option marks (labels, descriptions, and the checked options' locators —
+ * never raw wire indices), and the in-form note. The agent reads this text
+ * as its next prompt; the locator lines are its only code-location source,
+ * since neither card face renders them.
  *
  * @param q - The followups question the card was built from.
  * @param indices - 1-based option indices the user checked.
@@ -427,7 +438,7 @@ export function followupsSelectionMessage(
 ): string {
   const lines = [i18n.t(Msg.FollowupsSelection)]
   if (q.question !== '') lines.push(`**${q.question}**`)
-  lines.push(...settledOptionMarks(q, indices))
+  lines.push(...settledOptionMarks(q, indices, true))
   if (note !== '') lines.push(`✍️ ${note}`)
   return lines.join('\n')
 }

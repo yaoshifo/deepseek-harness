@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FOLLOWUPS_ASK_HEADER, followupsSelectionMessage, isFollowupsAsk } from '../../src/engine/ask.ts'
+import { FOLLOWUPS_ASK_HEADER, buildFollowupsCard, buildFollowupsCardSettled, followupsSelectionMessage, isFollowupsAsk } from '../../src/engine/ask.ts'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { createStubAgent, createStubCardPlatform, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.ts'
 import { createControllableAgent, newControllableSession, type ControllableAgentSession } from '../stubs/engine-stubs.ts'
@@ -460,5 +460,41 @@ describe('agent conventions prompt (followups contract)', () => {
     expect(prompt).toContain('正常结束')
     expect(prompt).toContain('不要等待')
     expect(prompt).toContain('[后续处理]')
+  })
+})
+
+describe('followups locator separation (plain-language card, locating dispatch)', () => {
+  const locating = q({
+    options: [
+      { label: '修 A', description: '空指针崩溃，勾选后补上空值检查', locator: 'src/a.ts:1' },
+      { label: '查 B', description: '日志缺失', locator: 'src/b.ts:2' },
+      { label: '暂不处理', description: '' },
+    ],
+  })
+
+  it('the dispatched selection message carries the locator line for the checked option only', () => {
+    const text = followupsSelectionMessage(locating, [1], '')
+    expect(text).toContain('✅ **修 A**')
+    expect(text).toContain('📍 src/a.ts:1')
+    expect(text).toContain('◻️ **查 B**')
+    // The unchecked option keeps its label and description but carries no
+    // locator: the dispatch is an instruction for the checked items only.
+    expect(text).not.toContain('src/b.ts:2')
+  })
+
+  it('options without a locator dispatch without a locator line (legacy registrations)', () => {
+    const text = followupsSelectionMessage(q(), [1], '')
+    expect(text).toContain('✅ **修复 A**')
+    expect(text).not.toContain('📍')
+  })
+
+  it('the live card never renders the locator (the card stays plain-language)', () => {
+    const card: Card = buildFollowupsCard(locating)
+    expect(JSON.stringify(card)).not.toContain('src/a.ts:1')
+  })
+
+  it('the settled card never renders the locator either', () => {
+    const card: Card = buildFollowupsCardSettled(locating, [1], '')
+    expect(JSON.stringify(card)).not.toContain('src/a.ts:1')
   })
 })
