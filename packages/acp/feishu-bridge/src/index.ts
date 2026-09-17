@@ -196,6 +196,18 @@ export interface PlanRenderConfig {
   timeoutSec?: number
 }
 
+/**
+ * Plan-card shadow review for one project: when a session's FIRST plan card
+ * parks, the bridge spawns a sibling group whose session forks that
+ * conversation, pinned to plan mode, and sends it `prompt`.
+ */
+export interface PlanShadowConfig {
+  /** Whether a parked plan card also spawns a shadow review group; default true. */
+  enabled?: boolean
+  /** Review prompt the shadow group receives; '' or absent keeps the shipped wording. */
+  prompt?: string
+}
+
 /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
 export interface UnsolicitedConfig {
   /** Quiet seconds before the reader disarms (default 60; 0 = never). */
@@ -238,6 +250,8 @@ export interface ProjectConfig {
   planRender?: PlanRenderConfig
   /** Plans directory for presented-plan persistence; '' disables; unset resolves to ~/.claude/plans at wiring time. */
   planDir?: string
+  /** Plan-card shadow review: a parked plan card also spawns a review group. */
+  planShadow?: PlanShadowConfig
 
   /** Quick provider commands: /strong → provider name (Go provider_shortcuts). */
   providerShortcuts?: Record<string, string>
@@ -575,6 +589,10 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       timeoutSec: Schema.natural().description('Render fork timeout in seconds (default 600, pre-render cap 360)'),
     }).description('Plan/reply HTML rendering (Go [projects.plan_render], #47/#48)'),
     planDir: Schema.string().description('Directory presented plans are persisted to as .md; empty string disables (default ~/.claude/plans)'),
+    planShadow: Schema.object({
+      enabled: Schema.boolean().description('Spawn a shadow review group for a session\'s first plan card; default true'),
+      prompt: Schema.string().description('Review prompt the shadow group receives; empty keeps the shipped wording'),
+    }).description('Plan-card shadow review groups'),
 
     providerShortcuts: Schema.dict(Schema.string()).description('Quick provider commands: /strong → provider name (Go provider_shortcuts)'),
     resetOnIdleMins: Schema.natural().description('Rotate the chat to a fresh session after N idle minutes; 0 disables'),
@@ -1436,6 +1454,9 @@ export function buildProjectAssembly(
   }
   wirePlanRender(ctx, engine, adapter, project)
   engine.setPlanDir(resolvePlanDir(project.planDir))
+  // Plan-card shadow review: on unless a project turns it off; the prompt
+  // falls back to the wording plan-shadow.ts ships.
+  engine.setPlanShadow(project.planShadow?.enabled ?? true, project.planShadow?.prompt ?? '')
 
   wireSessionMisc(engine, project)
   // M6b: monitor domain (#53) — config block → engine MonitorCore + the

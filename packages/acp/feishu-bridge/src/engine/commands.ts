@@ -1067,6 +1067,12 @@ interface SpawnCommonOpts {
   /** Mode pinned for the child group by --plan/--default ('' = project default). */
   modeArg: string
   readyTitleKey: Parameters<Engine['i18n']['t']>[0]
+  /**
+   * Line carried on the ORIGIN chat's jump notice, explaining a group the
+   * user never asked for (the plan-shadow review); '' keeps the notice
+   * button-only.
+   */
+  parentNotice?: string
 }
 
 /**
@@ -1088,10 +1094,19 @@ function forgetStagedForkSeed(e: Engine, sentinelID: string): void {
  * → worktree) → group creation → per-chat override persistence → child
  * Session metadata → reaction → notify card → first-message injection (Go
  * spawnGroupCommon).
+ *
+ * @param e - The engine owning spawn and session state.
+ * @param p - The platform that creates the group.
+ * @param msg - The triggering chat message (synthetic for programmatic spawns).
+ * @param groupName - The new group's name.
+ * @param firstMsg - The child's injected first message; '' leaves the child idle.
+ * @param opts - Mode/fork/isolation options for the child.
+ * @returns The synthetic message keyed by the spawned chat, or undefined when
+ * the spawn failed (every failure path reports itself in the origin chat).
  */
-async function spawnGroupCommon(
+export async function spawnGroupCommon(
   e: Engine, p: Platform, msg: Message, groupName: string, firstMsg: string, opts: SpawnCommonOpts,
-): Promise<void> {
+): Promise<Message | undefined> {
   const spawner = asGroupSpawner(p)
   if (spawner === undefined) {
     forgetStagedForkSeed(e, opts.forkSentinelID)
@@ -1191,13 +1206,17 @@ async function spawnGroupCommon(
     const jumpURL = e.chatJumpURL(p, extractChannelID(syntheticMsg.sessionKey))
     if (jumpURL !== '') {
       const buttons: CardButton[] = [{ text: e.i18n.t(Msg.SpawnJumpBtn), type: 'primary', value: '', url: jumpURL }]
-      const card = newCard().buttons(...buttons).build()
+      // The notice rides BOTH send paths: the handle path builds the card
+      // here, the fallback rebuilds it from (content, buttons) — a notice
+      // applied to only one of them silently vanishes on the other.
+      const notice = opts.parentNotice ?? ''
       try {
         const upd = asCardSenderWithUpdate(p)
         if (upd !== undefined) {
+          const card = newCard().markdown(notice).buttons(...buttons).build()
           e.registerParentNoticeHandle(syntheticMsg.sessionKey, p, await upd.sendCardWithHandle(msg.replyCtx, card))
         } else {
-          await e.sendAsCardWithButtons(p, msg.replyCtx, '', { title: '', color: '' }, buttons)
+          await e.sendAsCardWithButtons(p, msg.replyCtx, notice, { title: '', color: '' }, buttons)
         }
       } catch (error) {
         console.warn(`spawn: parent notice send failed (${p.name()}): ${String(error)}`)
@@ -1233,6 +1252,7 @@ async function spawnGroupCommon(
     syntheticMsg.isSpawnedGroup = true
     e.receiveMessage(p, syntheticMsg)
   }
+  return syntheticMsg
 }
 
 /** Extra note for topic groups (Go spawnGroupCommon threadFlag branch). */

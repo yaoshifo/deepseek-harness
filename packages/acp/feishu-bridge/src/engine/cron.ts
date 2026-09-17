@@ -33,6 +33,13 @@ import {
 /** How long the scheduler waits for a job run by default (Go defaultCronJobTimeout). */
 export const defaultCronJobTimeoutMs = 30 * 60_000
 
+/**
+ * The synthetic sender id a cron-triggered turn carries. It is not a platform
+ * user, so anything needing a real member (a spawned group's invitee list)
+ * must not treat it as one.
+ */
+export const cronSenderUserID = 'cron'
+
 /** A persisted scheduled task (Go CronJob). On-disk keys stay snake_case. */
 export class CronJob {
   /** Unique job id (8 hex chars from {@link generateCronID}). */

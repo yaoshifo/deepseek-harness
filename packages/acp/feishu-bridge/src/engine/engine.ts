@@ -161,13 +161,14 @@ import { dirname, join as joinPath } from 'node:path'
 import { atomicWriteFileSync } from '../atomicwrite.ts'
 import { createHash } from 'node:crypto'
 import { asCompletionNoticePreference, asCompletionNotifier, asChatPhasePainter, asDeliveryOutcomeClassifier, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asPreviewCleaner, asPreviewDisplacementProber, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
-import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.ts'
+import { cronSenderUserID, truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.ts'
 import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.ts'
 import { renderHelpGroupCard } from './misc-commands.ts'
 import { executeDeleteModeAction, renderDeleteModeCard, renderListCardSafe, renderStatusCard } from './session-card.ts'
 import { runBangShell } from './shell-commands.ts'
 import { renderDirCardSafe } from './dir-card.ts'
 import { executeCardAction } from './cron-commands.ts'
+import { abortPlanShadow, defaultPlanShadowPrompt, invalidateOriginPlan, launchPlanShadow } from './plan-shadow.ts'
 import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from './recall.ts'
 import { renderSubtaskPanelCard } from './subtask-panel.ts'
 import { maybeAutoResetSessionOnIdle } from './session-misc.ts'
@@ -962,7 +963,7 @@ export function jumpButtonsMarkdown(buttons: CardButton[]): CardMarkdownLike & {
 }
 
 /** Session's display name: its own name, the chat's user meta, or the key (Go sessionDisplayName). */
-function sessionDisplayName(s: Session | undefined, sessions: SessionManager, sessionKey: string): string {
+export function sessionDisplayName(s: Session | undefined, sessions: SessionManager, sessionKey: string): string {
   const own = s?.getName().trim()
   if (own !== undefined && own !== '') return own
   const meta = sessions.getUserMeta(sessionKey)
@@ -1171,6 +1172,15 @@ export class Engine {
    * wired, which fails loud at fork time.
    */
   planRenderSkillSource: (() => Promise<string | undefined>) | undefined
+  // ── plan-card shadow review (plan-shadow.ts) ───────────────────────────
+  /**
+   * Whether a parked plan card also spawns a shadow review group. Off by
+   * default at the ENGINE level so unwired engines (every spec) spawn
+   * nothing; deployment wiring sets the project default.
+   */
+  planShadowEnabled: boolean = false
+  /** The review prompt a shadow group receives; defaults to the shipped wording. */
+  planShadowPrompt: string = defaultPlanShadowPrompt
   // ── plan-file persistence (Claude-Code-aligned plan .md records) ────────
   /**
    * Directory presented plans are written to; '' disables writing. Fails
@@ -1398,6 +1408,16 @@ export class Engine {
    */
   setPlanDir(dir: string): void {
     this.planDir = dir
+  }
+
+  /**
+   * Configure the plan-card shadow review (plan-shadow.ts).
+   * @param enabled - Whether a parked plan card also spawns a shadow group.
+   * @param prompt - The review prompt that group receives; '' keeps the default.
+   */
+  setPlanShadow(enabled: boolean, prompt: string): void {
+    this.planShadowEnabled = enabled
+    if (prompt !== '') this.planShadowPrompt = prompt
   }
 
   /**
@@ -5248,7 +5268,7 @@ export class Engine {
       sessionKey,
       platform: platformName,
       messageID: '',
-      userID: 'cron',
+      userID: cronSenderUserID,
       userName: 'cron',
       chatName: '',
       chatType: '',
@@ -5948,6 +5968,13 @@ export class Engine {
       return { outcome: 'cancelled' }
     }
 
+    // The plan card landed and the ask is parked: the plan can now get its
+    // parallel review (plan-shadow.ts). Fire-and-forget — group creation must
+    // not sit between the parked card and the user's approval window.
+    if (request.kind === 'plan-review') {
+      launchPlanShadow(this, p, { sessionKey, replyCtx, plan: planContent })
+    }
+
     // Wait for the user's decision, a session stop, or an abort (Go select
     // on pending.Resolved / stopCh).
     const outcome = await Promise.race([
@@ -5978,6 +6005,13 @@ export class Engine {
     if (request.kind === 'plan-review') {
       const approved = decided.outcome === 'allowed-once' || decided.outcome === 'allowed-always'
       await this.applyChatPhase(p, sessionKey, approved ? 'approved' : 'discussing')
+      if (approved) {
+        // Either side settles the other, and each call self-guards: a session
+        // with a shadow voids it, while a session that IS the shadow voids
+        // the origin's parked card. A session is never both.
+        abortPlanShadow(this, p, { sessionKey, replyCtx })
+        invalidateOriginPlan(this, p, { sessionKey, replyCtx })
+      }
     } else {
       await this.applyChatPhase(p, sessionKey, this.chatBasePhase(p, sessionKey))
     }

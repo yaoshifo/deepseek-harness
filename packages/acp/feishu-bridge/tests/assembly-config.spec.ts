@@ -17,6 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Config, buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.ts'
 import type { QuestionRouting } from '../src/agent-dsh/adapter.ts'
 import type { Engine } from '../src/engine/engine.ts'
+import { defaultPlanShadowPrompt } from '../src/engine/plan-shadow.ts'
 import { HintUsage } from '../src/engine/hint-usage.ts'
 import { WorktreeMode } from '../src/engine/worktree.ts'
 
@@ -452,6 +453,19 @@ describe('buildProjectAssembly config wiring', () => {
     expect(engine.spawnMemWarnPct).toBe(70)
     // Explicit 0 disables the tier.
     expect(engine.spawnMemBlockPct).toBe(0)
+  })
+
+  it('wires the per-project plan-card shadow review (default on; prompt override)', () => {
+    // A project that configures nothing still gets the shadow review, with
+    // the wording the module ships.
+    expect(assemble(baseConfig()).engine.planShadowEnabled).toBe(true)
+    expect(assemble(baseConfig()).engine.planShadowPrompt).toBe(defaultPlanShadowPrompt)
+    const { engine } = assemble(baseConfig(), { ...project(), planShadow: { enabled: false, prompt: 'rethink it' } })
+    expect(engine.planShadowEnabled).toBe(false)
+    expect(engine.planShadowPrompt).toBe('rethink it')
+    // An empty prompt keeps the shipped wording (explicit opt-out of the override).
+    expect(assemble(baseConfig(), { ...project(), planShadow: { enabled: true, prompt: '' } }).engine.planShadowPrompt)
+      .toBe(defaultPlanShadowPrompt)
   })
 
   it('wires the per-project admin allowlist (Go SetAdminFrom)', () => {

@@ -463,6 +463,11 @@ export const ALL_MSG_KEYS = [
   'status_build_disk_newer',
   'status_build_head_moved',
   'ask_recommended_suffix',
+  'plan_shadow_name_suffix',
+  'plan_shadow_origin_notice',
+  'plan_shadow_child_notice',
+  'plan_shadow_aborted',
+  'plan_shadow_origin_superseded',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -900,4 +905,9 @@ export const Msg = {
   StatusBuildDiskNewer: 'status_build_disk_newer',
   StatusBuildHeadMoved: 'status_build_head_moved',
   AskRecommendedSuffix: 'ask_recommended_suffix',
+  PlanShadowNameSuffix: 'plan_shadow_name_suffix',
+  PlanShadowOriginNotice: 'plan_shadow_origin_notice',
+  PlanShadowChildNotice: 'plan_shadow_child_notice',
+  PlanShadowAborted: 'plan_shadow_aborted',
+  PlanShadowOriginSuperseded: 'plan_shadow_origin_superseded',
 } as const
