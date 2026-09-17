@@ -179,7 +179,7 @@ describe('sendAskQuestionPrompt', () => {
     const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
     const rows = card.elements.filter(el => el['kind'] === 'listItem') as Array<{ text: string; btnType: string }>
     expect(rows.map(row => [row.text, row.btnType])).toEqual([
-      ['PostgreSQL', 'primary'],
+      ['PostgreSQL (recommended)', 'primary'],
       ['SQLite', 'default'],
     ])
   })
