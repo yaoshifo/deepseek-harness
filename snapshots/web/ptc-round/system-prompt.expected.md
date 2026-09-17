@@ -52,23 +52,25 @@ interface ToolArgsMap {
   /** Ask the user a concise question when you need confirmation, a choice, or missing information before proceeding. Send one or more questions, each with a stable id that will be echoed in the answer. Every option must carry its required `label` (the short user-facing title); a one-sentence `description` is optional context. */
   ask_user_question: {
     /** Questions to ask the user before continuing. */
-    questions: ({
+    questions: {
       /** Stable id for this question; echoed in the answer. */
       id: string;
       /** The specific question to ask the user. */
       question: string;
       /** Optional short heading for the question, such as "Confirm" or "Choose Mode". */
       header?: string;
-      /** Optional choices to show the user. If you recommend one, put it first and append "(Recommended)" to that label. */
-      options?: ({
+      /** Optional choices to show the user. Order options by recommendation, most recommended first, and set recommended: true on the options you recommend. */
+      options?: {
         /** Short user-facing option label. */
         label: string;
         /** One sentence explaining the tradeoff or impact. */
         description?: string;
-      } & Record<string, JsonValue>)[];
-      /** Whether the user may select more than one option. Defaults to false. */
+        /** Marks a recommended option; the UI tags it — do not write the marker into the label. */
+        recommended?: boolean;
+      }[];
+      /** Whether the user may select more than one option. Defaults to false — if the question text tells the user multiple selections are allowed (e.g. 「可多选」), set true, otherwise the card renders single-select. */
       multi_select?: boolean;
-    } & Record<string, JsonValue>)[];
+    }[];
   } & Record<string, JsonValue>;
   /** Execute a bash command (`bash -c`) and return its stdout/stderr. Each call runs in a fresh shell: no state (cwd, variables, functions) persists between calls — pass `workdir` instead of using `cd`. Non-zero exits are reported as `[exit code: N]`. Current harness environment facts are exposed through managed `$DSH_*` variables; inspect them when needed. Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]` — a policy denial, not a bug in the command; do not retry another way. Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. Set `run_in_background: true` for long-running commands: the call returns a job id immediately; read its output with `job_output` and stop it with `job_kill`. Attempting a command the sandbox may deny is safe and expected: run it and read the marker rather than assuming the denial. When a command is denied and a wider mode would let it succeed, escalate immediately in the same turn — the one sanctioned exception to a denial: retry the exact same command once with `sandbox_permissions` (the narrowest wider mode that suffices) plus a one-sentence `justification`. Do not detour through chat to ask permission first — the approval prompt raised by that retry is how the user consents. If the session states approval prompts are disabled, there is no exception: a denial is final — do not set `sandbox_permissions`. Never escalate speculatively: ground the request in a real denial — normally the one this command just hit; escalating up front is fine only when this session already denied the same access. A rejected escalation is final for that command — stop and explain, never work around it — but it does not forbid attempting or escalating other commands later. */
   bash: {
@@ -109,10 +111,12 @@ interface ToolArgsMap {
     /** Required with sandbox_permissions: one sentence for the user explaining why this exact file operation needs the wider access. */
     justification?: string;
   } & Record<string, JsonValue>;
-  /** Use only in plan mode. Present your plan for the user's review and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it — `plan` carries the plain-language layer, `details` the implementation-detail layer. The user may approve (carry out the plan from your next step) or keep planning — their feedback comes back in the tool result. */
+  /** Use only in plan mode. Present your plan for the user's review and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it — `plan` carries the plain-language layer, `details` the implementation-detail layer. The user may approve (carry out the plan from your next step) or keep planning — their feedback comes back in the tool result. An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default. An inlined details section is rejected unless its content rides in `details`. */
   exit_plan_mode: {
     /** The plan's plain-language layer, as markdown, starting with a # heading that names it. */
     plan: string;
+    /** Implementation-detail annex appended after the plan; capable UIs present it collapsed by default. Put implementation detail here instead of inlining a details section into the plan; omit only when the plan carries no implementation detail. */
+    details?: string;
   } & Record<string, JsonValue>;
   /** Read the current same-session goal, including its exact id/revision, objective, phase, completed continuation rounds, round limit, blocker reason when present, and whether another continuation is armed. Call this before updating a goal. */
   get_goal: Record<string, JsonValue>;
@@ -195,7 +199,7 @@ interface ToolArgsMap {
     /** The exact skill name from the available skills list. */
     name: string;
   } & Record<string, JsonValue>;
-  /** Delegate a self-contained task to a subagent (a separate agent that works in its own context) to offload focused, independent work — research, a scoped implementation, an analysis — so it does not consume this conversation's context. The subagent returns its result, not its intermediate steps. Give it a complete, standalone prompt: it does not see this conversation. This tool runs in the background by default, immediately returns a durable subagent id, and keeps the child conversation available for later turns. When that run settles, the runtime sends the parent a notice containing its outcome and any final assistant message; `send_message` steers the child's nearest step while it is running and starts a turn while it is idle. Set `run_in_background: false` only when your next action depends on receiving the result. */
+  /** Delegate a self-contained task to a subagent (a separate agent that works in its own context) to offload focused, independent work — research, a scoped implementation, an analysis — so it does not consume this conversation's context. The subagent returns its result, not its intermediate steps. Give it a complete, standalone prompt: it does not see this conversation. The child shares this session's working directory and its instruction files; a delegation cannot redirect it to another directory. This tool runs in the background by default, immediately returns a durable subagent id, and keeps the child conversation available for later turns. When that run settles, the runtime sends the parent a notice containing its outcome and any final assistant message; `send_message` steers the child's nearest step while it is running and starts a turn while it is idle. Set `run_in_background: false` only when your next action depends on receiving the result. */
   subagent: {
     /** A short (3-5 word) description of the delegated task, for display. */
     description: string;
@@ -204,7 +208,7 @@ interface ToolArgsMap {
     /** Whether to run in the background and return a durable subagent id immediately. Defaults to true. Set false to wait for the result when your next action depends on it. */
     run_in_background?: boolean;
   } & Record<string, JsonValue>;
-  /** Delegate a task to a subagent that inherits this conversation: a child agent seeded with all completed turns so far (it does not see the current in-flight turn). Use this when the subtask builds on this conversation's context — a follow-up analysis, a review, a continuation — without consuming this conversation's context for the work itself. You receive its result, not its intermediate steps. This tool runs in the background by default, immediately returns a durable subagent id, and keeps the child conversation available for later turns. When that run settles, the runtime sends the parent a notice containing its outcome and any final assistant message; `send_message` steers the child's nearest step while it is running and starts a turn while it is idle. Set `run_in_background: false` only when your next action depends on receiving the result. */
+  /** Delegate a task to a subagent that inherits this conversation: a child agent seeded with all completed turns so far (it does not see the current in-flight turn). Use this when the subtask builds on this conversation's context — a follow-up analysis, a review, a continuation — without consuming this conversation's context for the work itself. You receive its result, not its intermediate steps. The child shares this session's working directory and its instruction files; a delegation cannot redirect it to another directory. This tool runs in the background by default, immediately returns a durable subagent id, and keeps the child conversation available for later turns. When that run settles, the runtime sends the parent a notice containing its outcome and any final assistant message; `send_message` steers the child's nearest step while it is running and starts a turn while it is idle. Set `run_in_background: false` only when your next action depends on receiving the result. */
   subagent_fork: {
     /** A short (3-5 word) description of the delegated task, for display. */
     description: string;
@@ -221,6 +225,8 @@ interface ToolArgsMap {
       content: string;
       /** pending (not started) | in_progress (now) | completed (done). */
       status: "pending" | "in_progress" | "completed";
+      /** Optional present-progressive label shown while the task runs (e.g. "Planning the work"). */
+      activeForm?: string;
     })[];
   } & Record<string, JsonValue>;
   /** Update the exact current goal revision. edit, pause, and resume require a direct top-level human request. During an automatic continuation of the current goal, complete and blocked are also allowed. blocked is rejected before the configured minimum round count; the model remains responsible for judging that the same condition persisted across those rounds and must explain it in blocked_reason. */
@@ -474,6 +480,7 @@ interface ToolOutputMap {
     todos: ({
       content: string;
       status: "pending" | "in_progress" | "completed";
+      activeForm?: string;
     })[];
     counts: {
       pending: number;
