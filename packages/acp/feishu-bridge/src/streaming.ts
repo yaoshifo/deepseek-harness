@@ -515,6 +515,15 @@ export function escapeMarkdownChars(s: string): string {
 /** Max visible progress entries (circular buffer slots). */
 export const maxProgressLines = 3
 
+/**
+ * Header states whose card is settled — the turn's terminal states plus the
+ * resolved parked-ask states (mirrors the settled arms of
+ * progressTitleAndColor). Their title clock freezes at first settlement.
+ */
+const settledHeaderStates: ReadonlySet<string> = new Set([
+  'completed', 'truncated', 'failed', 'approved', 'rejected', 'answered', 'cancelled',
+])
+
 interface TimerHandle {
   /** Go timer.Stop(): true when the timer had not fired yet (callback will never run). */
   stop(): boolean
@@ -651,6 +660,15 @@ export class StreamPreview {
    * @internal White-box: ported same-package tests read/write this directly.
    */
   stoppedCardRendered: boolean = false
+  /**
+   * Title clock frozen at this preview's first settled-state render. Later
+   * renders of a settled card (background-hint cleanup PATCH, displacement
+   * reissue) keep the settlement time — re-stamping the title would read as
+   * a fresh completion minutes after the turn actually ended (2026-09-17
+   * oc_f85284). Per-preview instance state, never persisted; '' before the
+   * first settled render.
+   */
+  private settledTs = ''
 
   /**
    * Delivery outcome of this preview's answer-carrying surfaces: set by
@@ -817,7 +835,9 @@ export class StreamPreview {
 
   /**
    * Structured status for the current progress display: terminal states win,
-   * streaming thinking shows 思考中, otherwise running. Must hold the lock.
+   * streaming thinking shows 思考中, otherwise running. Settled states freeze
+   * the title clock at first settlement ({@link StreamPreview.settledTs}).
+   * Must hold the lock.
    *
    * @internal White-box: ported same-package tests call this directly. Caller must hold the lock.
    * @returns The status the platform layer renders the card header from.
@@ -832,9 +852,14 @@ export class StreamPreview {
           : this.thinkingText !== ''
             ? 'thinking'
             : 'running'
+    let ts = hms()
+    if (settledHeaderStates.has(state)) {
+      if (this.settledTs === '') this.settledTs = ts
+      ts = this.settledTs
+    }
     return {
       state,
-      ts: hms(),
+      ts,
       toolCallSeq: this.toolCallSeq,
       ...(this.pendingSubtasksCount > 0 ? { pendingSubtasks: this.pendingSubtasksCount } : {}),
     }

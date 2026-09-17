@@ -2046,6 +2046,84 @@ describe('whole-card flush dedup', () => {
   })
 })
 
+describe('settled header timestamp freeze', () => {
+  // 2026-09-17 oc_f85284: a card completed at 14:37:59 was re-rendered by the
+  // background-hint cleanup 31 minutes later, and the title「执行完成 ·
+  // 15:09:08」read as a completion notice arriving 31 minutes late. The
+  // header clock must freeze at the preview's first settled render.
+  const T0 = Date.UTC(2026, 8, 17, 14, 37, 59)
+  const pinClock = (ms: number): void => {
+    vi.useFakeTimers({ toFake: ['Date'], now: ms })
+  }
+  /** No flush throttle so the second render PATCHes inline, not via a timer. */
+  const noThrottle = (): StreamPreviewCfg => cfg({ progressFlushIntervalMs: 0 })
+
+  it('a completed card re-rendered later keeps its settlement timestamp', async () => {
+    pinClock(T0)
+    try {
+      const mp = createMockUpdaterPlatform()
+      const sp = newStreamPreview(noThrottle(), mp, 'ctx', undefined, undefined)
+      await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**14:37:50**', body: 'ls', lang: 'bash', toolID: 't1' }))
+      await sp.markCompleted()
+      const settled = statusOf(mp.contents[mp.contents.length - 1] as ProgressContent)
+      expect(settled?.state).toBe('completed')
+      // 31 minutes later the background-hint cleanup re-renders the card.
+      vi.setSystemTime(T0 + 31 * 60_000)
+      const renders = mp.contents.length
+      await sp.setBackgroundHint('💡 后台任务已结束')
+      expect(mp.contents.length, 'the settled card must re-render for the hint').toBe(renders + 1)
+      const re = statusOf(mp.contents[mp.contents.length - 1] as ProgressContent)
+      expect(re?.ts, 'the title clock must stay at settlement').toBe(settled?.ts)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('non-settled renders keep advancing the header clock', async () => {
+    pinClock(T0)
+    try {
+      const mp = createMockUpdaterPlatform()
+      const sp = newStreamPreview(noThrottle(), mp, 'ctx', undefined, undefined)
+      await sp.appendThinking('thinking harder about the problem')
+      const first = statusOf(mp.contents[mp.contents.length - 1] as ProgressContent)
+      expect(first?.state).toBe('thinking')
+      vi.setSystemTime(T0 + 60_000)
+      const renders = mp.contents.length
+      await sp.setBackgroundHint('💡 1 个后台任务')
+      expect(mp.contents.length).toBe(renders + 1)
+      const second = statusOf(mp.contents[mp.contents.length - 1] as ProgressContent)
+      expect(second?.ts, 'a live card keeps moving the title clock').not.toBe(first?.ts)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a settled parked card re-issued later keeps its settlement timestamp', async () => {
+    pinClock(T0)
+    try {
+      const mp = createMockUpdaterPlatform()
+      const sp = newStreamPreview(noThrottle(), mp, 'ctx', undefined, undefined)
+      await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**14:37:50**', body: 'ls', lang: 'bash', toolID: 't1' }))
+      const handle = await sp.completeAndDetach(true)
+      // The ask resolves a minute later: that render freezes the clock.
+      vi.setSystemTime(T0 + 60_000)
+      await sp.settleParkedCard(handle, 'approved')
+      const settled = statusOf(mp.contents[mp.contents.length - 1] as ProgressContent)
+      expect(settled?.state).toBe('approved')
+      // Another minute on, a hint flush re-issues the detached card as a new
+      // message (the displacement-heal reissue path).
+      vi.setSystemTime(T0 + 120_000)
+      const renders = mp.contents.length
+      await sp.setBackgroundHint('💡 后台任务已结束')
+      expect(mp.contents.length, 'the settled card must re-render for the hint').toBe(renders + 1)
+      const re = statusOf(mp.contents[mp.contents.length - 1] as ProgressContent)
+      expect(re?.ts, 'the title clock must stay at settlement').toBe(settled?.ts)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('reissue cooldown window', () => {
   const healCfg = (): StreamPreviewCfg =>
     cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000, progressFlushIntervalMs: 0 })
