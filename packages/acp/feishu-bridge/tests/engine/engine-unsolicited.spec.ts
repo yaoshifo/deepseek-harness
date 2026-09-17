@@ -116,8 +116,9 @@ describe('unsolicited reader background grace', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('keeps the reader armed while a background task is pending, then resets the count and clears the card hint at the grace cap', async () => {
-    const { e, state } = armed()
+  it('keeps the reader armed while a completion notice is in flight, then resets the count and clears the card hint at the grace cap', async () => {
+    const { e, state, agentSession } = armed()
+    agentSession.settledUnreportedBackgroundJobs = () => 2
     const hints: string[] = []
     state.preview = {
       canPreview: () => true,
@@ -161,6 +162,34 @@ describe('unsolicited reader background grace', () => {
     expect(state.backgroundTasksPending).toBe(1)
     expect(state.bgWaitStartedAt).not.toBe(0)
     expect(hints).toEqual([])
+  })
+
+  it('reconciles a leaked count at the first idle tick when every job settled and was collected in-turn', async () => {
+    // 2026-09-17 oc_f85284: bash run_in_background + job_output(wait) inside
+    // one turn — tool-jobs suppresses the completion notice (the wait already
+    // delivered the terminal state), no decrement path ever fires, and the
+    // leaked count held the settled card for the whole 30-minute grace
+    // before the reissued card showed a fresh timestamp.
+    const { e, state, agentSession } = armed()
+    agentSession.pendingBackgroundJobs = () => 0
+    agentSession.settledUnreportedBackgroundJobs = () => 0
+    const hints: string[] = []
+    state.preview = {
+      canPreview: () => true,
+      setBackgroundHint: (hint: string) => { hints.push(hint) },
+    } as never
+    e.setDisplayConfig({ toolProgress: true })
+    state.backgroundTasksPending = 1
+    e.startUnsolicitedReader(e.sessions.getOrCreateActive(KEY), e.sessions, KEY)
+
+    // First idle fire (~60s): the registry knows every counted job settled
+    // and was already collected — the count is a leak, cleared now, not at
+    // the 30-minute cap.
+    await vi.advanceTimersByTimeAsync(61_000)
+    expect(state.unsolicitedReader).toBeUndefined()
+    expect(state.backgroundTasksPending).toBe(0)
+    expect(state.bgWaitStartedAt).toBe(0)
+    expect(hints).toEqual([''])
   })
 })
 

@@ -207,6 +207,7 @@ describe('stageAttachments', () => {
           alive: () => true,
           close: async () => {},
           pendingBackgroundJobs: () => 0,
+          settledUnreportedBackgroundJobs: () => 0,
         }
         return session
       },

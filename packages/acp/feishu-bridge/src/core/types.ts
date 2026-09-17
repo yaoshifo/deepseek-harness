@@ -525,6 +525,19 @@ export interface AgentSession {
    * @returns number of this session's running/stopping jobs.
    */
   pendingBackgroundJobs(): number
+  /**
+   * Count this session's settled jobs whose completion notice has not
+   * reached the model (`reported` still false): the notice is in flight and
+   * the count must keep waiting for it. A settled job already collected
+   * in-turn (a `job_output` wait/read, a kill, or a teardown cancel marked
+   * it reported — tool-jobs then suppresses the notice) never delivers one,
+   * so a pending count whose jobs are all settled-and-reported is a leak
+   * the reader reconciles away at the next idle tick instead of holding the
+   * settled card for the whole grace (2026-09-17 oc_f85284: the reissued
+   * completion card showed the grace-expiry timestamp as its own).
+   * @returns number of this session's settled, unreported jobs.
+   */
+  settledUnreportedBackgroundJobs(): number
 }
 
 /**

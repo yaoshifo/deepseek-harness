@@ -161,11 +161,11 @@ export interface DshContextLike {
 
 /**
  * Structural slice of the `jobs` registry the background-count probe reads:
- * `list` already scopes to the caller's own and unowned jobs, so the owner
- * and status filters below stay the probe's own responsibility.
+ * `list` already scopes to the caller's own and unowned jobs, so the owner,
+ * status, and reported filters below stay the probe's own responsibility.
  */
 interface DshJobsRegistryLike {
-  list(caller?: unknown): Array<{ ownerSession?: unknown; status?: unknown }>
+  list(caller?: unknown): Array<{ ownerSession?: unknown; status?: unknown; reported?: unknown }>
 }
 
 /**
@@ -2590,6 +2590,28 @@ export class DshAgentSession implements AgentSession {
         && (snapshot.status === 'running' || snapshot.status === 'stopping')) live++
     }
     return live
+  }
+
+  /**
+   * In-flight-notice probe over the same registry cut: counts this session's
+   * own settled jobs still marked unreported — their completion notices have
+   * not reached the model yet, so a pending background count must keep
+   * waiting for them. A job collected in-turn (job_output wait/read, a kill,
+   * a teardown cancel) settles reported, and tool-jobs then suppresses its
+   * notice: a count whose jobs are all settled-and-reported is a leak. 0
+   * when the registry is absent.
+   */
+  settledUnreportedBackgroundJobs(): number {
+    const jobs = this.ctx?.get('jobs') as DshJobsRegistryLike | undefined
+    if (jobs === undefined) return 0
+    const sid = this.currentSessionID()
+    let inflight = 0
+    for (const snapshot of jobs.list(this.handle.agent)) {
+      if (String(snapshot.ownerSession ?? '') === sid
+        && (snapshot.status === 'completed' || snapshot.status === 'killed' || snapshot.status === 'failed')
+        && snapshot.reported !== true) inflight++
+    }
+    return inflight
   }
 
   /**

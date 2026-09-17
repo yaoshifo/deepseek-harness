@@ -43,6 +43,7 @@ export function createStubAgentSession(): AgentSession {
     alive: () => true,
     close: async () => {},
     pendingBackgroundJobs: () => 0,
+    settledUnreportedBackgroundJobs: () => 0,
   }
 }
 
@@ -83,6 +84,7 @@ export function newControllableSession(id: string): ControllableAgentSession {
     currentSessionID: () => s.sessionID,
     alive: () => s.aliveFlag,
     pendingBackgroundJobs: () => 0,
+    settledUnreportedBackgroundJobs: () => 0,
     close: async () => {
       if (!s.aliveFlag) return
       s.aliveFlag = false

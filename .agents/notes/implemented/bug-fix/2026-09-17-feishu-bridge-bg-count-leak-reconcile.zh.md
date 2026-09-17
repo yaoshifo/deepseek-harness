@@ -1,0 +1,46 @@
+# Agent Note: 每个空闲节拍对账泄漏的后台任务计数
+
+Status: implemented
+
+[English](2026-09-17-feishu-bridge-bg-count-leak-reconcile.md) | 中文
+
+## 问题
+
+活体证据（2026-09-17，oc_f85284）：会话 turn 30 于 14:37:59 完成，但群里 15:09 才出现绿色「执行完成 · 15:09:08 · 8」卡——被读成迟到 31 分钟的完成通知。同群 13:58 已发生过一次（3 pending）。链条：
+
+1. turn 30 里一次 `bash run_in_background` 调用把 `backgroundTasksPending` 加到 1。
+2. agent 在**同一回合内**用 `job_output(wait: true)` 领取了任务；tool-jobs 把这类 job 标记 `reported` 并抑制其完成通知——wait 已经把终态交给模型（tool-jobs 自己的测试钉死了这一点："suppresses the notice when a wait returned the terminal state"）。
+3. bridge 的计数只在通知到达时递减（引擎唤醒回合结算，或 `bg_task_notice` 拼接事件）。通知被抑制后两条路都不触发：计数泄漏。
+4. 泄漏计数把已定稿卡压满 30 分钟后台宽限。宽限到点，放弃路径的善后——49f177d17c 的注册表探针正确判定无活 job——清零计数并清卡片提示；该 PATCH 触发位移自愈重发，而重发的标题盖的是渲染时刻（15:09:08）而非定稿时刻，「迟到通知」的假象就此完成。
+
+2026-09-16 的修复按设计工作——它的探针能区分慢任务与死计数——但它只管宽限**到点时**发生什么；对一个从来没有活 job 可等的计数无能为力。
+
+## 决策
+
+两个独立修复：
+
+- **每个 idle tick 对账**（`engine.ts`，unsolicited reader 的 idle 分支）：`backgroundTasksPending > 0` 时，任何时钟决策前先问注册表。三态：活 job（`pendingBackgroundJobs()`，running/stopping）继续等（49f177d17c 语义，不变）；已结算未回报的 job（`settledUnreportedBackgroundJobs()`，同一注册表切面上的新探针：终态 + `reported === false`）意味着通知在途——现有宽限计时继续为它们等；活 == 0 且在途 == 0 意味着被计数的 job 全部已结算**且**已被同回合领取——泄漏，本节拍即清（善后与耗尽路径相同：清零计数、清卡片提示），日志行独立措辞（"reconciled away" 与 "grace exhausted" 区分）。
+- **冻结终态标题时钟**（`streaming.ts`）：首次终态渲染（completed/truncated/failed 加已结算的挂起提问态）把标题时间戳定格在定稿时刻；后续渲染——提示清理 PATCH、位移自愈重发——复用定格值。非终态时钟照常前进。
+
+为什么不改 tool-jobs：wait/read 交付终态后抑制通知是有意设计（不能对模型讲两遍）；计数归 bridge 所有，就该由 bridge 对账。
+
+## 考虑过的替代方案
+
+- **在 job_output 工具结果上递减。** 引擎看到的是投影后的结果文本而非结构化 job 状态；从文本解析 "[status: completed]" 很脆，也无法把 job id 映射回被计数的调用。否。
+- **调小宽限。** 治标；任何更小的上限照样延迟卡片，还可能吞掉真正在途的通知。否。
+- **改 tool-jobs 的抑制语义。** 为一个正确的设计做跨包行为变更；注册表探针已经能看到 bridge 需要的一切。否。
+
+## 后果
+
+- 「后台启动 + 同回合领取」模式现在一个 idle tick（约 60 秒）内放行定稿卡，而不是 30 分钟。
+- 重发或重新 PATCH 的终态卡显示真实定稿时刻；迟到的卡不能再冒充刚发生的完成。
+- 慢任务与在途通知保留全部现有保护（2026-09-16 oc_3c16b 语义不变）。
+- 代价：计数挂起期间每个 idle tick 一次注册表 `list`（内存过滤）。
+- 漂移警报：两个探针锚定 `JobSnapshot.ownerSession`/`status`/`reported`；jobs 包改动任一字段形状都会让 adapter-projection 的过滤用例大声失败。
+- 旧的「盲等宽限」测试重定向到在途通知语义（无 job 的 stub 默认值在对账语义下读作泄漏）；对账场景有独立测试。
+
+## 测试
+
+- `tests/engine/engine-unsolicited.spec.ts`：泄漏计数在首个 idle tick 对账清零；重定向后的在途通知宽限边界；活 job 宽限测试不变。
+- `tests/agent-dsh/adapter-projection.spec.ts`：`settledUnreportedBackgroundJobs` 的 owner/status/reported 过滤；注册表缺席 → 0。
+- `tests/streaming.spec.ts`：终态标题时间戳冻结——completed 卡后渲染保持定稿时刻、已结算挂起卡重发保持定稿时刻、非终态渲染时钟照常前进。

@@ -2855,23 +2855,45 @@ export class Engine {
           // keep the reader alive up to the background grace so the completion
           // is consumed, then give up on a task that never completes.
           if (state.backgroundTasksPending > 0 && this.unsolicitedBackgroundGrace > 0) {
-            if (state.bgWaitStartedAt === 0) state.bgWaitStartedAt = Date.now()
-            if (Date.now() - state.bgWaitStartedAt < this.unsolicitedBackgroundGrace) continue
-            // The cap separates slow from hung by asking the registry, not
-            // the clock: a job still running or stopping keeps the reader
-            // armed so its completion notice stays deliverable — the notice
-            // of a reaped owner is discarded with the owner (2026-09-16
-            // oc_3c16b: a 39-minute build outlived the 30-minute cap).
-            if ((state.agentSession?.pendingBackgroundJobs() ?? 0) > 0) continue
-            console.info(`engine: unsolicited reader background-task grace exhausted (${interactiveKey}: ${state.backgroundTasksPending} pending)`)
-            state.backgroundTasksPending = 0
-            state.bgWaitStartedAt = 0
-            // The card keeps rendering the 💡 N hint until it is cleared
-            // here; the count alone does not touch it (2026-09-16 oc_3c16b:
-            // the settled card froze on 💡 1 for 40+ minutes).
-            const sp = state.preview
-            if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
-              await sp.setBackgroundHint('')
+            // Reconcile against the registry before any clock decision: a
+            // count whose jobs all settled AND were already collected
+            // in-turn is a leak — tool-jobs suppressed their notices (the
+            // job_output wait/read already delivered the terminal state), so
+            // no decrement path will ever fire. Clear it at this idle tick
+            // instead of holding the settled card for the whole grace
+            // (2026-09-17 oc_f85284: the reissued completion card showed the
+            // grace-expiry timestamp as its own).
+            const live = state.agentSession?.pendingBackgroundJobs() ?? 0
+            const inflight = state.agentSession?.settledUnreportedBackgroundJobs() ?? 0
+            if (live === 0 && inflight === 0) {
+              console.info(`engine: unsolicited reader background count reconciled away (${interactiveKey}: ${state.backgroundTasksPending} pending, every job settled and collected)`)
+              state.backgroundTasksPending = 0
+              state.bgWaitStartedAt = 0
+              // Same card-hint cleanup as the grace-exhausted give-up below.
+              const sp = state.preview
+              if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
+                await sp.setBackgroundHint('')
+              }
+            } else {
+              // A live job or an in-flight notice still owes a decrement.
+              if (state.bgWaitStartedAt === 0) state.bgWaitStartedAt = Date.now()
+              if (Date.now() - state.bgWaitStartedAt < this.unsolicitedBackgroundGrace) continue
+              // The cap separates slow from hung by asking the registry, not
+              // the clock: a job still running or stopping keeps the reader
+              // armed so its completion notice stays deliverable — the notice
+              // of a reaped owner is discarded with the owner (2026-09-16
+              // oc_3c16b: a 39-minute build outlived the 30-minute cap).
+              if (live > 0) continue
+              console.info(`engine: unsolicited reader background-task grace exhausted (${interactiveKey}: ${state.backgroundTasksPending} pending)`)
+              state.backgroundTasksPending = 0
+              state.bgWaitStartedAt = 0
+              // The card keeps rendering the 💡 N hint until it is cleared
+              // here; the count alone does not touch it (2026-09-16 oc_3c16b:
+              // the settled card froze on 💡 1 for 40+ minutes).
+              const sp = state.preview
+              if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
+                await sp.setBackgroundHint('')
+              }
             }
           }
           // Exit and mark resync: any event buffered after this point is
