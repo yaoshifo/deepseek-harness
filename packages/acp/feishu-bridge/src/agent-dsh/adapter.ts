@@ -2607,7 +2607,7 @@ export class DshAgentSession implements AgentSession {
     const sid = this.currentSessionID()
     let inflight = 0
     for (const snapshot of jobs.list(this.handle.agent)) {
-      if (String(snapshot.ownerSession ?? '') === sid
+      if (typeof snapshot.ownerSession === 'string' && snapshot.ownerSession === sid
         && (snapshot.status === 'completed' || snapshot.status === 'killed' || snapshot.status === 'failed')
         && snapshot.reported !== true) inflight++
     }
