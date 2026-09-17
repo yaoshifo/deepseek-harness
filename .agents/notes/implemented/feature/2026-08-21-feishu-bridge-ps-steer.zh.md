@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-`AgentSession` 新增 `steer(prompt: string): void`；`dshAgentSession` 实现为刷新 `lastActivityAt` 后以纯文本 user 消息调用 `handle.agent.steer`。dsh core 的 `Agent.steer` 把消息追加进 agent 的 next-step inbox 并唤醒驱动器，驱动器在步骤之间领取 inbox，文字由此加入同一 turn 的下一次 LLM 请求。`cmdPs` 收为三个同步分支：空参 → 用法回复；idle → 剥前缀穿透为普通消息；其余 → `steer` 加 Done reaction。
+`AgentSession` 新增 `steer(prompt: string)`（2026-09-17 起返回铸出的 steer 消息 id——见[三态表情 note](2026-09-17-feishu-bridge-ps-three-state-reaction.zh.md)）；`dshAgentSession` 实现为刷新 `lastActivityAt` 后以纯文本 user 消息调用 `handle.agent.steer`。dsh core 的 `Agent.steer` 把消息追加进 agent 的 next-step inbox 并唤醒驱动器，驱动器在步骤之间领取 inbox，文字由此加入同一 turn 的下一次 LLM 请求。`cmdPs` 收为三个同步分支：空参 → 用法回复；idle → 剥前缀穿透为普通消息；其余 → `steer` 加 pickup 表情（当时为单发 Done reaction；2026-09-17 起改为 Get → DONE → 停止表情三态，[取代 note](2026-09-17-feishu-bridge-ps-three-state-reaction.zh.md)）。
 
 `pending` 分支与 async send 链删除。进程内 inbox 没有 stdin 吞写问题：turn 等待权限时 steer 进去的文字，在审批落地后的下一个 pre-step 被领取——同轮送达，Go 只能靠排队近似达到。`ps_send_failed` i18n 键随删：steer 同步、没有失败路径。steer 恰在 turn 关闭时到达则留在 next-step inbox、由下一 turn 边界领取——送达降级为下一轮，不会丢。steer 文字与已排队 followup 并存：前者在当前 turn 的步骤间领取，后者在下一 turn 边界领取。
 
@@ -28,7 +28,7 @@ mid-turn `/ps` 文字在当前 turn 内对模型可见。model-visible ⟺ logge
 
 ## Testing
 
-`tests/engine/misc-commands.spec.ts` 重写 `/ps` 块：mid-turn 断言 `steerCalls` 收到文字、`sendCalls` 为空并回 Done reaction；turn 阻塞在权限时仍 steer，`pendingMessages` 不增长、无排队回复；idle 剥前缀穿透。`tests/agent-dsh/adapter-steer.spec.ts`（2 例）：`steer()` 把 user 文本消息路由进 `handle.agent.steer` 而非 followup 队列；`send()` 留在 followup 队列。九处既有桩补 no-op `steer` 以满足接口。
+`tests/engine/misc-commands.spec.ts` 重写 `/ps` 块：mid-turn 断言 `steerCalls` 收到文字、`sendCalls` 为空（表情断言 2026-09-17 移入三态套件）；turn 阻塞在权限时仍 steer，`pendingMessages` 不增长、无排队回复；idle 剥前缀穿透。`tests/agent-dsh/adapter-steer.spec.ts`（2 例）：`steer()` 把 user 文本消息路由进 `handle.agent.steer` 而非 followup 队列；`send()` 留在 followup 队列。九处既有桩补 no-op `steer` 以满足接口。
 
 ## Related
 

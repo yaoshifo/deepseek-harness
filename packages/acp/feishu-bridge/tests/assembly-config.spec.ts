@@ -351,6 +351,41 @@ describe('buildProjectAssembly config wiring', () => {
       .toThrow(/turnSummary, which was removed with the insight card/)
   })
 
+  it('fails loud on a config left with the removed feishu.reactionEmoji key (dead Go-port knobs, 2026-09-17)', () => {
+    // reaction_emoji (the typing-indicator reaction) was ported from Go but
+    // never wired: the knob has been configured-but-inert since the port.
+    // The removal follows the same fail-loud guard class as progressStyle.
+    const parsed = Config({
+      projects: [{
+        name: 'smoke-project',
+        workdir: '/workspace/project',
+        feishu: { appId: 'cli_test', appSecret: 'sec', reactionEmoji: 'Get' },
+      }],
+      providers: {},
+    } as unknown as FeishuBridgeConfig)
+    const stale = parsed.projects[0] as ProjectConfig
+    expect((stale.feishu as unknown as Record<string, unknown>).reactionEmoji).toBe('Get')
+    expect(() => assemble(baseConfig(), stale))
+      .toThrow(/feishu\.reactionEmoji, which was removed as a never-wired Go-port knob/)
+  })
+
+  it('fails loud on a config left with the removed feishu.doneEmoji key (dead Go-port knobs, 2026-09-17)', () => {
+    // done_emoji (the completion-card reaction) was ported from Go but never
+    // wired: same configured-but-inert class as reactionEmoji above.
+    const parsed = Config({
+      projects: [{
+        name: 'smoke-project',
+        workdir: '/workspace/project',
+        feishu: { appId: 'cli_test', appSecret: 'sec', doneEmoji: 'Done' },
+      }],
+      providers: {},
+    } as unknown as FeishuBridgeConfig)
+    const stale = parsed.projects[0] as ProjectConfig
+    expect((stale.feishu as unknown as Record<string, unknown>).doneEmoji).toBe('Done')
+    expect(() => assemble(baseConfig(), stale))
+      .toThrow(/feishu\.doneEmoji, which was removed as a never-wired Go-port knob/)
+  })
+
   it('forwards feishu.tag onto the platform name (Go tag)', () => {
     const proj = project()
     proj.feishu = { ...proj.feishu, tag: 'ops' }

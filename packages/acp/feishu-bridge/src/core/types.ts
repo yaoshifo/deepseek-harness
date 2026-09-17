@@ -247,6 +247,7 @@ export type EventKind =
   | 'skill_invocation'
   | 'presented'
   | 'bg_task_notice'
+  | 'steer_claimed'
 
 /** A single piece of agent output streamed to the engine (Go Event). */
 export interface Event {
@@ -305,6 +306,12 @@ export interface Event {
    * re-projections of the same splice.
    */
   bgNoticeIDs?: string[]
+  /**
+   * Steer message id carried by a `steer_claimed` event: the /ps-injected
+   * text was claimed into a model request (its durable user/message event
+   * landed), so the engine swaps the pickup reaction for the claimed one.
+   */
+  steerMessageID?: string
 }
 
 /**
@@ -484,8 +491,10 @@ export interface AgentSession {
    * between steps, so the text reaches the model inside the running turn —
    * including while the turn waits on a permission (agent-loop steer).
    * @param prompt - The text to append; attachments never ride this path.
+   * @returns the minted steer message id, for correlating the claim (the
+   *   durable user/message event of the same id) with caller-side state.
    */
-  steer(prompt: string): void
+  steer(prompt: string): string
   events(): EventChannel
   currentSessionID(): string
   alive(): boolean
@@ -1503,6 +1512,28 @@ export interface ReactionManager {
 }
 
 /**
+ * Platform that can add the configured stop-reaction to a replied message
+ * (Go AddCancelledReaction): the emoji is platform config (cancel_emoji), so
+ * the engine never needs its value — only the capability to fire it.
+ */
+export interface CancelledReactionAdder {
+  addCancelledReaction(replyCtx: unknown): void
+}
+
+/**
+ * /ps pickup reaction emoji (Feishu emoji key `Get`): the steered text landed
+ * in the agent's next-step inbox but has not reached a model request yet.
+ */
+export const SteerPickupEmoji = 'Get'
+
+/**
+ * /ps claimed reaction emoji (Feishu emoji key `DONE`): the steered text was
+ * claimed into a model request. Canonical casing per the official Feishu
+ * emoji key table.
+ */
+export const SteerClaimedEmoji = 'DONE'
+
+/**
  * Platform that can brand a chat as the monitor dispatch hub: rename it and
  * set a named icon avatar (Go ChatBrander).
  */
@@ -1928,6 +1959,16 @@ export function asReactionManager(p: Platform): ReactionManager | undefined {
   return typeof candidate.addReactionWithID === 'function' && typeof candidate.removeReaction === 'function'
     ? candidate as ReactionManager
     : undefined
+}
+
+/**
+ * Structural check for the {@link CancelledReactionAdder} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asCancelledReactionAdder(p: Platform): CancelledReactionAdder | undefined {
+  return withMethod<CancelledReactionAdder>(p, 'addCancelledReaction')
 }
 
 /**

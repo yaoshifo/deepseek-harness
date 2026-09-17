@@ -99,11 +99,11 @@ export interface FeishuAppConfig {
   activeTagName?: string
   /** ✅ per-turn completion notification — purple card or text fallback; default off (Go notify_on_complete). */
   notifyOnComplete?: boolean
-  /** Emoji reaction on the user's message; '' or 'none' disables (Go reaction_emoji). */
-  reactionEmoji?: string
-  /** Emoji reaction on the completion card; '' or 'none' disables (Go done_emoji). */
-  doneEmoji?: string
-  /** Emoji reaction when a turn is stopped; '' or 'none' disables (Go cancel_emoji). */
+  /**
+   * Emoji reaction when a turn is stopped; 'none' disables; default
+   * 'CrossMark' (Go cancel_emoji; consumed by the /ps stopped settle — a
+   * steered message whose turn died before the text reached a model request).
+   */
   cancelEmoji?: string
   /** Top-notice banner on the first turn's message (Go topnotice_first_message). */
   topNoticeFirstMessage?: boolean
@@ -535,9 +535,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       enableFeishuCard: Schema.boolean().description('Interactive cards (default true)'),
       activeTagName: Schema.string().description('Explicit active-tag name override'),
       notifyOnComplete: Schema.boolean().description('✅ per-turn completion notification (card or text fallback); default off'),
-      reactionEmoji: Schema.string().description('Reaction emoji on user message'),
-      doneEmoji: Schema.string().description('Reaction emoji on completion card'),
-      cancelEmoji: Schema.string().description('Reaction emoji on stopped card'),
+      cancelEmoji: Schema.string().description("Stop reaction emoji ('none' disables; default CrossMark)"),
       topNoticeFirstMessage: Schema.boolean().description('Top-notice banner on first turn'),
       pinUserMessages: Schema.boolean().description('Pin panel accumulation'),
     }).required(),
@@ -1236,6 +1234,16 @@ export function buildProjectAssembly(
   if ((project as unknown as Record<string, unknown>).autoCompress !== undefined) {
     throw new Error(`feishu-bridge: project '${project.name}' sets autoCompress, which was removed with the bridge compress path (2026-09-16); the core-layer compaction owns this defense — remove the key from the configuration`)
   }
+  // reaction_emoji and done_emoji were ported from Go but never wired: the
+  // typing-indicator and completion reactions never had a caller, so the
+  // knobs were configured-but-inert since the port. Removed 2026-09-17 with
+  // the same fail-loud guard class (Schemastery keeps unknown keys alive).
+  if ((project.feishu as unknown as Record<string, unknown>).reactionEmoji !== undefined) {
+    throw new Error(`feishu-bridge: project '${project.name}' sets feishu.reactionEmoji, which was removed as a never-wired Go-port knob (2026-09-17); remove the key from the configuration`)
+  }
+  if ((project.feishu as unknown as Record<string, unknown>).doneEmoji !== undefined) {
+    throw new Error(`feishu-bridge: project '${project.name}' sets feishu.doneEmoji, which was removed as a never-wired Go-port knob (2026-09-17); remove the key from the configuration`)
+  }
   const routeNames = Object.keys(config.providers)
   const projectDataDir = join(dataRoot, project.name)
   // The engine/platform stores assume the data dirs exist (Go main created
@@ -1324,8 +1332,6 @@ export function buildProjectAssembly(
       : {}),
     ...(project.feishu.enableFeishuCard !== undefined ? { useInteractiveCard: project.feishu.enableFeishuCard } : {}),
     ...(project.feishu.activeTagName !== undefined ? { activeTagOverride: project.feishu.activeTagName } : {}),
-    ...(project.feishu.reactionEmoji !== undefined ? { reactionEmoji: project.feishu.reactionEmoji } : {}),
-    ...(project.feishu.doneEmoji !== undefined ? { doneEmoji: project.feishu.doneEmoji } : {}),
     ...(project.feishu.cancelEmoji !== undefined ? { cancelEmoji: project.feishu.cancelEmoji } : {}),
     ...(project.feishu.topNoticeFirstMessage !== undefined ? { topNoticeFirstMessage: project.feishu.topNoticeFirstMessage } : {}),
     ...(project.feishu.pinUserMessages !== undefined ? { pinUserMessages: project.feishu.pinUserMessages } : {}),

@@ -679,29 +679,6 @@ describe('StreamPreview', () => {
     expect(content?.text).toBe('Hello World Final')
   })
 
-  it('needsDoneReaction flips after UpdateMessage and clears on discard', async () => {
-    const mp = createMockUpdaterPlatform()
-    const sp = newStreamPreview(cfg(), mp, 'ctx', undefined, undefined)
-    expect(sp.needsDoneReaction()).toBe(false)
-    await sp.appendText('Hello World')
-    await sleep(100)
-    expect(sp.needsDoneReaction()).toBe(false) // only SendPreviewStart so far
-    await sp.appendText(' more text to trigger update')
-    await sleep(100)
-    expect(mp.messages.some(m => m.startsWith('update:'))).toBe(true)
-    expect(sp.needsDoneReaction()).toBe(true)
-    await sp.discard()
-    expect(sp.needsDoneReaction()).toBe(false)
-  })
-
-  it('needsDoneReaction false when disabled', async () => {
-    const mp = createMockUpdaterPlatform()
-    const sp = newStreamPreview({ enabled: false, intervalMs: 50, minDeltaChars: 1, maxChars: 500, progressFlushIntervalMs: 300, maxAnalysisChars: 6000 }, mp, 'ctx', undefined, undefined)
-    await sp.appendText('Hello')
-    await sleep(100)
-    expect(sp.needsDoneReaction()).toBe(false)
-  })
-
   it('applies the transform to preview and final text', async () => {
     const mp = createMockUpdaterPlatform()
     const transform = (s: string): string => s.replaceAll('/root/code/demo/src/app.ts:42', '📄 `src/app.ts:42`')

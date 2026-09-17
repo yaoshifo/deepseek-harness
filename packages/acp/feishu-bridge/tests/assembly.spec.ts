@@ -66,8 +66,6 @@ describe('buildProjectAssembly', () => {
         appId: 'cli_test',
         appSecret: 'sec',
         notifyOnComplete: true,
-        reactionEmoji: 'Get',
-        doneEmoji: 'Done',
         cancelEmoji: 'CrossMark',
         topNoticeFirstMessage: true,
         pinUserMessages: true,
@@ -76,17 +74,23 @@ describe('buildProjectAssembly', () => {
     const { platform } = buildProjectAssembly(stubContext(), cfg, proj, root)
     expect(platform.notifyOnComplete).toBe(true)
     expect(platform.completionNoticeEnabled()).toBe(true)
-    expect(platform.reactionEmoji).toBe('Get')
-    expect(platform.doneEmoji).toBe('Done')
     expect(platform.cancelEmoji).toBe('CrossMark')
     expect(platform.topNoticeEnabled).toBe(true)
     expect(platform.pinEnabled).toBe(true)
-    // Defaults stay off when the config omits them.
+    // Defaults stay off when the config omits them; the stop reaction
+    // defaults to CrossMark and 'none' keeps it disabled (Go cancel_emoji
+    // semantics, consumed by the /ps stopped settle).
     const bare = buildProjectAssembly(stubContext(), config(), project(), root)
     expect(bare.platform.notifyOnComplete).toBe(false)
     expect(bare.platform.completionNoticeEnabled()).toBe(false)
+    expect(bare.platform.cancelEmoji).toBe('CrossMark')
     expect(bare.platform.topNoticeEnabled).toBe(false)
     expect(bare.platform.pinEnabled).toBe(false)
+    const muted = buildProjectAssembly(stubContext(), cfg, {
+      ...project(),
+      feishu: { appId: 'cli_test', appSecret: 'sec', cancelEmoji: 'none' },
+    }, root)
+    expect(muted.platform.cancelEmoji).toBe('')
   })
 
   it('falls back to the config default with a warning when the persisted provider is gone', async () => {

@@ -13,7 +13,8 @@
  * the running turn — including while the turn is blocked on a permission,
  * where Go's stdin write would have been swallowed and fell back to the
  * busy-queue; when the agent is idle the command falls through as a normal
- * message.
+ * message. The pickup is acknowledged with a three-state reaction (Get
+ * queued → DONE claimed → stop emoji when the turn dies first; see cmdPs).
  *
  * Registration lives here (not in engine/commands.ts) so this domain cannot
  * collide with parallel work on that file; {@link registerMiscCommands}
@@ -25,7 +26,8 @@
 import { Msg, type MsgKey } from '../i18n/index.ts'
 import { newCard, type Card, type CardButton } from '../card.ts'
 import type { Message, Platform } from '../core/types.ts'
-import { asReactionAdder, supportsCards } from '../core/types.ts'
+import { asReactionAdder, asReactionManager, SteerClaimedEmoji, SteerPickupEmoji, supportsCards } from '../core/types.ts'
+import type { PendingSteerReaction } from './engine.ts'
 import type { Engine } from './engine.ts'
 
 /** One-line description lookup key per canonical command id. */
@@ -222,6 +224,14 @@ async function cmdHelp(e: Engine, p: Platform, msg: Message, args: string[]): Pr
  * closes stays in the inbox and is claimed at the next turn boundary, so no
  * text is lost. When the agent is idle the command returns false so the
  * message falls through to normal processing with the /ps prefix stripped.
+ *
+ * The pickup is acknowledged with a three-state reaction on the /ps message
+ * (platforms that can retract reactions by id): Get when the text is queued,
+ * swapped for DONE when its claim reaches a model request (the adapter's
+ * steer_claimed projection), and swapped for the platform's stop emoji when
+ * the turn dies before the claim. Platforms without id-based retraction keep
+ * the old single-shot DONE acknowledgement.
+ *
  * @returns Whether the command consumed the message.
  */
 function cmdPs(e: Engine, p: Platform, msg: Message, args: string[]): boolean {
@@ -237,7 +247,20 @@ function cmdPs(e: Engine, p: Platform, msg: Message, args: string[]): boolean {
     msg.content = text
     return false
   }
-  state.agentSession.steer(text)
-  asReactionAdder(p)?.addReaction(msg.replyCtx, 'Done')
+  const steerMessageID = state.agentSession.steer(text)
+  const rm = asReactionManager(p)
+  if (rm === undefined) {
+    // No id-based retraction: a queued-then-swapped pair would strand the
+    // Get forever, so fall back to the single-shot acknowledgement.
+    asReactionAdder(p)?.addReaction(msg.replyCtx, SteerClaimedEmoji)
+    return true
+  }
+  const record: PendingSteerReaction = { platform: p, replyCtx: msg.replyCtx, reactionID: '' }
+  state.pendingSteerReactions.set(steerMessageID, record)
+  void rm.addReactionWithID(msg.replyCtx, SteerPickupEmoji).then((reactionID) => {
+    // The claim may already have settled by now: the write lands on the
+    // (then-settled) record object and retracts nothing.
+    record.reactionID = reactionID
+  })
   return true
 }

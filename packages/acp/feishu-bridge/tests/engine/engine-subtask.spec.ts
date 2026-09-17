@@ -1428,7 +1428,7 @@ describe('reportNativeChild', () => {
     expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
 
     // Recovery re-delivers once the parent accepts wakes again.
-    parentSession.steer = (prompt: string) => { parentSession.steerCalls.push(prompt) }
+    parentSession.steer = (prompt: string) => { parentSession.steerCalls.push(prompt); return '' }
     e.sessions.getOrCreateActive(parentKey).unlock()
     await e.reportNativeChild('native-child-1', 'retry result')
     for (let i = 0; i < 100 && !parentSession.sendCalls.some(c => c.includes('retry result')); i++) {

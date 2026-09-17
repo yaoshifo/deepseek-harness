@@ -52,6 +52,7 @@ import {
   asCardSender,
   asCardRefresher,
   asCardSenderWithUpdate,
+  asCancelledReactionAdder,
   asChatJumpURLer,
   asContinuableDelegator,
   asCronReplyTargetResolver,
@@ -67,6 +68,7 @@ import {
   asMessageReactionAdder,
   asProviderSwitcher,
   asReactionAdder,
+  asReactionManager,
   asRecentTurnsReader,
   asReplyContextReconstructor,
   asSessionModeInjector,
@@ -80,6 +82,7 @@ import {
   ErrNotSupported,
   ForkAtSessionPrefix,
   ForkSessionPrefix,
+  SteerClaimedEmoji,
   type GroupSpawnOptions,
 } from '../core/types.ts'
 import type { NativeChildRecord } from './project-state.ts'
@@ -261,6 +264,20 @@ export interface QueuedMessage {
   msgSessionKey: string
   /** Opaque per-message metadata carried through the queue to the drained turn (consumed at feishuBridge/turn-start). */
   metadata: Record<string, unknown> | undefined
+}
+
+/**
+ * One /ps pickup reaction awaiting its settlement (three-state /ps
+ * reactions): keyed by the steer message id, settled when the claim event
+ * swaps Get → DONE or the turn's death retracts Get for the stop emoji.
+ */
+export interface PendingSteerReaction {
+  /** Platform the Get reaction lives on (the /ps message's platform). */
+  platform: Platform
+  /** Reply context of the /ps message carrying the reaction. */
+  replyCtx: unknown
+  /** Get-reaction id; '' until the async add resolves (retraction skips the empty id). */
+  reactionID: string
 }
 
 /**
@@ -492,6 +509,20 @@ export class InteractiveState {
   #planCardRender: BoundedStateMap<string, PlanCardHandle> | undefined
   #exportContent: BoundedStateMap<string, string> | undefined
   #renderedReplyHTML: BoundedStateMap<string, string> | undefined
+  /**
+   * Pending /ps pickup reactions keyed by steer message id. Bounded with a
+   * retraction evict: an entry dropped at the cap loses its queue marker,
+   * but the steered text itself stays queued in the agent's durable inbox —
+   * only the emoji bookkeeping is given up on.
+   */
+  #pendingSteerReactions = new BoundedStateMap<string, PendingSteerReaction>(undefined, (record) => {
+    if (record.reactionID !== '') void asReactionManager(record.platform)?.removeReaction(record.replyCtx, record.reactionID)
+  })
+
+  /** Pending /ps pickup reactions; settle through the engine, never reassign. */
+  get pendingSteerReactions(): Map<string, PendingSteerReaction> {
+    return this.#pendingSteerReactions
+  }
 
   /** Latest render-task status per exportKey (Go renderStatuses). */
   get renderStatuses(): Map<string, RenderStatusEntry> | undefined { return this.#renderStatuses }
@@ -2987,8 +3018,10 @@ export class Engine {
         case 'todo_update':
         case 'skill_invocation':
         case 'presented':
+        case 'steer_claimed':
           // Preview- and card-only frames carry nothing the plain-text
-          // spillover relay could surface.
+          // spillover relay could surface; a steer claim is bookkeeping for
+          // the interactive pump only.
           break
         default:
           assertNever(event.type, 'spillover event switch')
@@ -4015,6 +4048,17 @@ export class Engine {
             return
           }
 
+          case 'steer_claimed': {
+            // The steered /ps text reached a model request (its durable
+            // user/message claim landed): swap the Get pickup mark for DONE.
+            // Steers without a pickup record (machine coordination) settle
+            // nothing.
+            if (event.steerMessageID !== undefined) {
+              this.settleSteerReaction(state, event.steerMessageID, 'claimed')
+            }
+            break
+          }
+
           default:
             assertNever(event.type, 'interactive event switch')
         }
@@ -4763,6 +4807,42 @@ export class Engine {
   // ── cleanup ─────────────────────────────────────────────────────────────
 
   /**
+   * Settle one pending /ps pickup reaction (three-state /ps reactions):
+   * retract the Get mark, then swap in the terminal emoji — DONE when the
+   * steered text reached a model request (the steer_claimed event), the
+   * platform's configured stop emoji when the turn died first. Unknown ids
+   * (machine steers, already-settled entries) settle nothing.
+   * @param state - Interactive state owning the pending reaction.
+   * @param steerMessageID - Steer message id whose pickup reaction to settle.
+   * @param outcome - Whether the text reached a model request or the turn died first.
+   */
+  private settleSteerReaction(state: InteractiveState, steerMessageID: string, outcome: 'claimed' | 'stopped'): void {
+    const record = state.pendingSteerReactions.get(steerMessageID)
+    if (record === undefined) return
+    state.pendingSteerReactions.delete(steerMessageID)
+    if (record.reactionID !== '') {
+      void asReactionManager(record.platform)?.removeReaction(record.replyCtx, record.reactionID)
+    }
+    if (outcome === 'claimed') {
+      asReactionAdder(record.platform)?.addReaction(record.replyCtx, SteerClaimedEmoji)
+    } else {
+      asCancelledReactionAdder(record.platform)?.addCancelledReaction(record.replyCtx)
+    }
+  }
+
+  /**
+   * Settle every still-pending /ps pickup as stopped: the turn is dying
+   * (user stop, engine teardown, agent death, session reset), so no steered
+   * text still awaiting its claim will reach a model request in this state.
+   * @param state - Interactive state being torn down.
+   */
+  private settlePendingSteerReactions(state: InteractiveState): void {
+    for (const steerMessageID of [...state.pendingSteerReactions.keys()]) {
+      this.settleSteerReaction(state, steerMessageID, 'stopped')
+    }
+  }
+
+  /**
    * Remove the interactive state and close its agent session. With an
    * expected state, cleanup is skipped when the map entry was replaced
    * (stale-goroutine guard, Go cleanupInteractiveState). The map entry is
@@ -4782,6 +4862,9 @@ export class Engine {
       if (agentSession !== undefined) {
         state.closing = new Promise<void>((resolve) => { closingResolve = resolve })
       }
+      // Steered text awaiting its claim dies with this state: retract its
+      // pickup reactions before the bookkeeping goes.
+      this.settlePendingSteerReactions(state)
       // The reader must not consume off a channel whose agent is closing.
       this.stopUnsolicitedReader(state)
       // Abort in-flight renders and reap recorded reply-HTML temp dirs (Go
@@ -4880,6 +4963,9 @@ export class Engine {
       void this.sendFollowupsCard(state, salvagePlatform, state.replyCtx, sessionKey)
     }
     this.notifyDroppedQueuedMessages(state, new Error('session reset'))
+    // Steered text awaiting its claim dies with the stop: retract the
+    // pending pickups for the stop emoji before the state goes.
+    this.settlePendingSteerReactions(state)
     // Staged attachments die with the session: without this the pendingDir
     // leaks on disk (Go regression test for /new and /stop).
     this.discardStagedAttachments(state, false)
@@ -5402,10 +5488,12 @@ export class Engine {
         case 'skill_invocation':
         case 'presented':
         case 'bg_task_notice':
+        case 'steer_claimed':
           // Preview- and card-only frames have no relayed text to collect
           // (Go's HandleRelay switch ignores them the same way). A notice
           // here belongs to the relay session's own agent — no interactive
-          // state of this engine owns its count.
+          // state of this engine owns its count; a steer claim is
+          // bookkeeping for the interactive pump only.
           break
         default:
           assertNever(event.type, 'relay event switch')

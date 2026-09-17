@@ -2515,6 +2515,12 @@ export class DshAgentSession implements AgentSession {
   private turnWindowParts: string[] = []
   /** Interactive-state slot key when it differs from `key` (cron `#cron:` slots); '' = same as `key`. */
   private readonly interactiveSlotKey: string
+  /**
+   * Ids of messages this session steered into the agent's next-step inbox
+   * that no durable user/message claim has landed for yet. The first claim
+   * projection consumes the id (exactly-once).
+   */
+  private readonly pendingSteerIDs = new Set<string>()
 
   constructor(
     key: string,
@@ -2724,13 +2730,19 @@ export class DshAgentSession implements AgentSession {
    * (agent-loop steer) — the driver claims it between steps, so the text
    * reaches the model inside the running turn. Text only; neither caller
    * (/ps, a plan-review approval supplement) carries attachments.
+   *
+   * @returns the minted steer message id, for correlating the claim
+   *   projection with caller-side state.
    */
-  steer(prompt: string): void {
+  steer(prompt: string): string {
     this.lastActivityAt = Date.now()
-    this.handle.agent.steer(createUserMessage({
+    const message = createUserMessage({
       content: [{ type: 'text', text: prompt }],
       source: { kind: 'user' },
-    }))
+    })
+    this.pendingSteerIDs.add(message.id)
+    this.handle.agent.steer(message)
+    return message.id
   }
 
   events(): EventChannel {
@@ -2821,6 +2833,16 @@ export class DshAgentSession implements AgentSession {
           if (name !== '') {
             this.channel.push({ type: 'skill_invocation', content: name, done: false })
           }
+        }
+        // A steered message's claim: the durable user/message event of a
+        // pending steer id is the moment the text entered a model request
+        // (the loop appends it in the same synchronous block that builds and
+        // dispatches the request), so project the claim for the engine's
+        // pickup-reaction swap. Unsteered ids (turn prompts, injections) are
+        // silent, and each steer id projects exactly once.
+        const messageID = typeof data.id === 'string' ? data.id : ''
+        if (messageID !== '' && this.pendingSteerIDs.delete(messageID)) {
+          this.channel.push({ type: 'steer_claimed', content: '', done: false, steerMessageID: messageID })
         }
         break
       }

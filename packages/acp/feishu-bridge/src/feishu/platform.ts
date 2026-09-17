@@ -446,9 +446,11 @@ export interface FeishuPlatformOptions {
   useInteractiveCard?: boolean
   /** ✅ per-turn completion notification — purple card or text fallback; default off (Go notify_on_complete). */
   notifyOnComplete?: boolean
-  /** Emoji reactions (empty or "none" disables the respective reaction). */
-  reactionEmoji?: string
-  doneEmoji?: string
+  /**
+   * Stop-reaction emoji ('none' disables; default 'CrossMark', Go
+   * cancel_emoji): added by addCancelledReaction when a turn dies before a
+   * steered /ps text reached a model request.
+   */
   cancelEmoji?: string
   /** Top-notice banner on the first turn's message (Go topnotice_first_message). */
   topNoticeFirstMessage?: boolean
@@ -556,11 +558,7 @@ export class FeishuPlatform implements Platform {
   readonly useInteractiveCard: boolean
   /** ✅ notifications enabled (notify_on_complete). */
   readonly notifyOnComplete: boolean
-  /** Configured reaction emoji (reaction_emoji). */
-  readonly reactionEmoji: string
-  /** Configured completion emoji (done_emoji). */
-  readonly doneEmoji: string
-  /** Configured stop emoji (cancel_emoji). */
+  /** Configured stop emoji (cancel_emoji); '' = the stop reaction is off. */
   readonly cancelEmoji: string
   /** Top-notice banner enabled (topnotice_first_message). */
   readonly topNoticeEnabled: boolean
@@ -644,9 +642,9 @@ export class FeishuPlatform implements Platform {
     this.o = options
     this.useInteractiveCard = options.useInteractiveCard !== false
     this.notifyOnComplete = options.notifyOnComplete === true
-    this.reactionEmoji = options.reactionEmoji === 'none' ? '' : options.reactionEmoji ?? ''
-    this.doneEmoji = options.doneEmoji ?? ''
-    this.cancelEmoji = options.cancelEmoji ?? ''
+    // 'none' keeps the documented disable spelling; the default marks a
+    // turn-killed /ps pickup (Go cancel_emoji default brought to life).
+    this.cancelEmoji = options.cancelEmoji === 'none' ? '' : options.cancelEmoji ?? 'CrossMark'
     this.topNoticeEnabled = options.topNoticeFirstMessage === true
     this.pinEnabled = options.pinUserMessages === true
     this.spinnerEnabled = options.progressSpinner !== false
@@ -2443,38 +2441,12 @@ export class FeishuPlatform implements Platform {
     await this.removeReactionByID(messageID, reactionID)
   }
 
-  private readonly pendingTypingRemovals = new BoundedMap<string, string>()
-
   /**
-   * Add the typing emoji and return a stop function removing it.
-   * @param replyCtx - Reply context carrying the trigger message id.
-   * @returns Stop function that removes the typing reaction.
-   */
-  startTyping(replyCtx: unknown): () => void {
-    const messageID = (replyCtx as Partial<FeishuReplyContext> | undefined)?.messageID ?? ''
-    if (messageID === '') return () => {}
-    void (async () => {
-      const reactionID = await this.addReactionWithEmoji(messageID, this.reactionEmoji)
-      this.pendingTypingRemovals.set(messageID, reactionID)
-    })()
-    return () => {
-      const reactionID = this.pendingTypingRemovals.get(messageID) ?? ''
-      this.pendingTypingRemovals.delete(messageID)
-      void this.removeReactionByID(messageID, reactionID)
-    }
-  }
-
-  /**
-   * Done-reaction push after a quiet multi-round turn (Go AddDoneReaction).
-   * @param replyCtx - Reply context carrying the trigger message id.
-   */
-  addDoneReaction(replyCtx: unknown): void {
-    this.fireAndForgetReaction(replyCtx, this.doneEmoji)
-  }
-
-  /**
-   * Cancelled-reaction after a user stop (Go AddCancelledReaction).
-   * @param replyCtx - Reply context carrying the trigger message id.
+   * Cancelled-reaction after a turn dies before a steered /ps text reached a
+   * model request (Go AddCancelledReaction, wired through the engine's
+   * CancelledReactionAdder capability): the emoji is this platform's
+   * configured cancelEmoji, '' = off.
+   * @param replyCtx - Reply context carrying the /ps message id.
    */
   addCancelledReaction(replyCtx: unknown): void {
     this.fireAndForgetReaction(replyCtx, this.cancelEmoji)

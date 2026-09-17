@@ -10,7 +10,7 @@ English | [中文](2026-08-21-feishu-bridge-ps-steer.zh.md)
 
 ## Decision
 
-`AgentSession` gains `steer(prompt: string): void`; `dshAgentSession` implements it by refreshing `lastActivityAt` and calling `handle.agent.steer` with a plain user text message. The dsh core `Agent.steer` appends the message to the agent's next-step inbox and wakes the driver, which claims inbox messages between steps, so the text joins the next LLM request inside the same turn. `cmdPs` collapses to three synchronous branches: empty argument → usage reply; idle → strip the prefix and fall through as a normal message; otherwise `steer` plus a Done reaction.
+`AgentSession` gains `steer(prompt: string)` (since 2026-09-17 it returns the minted steer message id — see [the three-state-reaction note](2026-09-17-feishu-bridge-ps-three-state-reaction.md)); `dshAgentSession` implements it by refreshing `lastActivityAt` and calling `handle.agent.steer` with a plain user text message. The dsh core `Agent.steer` appends the message to the agent's next-step inbox and wakes the driver, which claims inbox messages between steps, so the text joins the next LLM request inside the same turn. `cmdPs` collapses to three synchronous branches: empty argument → usage reply; idle → strip the prefix and fall through as a normal message; otherwise `steer` plus a pickup reaction (a single-shot Done reaction then; since 2026-09-17 a three-state Get → DONE → stop-emoji reaction, [superseding note](2026-09-17-feishu-bridge-ps-three-state-reaction.md)).
 
 The `pending` branch and the async send chain are deleted. The in-process inbox has no stdin-swallowing problem: text steered while the turn waits on a permission is claimed at the next pre-step once the approval lands — same-turn delivery, which Go reaches only approximately by queueing. The `ps_send_failed` i18n key is deleted with it; steer is synchronous and has no failure path. A steer arriving exactly as the turn closes stays in the next-step inbox and is claimed at the next turn boundary — delivery degrades to next-turn, never lost. Steered text and queued followups coexist: the inbox is claimed between steps of the current turn, queued followups at the next turn boundary.
 
@@ -28,7 +28,7 @@ Mid-turn `/ps` text is model-visible in the current turn. Model-visible ⟺ logg
 
 ## Testing
 
-`tests/engine/misc-commands.spec.ts` rewrites the `/ps` block: mid-turn asserts `steerCalls` receives the text and `sendCalls` stays empty with a Done reaction; a turn blocked on a permission still steers, with `pendingMessages` unchanged and no queued-reply message; idle strips the prefix and falls through. `tests/agent-dsh/adapter-steer.spec.ts` (2 cases): `steer()` routes a user text message into `handle.agent.steer` rather than the followup queue, and `send()` stays on the followup queue. Nine existing stubs gain a no-op `steer` to satisfy the interface.
+`tests/engine/misc-commands.spec.ts` rewrites the `/ps` block: mid-turn asserts `steerCalls` receives the text and `sendCalls` stays empty (the reaction assertions moved to the three-state suite, 2026-09-17); a turn blocked on a permission still steers, with `pendingMessages` unchanged and no queued-reply message; idle strips the prefix and falls through. `tests/agent-dsh/adapter-steer.spec.ts` (2 cases): `steer()` routes a user text message into `handle.agent.steer` rather than the followup queue, and `send()` stays on the followup queue. Nine existing stubs gain a no-op `steer` to satisfy the interface.
 
 ## Related
 

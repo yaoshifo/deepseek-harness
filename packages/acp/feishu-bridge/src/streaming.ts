@@ -1390,17 +1390,6 @@ export class StreamPreview {
   }
 
   /**
-   * Whether the preview was delivered via in-place UpdateMessage at least
-   * once — the user then only got the initial push, so a done reaction is
-   * worth sending.
-   *
-   * @returns True when a done reaction is worth sending.
-   */
-  needsDoneReaction(): boolean {
-    return this.previewMsgID !== undefined && this.lastSentViaUpdate
-  }
-
-  /**
    * Whether the progress card has been created.
    *
    * @returns True once the preview message handle exists.

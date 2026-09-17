@@ -33,7 +33,7 @@ export function createStubAgent(): StubAgent {
 export function createStubAgentSession(): AgentSession {
   return {
     send: async () => {},
-    steer: () => {},
+    steer: () => '',
     events: () => new EventChannelImpl(),
     currentSessionID: () => 'stub-session',
     alive: () => true,
@@ -72,6 +72,7 @@ export function newControllableSession(id: string): ControllableAgentSession {
     send: async () => {},
     steer: (prompt: string) => {
       s.steerCalls.push(prompt)
+      return `steer-${s.steerCalls.length}`
     },
     eventsImpl: () => channel,
     events: () => channel,
