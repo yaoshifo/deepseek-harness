@@ -97,6 +97,13 @@
 - **判复发先排存量污染**：修复前旧会话的历史里已写进正文的推敲块不会消失，旧会话续聊可能仍被存量样本带偏——**判复发必须用新开会话**。新会话仍泄漏才查：构建新旧（reload.log）→ 配置在否 → 该会话 replayState 签名链与 midturn 大文本块。
 - **根因与修复全程**：`packages/llm/llm-pi-ai` Agent Note `2026-09-14-replay-requested-model-identity`；回滚 = 删配置里 `replayModelIdentity` 一行再 reload。
 
+### M 完成卡迟到 ~30 分钟、时间戳=出现时刻 = 后台计数泄漏（2026-09-17 oc_f85284 实测，已修 102c4a3fa3 + ea562383ba）
+
+- **症状**：回合早已完成（会话日志 `turn/end completed` 后再无事件），群里数十分钟后才冒出一张绿色「执行完成 · HH:MM:SS · N」卡，时间戳正是冒出时刻——读起来像迟到的完成通知；N 是该回合的工具数。
+- **机制（已修）**：`run_in_background` 启动 + 同回合 `job_output(wait:true)` 领取 → tool-jobs 抑制完成通知（wait 已交付终态）→ 引擎后台计数无递减路径 → 泄漏计数把完成卡压满 30 分钟宽限 → 耗尽善后清提示的 PATCH 触发位移自愈重发，旧版标题时间戳取渲染时刻。
+- **取证**：daemon stdout.log 搜 `grace exhausted`（旧版指纹）或 `background count reconciled away`（修复后新日志行 = 对账清理泄漏计数，非故障）；会话日志看该 turn 的 `tool/call` 是否 `run_in_background` + `job_output` 同回合配对。
+- **修复后判别**：泄漏计数约 60s 内被对账清（reconciled away 日志）；重发/重 PATCH 的终态卡时间戳冻结为定稿时刻。`grace exhausted` 仍会在「通知在途却超时」场景出现，属既有宽限语义，非本指纹。
+
 ## 审批事件判别（卡片没弹 / 反复要授权）
 
 - 会话日志事件 `approval/asked` → `approval/decided` 的**时间差**：秒级/分钟级 = 真弹卡等用户点击；0–1ms = 被常设授权短路放行。两种情况日志事件形态相同，只有时间差能区分。
