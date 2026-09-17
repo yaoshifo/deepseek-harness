@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-16-acp-config-option-net-change-suppression.md
 2026-09-16-acp-config-option-net-change-suppression.md: 6dd55053f50a4b61ac0cb0722a38e64c28b25419
-2026-09-16-acp-config-option-net-change-suppression.zh.md: 4b3c55c3b6588a9d9e8b1148616cf1a54ab235f0
+2026-09-16-acp-config-option-net-change-suppression.zh.md: 27d4241b44a1139b47d42d3802a29d0338ccb7ea
