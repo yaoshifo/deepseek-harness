@@ -7625,7 +7625,6 @@ export class Engine {
     const panel = this.subtaskPanels.get(parentKey)
     if (panel === undefined) return
     const rows = this.subtaskPanelChildren(parentKey)
-    const activity = asSubagentActivitySource(this.agent)
     const now = Date.now()
     const p = this.reportCapablePlatform() ?? this.platforms[0] ?? ({} as Platform)
     const cu = asCardSenderWithUpdate(p)
@@ -7637,31 +7636,34 @@ export class Engine {
     // probe or card deletion keep PATCH-only.
     if (cu !== undefined && rows.length > 0 && this.subtaskPanelFollowTail
       && this.panelDisplaced(panel, p, now)
-      && this.reissueSubtaskPanel(parentKey, panel, cu, rows, now)) {
+      && this.reissueSubtaskPanel(parentKey, panel, p, cu, rows, now)) {
       return
     }
+    const finalizing = rows.length === 0
+    if (finalizing) {
+      // Deregister before the terminal PATCH leaves: an in-flight reissue
+      // resolving while the PATCH travels must find the entry gone (the
+      // generation guard in reissueSubtaskPanel) and delete its own new card,
+      // not the one taking the terminal content. The cleared timer ends the
+      // ticks here already.
+      clearInterval(panel.timer)
+      this.subtaskPanels.delete(parentKey)
+      asSubagentActivitySource(this.agent)?.forgetSubagentActivity(this.childIdsOf(parentKey))
+    }
+    const old = panel.handle
     const card = renderSubtaskPanelCard(
       this.i18n,
-      rows.length === 0
+      finalizing
         ? { pending: [], reportedCount: this.reportedNativeChildrenOf(parentKey), startedAt: panel.startedAt, phase: 'done' }
         : { pending: rows, reportedCount: this.reportedNativeChildrenOf(parentKey), startedAt: panel.startedAt, phase: 'running' },
-      now, this.subtaskPanelStallMs, rows.length === 0 ? '' : panel.iconKey,
+      now, this.subtaskPanelStallMs, finalizing ? '' : panel.iconKey,
     )
-    void cu?.updateCardWithHandle(panel.handle, card).then(() => {
-      if (rows.length === 0) {
-        clearInterval(panel.timer)
-        this.subtaskPanels.delete(parentKey)
-        activity?.forgetSubagentActivity(this.childIdsOf(parentKey))
-        console.info(`subtask: background panel finalized (${parentKey})`)
-      }
+    void cu?.updateCardWithHandle(old, card).then(() => {
+      if (finalizing) console.info(`subtask: background panel finalized (${parentKey})`)
     }).catch((error: unknown) => {
+      // The panel is already deregistered above, so a dead terminal card
+      // (recalled, chat deleted) leaves no map entry or timer behind.
       console.warn(`subtask: background panel update failed (${parentKey}): ${String(error)}`)
-      // A dead card (recalled, chat deleted) must not tick forever.
-      if (rows.length === 0) {
-        clearInterval(panel.timer)
-        this.subtaskPanels.delete(parentKey)
-        activity?.forgetSubagentActivity(this.childIdsOf(parentKey))
-      }
     })
   }
 
@@ -7691,9 +7693,14 @@ export class Engine {
    * Fire-and-forget like the tick PATCH — a failed send keeps the old card
    * (and its content) with the cooldown deferring the retry; a failed delete
    * only orphans the old card. The cooldown mark is set at initiation, so a
-   * second refresh inside the window cannot double-send.
+   * second refresh inside the window cannot double-send. Both callbacks
+   * carry a generation guard: a panel that finalization already deregistered
+   * while the send was in flight stays dead — the landed card is deleted (or
+   * the fallback PATCH skipped) instead of resurrecting the panel over the
+   * finalized card.
    * @param parentKey - Parent session key whose panel reissues.
    * @param panel - Live panel state mutated onto the new handle.
+   * @param p - Platform owning the card; its cleaner deletes the loser card.
    * @param cu - Card sender capability of the owning platform.
    * @param rows - Pending panel rows rendered onto the reissued card.
    * @param now - Current epoch ms.
@@ -7702,6 +7709,7 @@ export class Engine {
   private reissueSubtaskPanel(
     parentKey: string,
     panel: SubtaskPanelState,
+    p: Platform,
     cu: CardSenderWithUpdate,
     rows: Array<{ childId: string; label: string; toolCalls: number; lastEventAt: number }>,
     now: number,
@@ -7712,13 +7720,27 @@ export class Engine {
       { pending: rows, reportedCount: this.reportedNativeChildrenOf(parentKey), startedAt: panel.startedAt, phase: 'running' },
       now, this.subtaskPanelStallMs, panel.iconKey,
     )
+    const cleaner = asPreviewCleaner(p)
     void cu.sendCardWithHandle(panel.replyCtx, card).then(
       async (handle) => {
+        // Generation guard (stopInteractiveSession's exact-entry pattern):
+        // finalization deregisters the panel before its terminal PATCH
+        // leaves, so an entry that no longer is this panel means the old
+        // card already carries the terminal content. The running card that
+        // just landed is panel-orphaned — delete it, touch nothing else.
+        if (this.subtaskPanels.get(parentKey) !== panel) {
+          console.info(`subtask: background panel reissue landed after finalize, discarded (${parentKey})`)
+          try {
+            await cleaner?.deletePreviewMessage(handle)
+          } catch (error) {
+            console.warn(`subtask: background panel orphaned reissue delete failed (${parentKey}): ${String(error)}`)
+          }
+          return
+        }
         const old = panel.handle
         panel.handle = handle
         panel.placedAtMs = Date.now()
         console.info(`subtask: background panel reissued to the chat tail (${parentKey})`)
-        const cleaner = asPreviewCleaner(this.reportCapablePlatform() ?? this.platforms[0] ?? ({} as Platform))
         if (cleaner === undefined) return
         try {
           await cleaner.deletePreviewMessage(old)
@@ -7730,7 +7752,10 @@ export class Engine {
         console.warn(`subtask: background panel reissue failed (${parentKey}): ${String(error)}`)
         // Fresh content outranks the tail position (the stream preview's
         // displacement-heal discipline): PATCH the card that is still live
-        // so the panel does not go stale while the reissue retries.
+        // so the panel does not go stale while the reissue retries — unless
+        // finalization deregistered the panel, whose terminal card must not
+        // take running content back.
+        if (this.subtaskPanels.get(parentKey) !== panel) return
         void cu.updateCardWithHandle(panel.handle, card).catch(() => undefined)
       },
     )
@@ -7758,7 +7783,7 @@ export class Engine {
     if (cu === undefined || asPreviewCleaner(p) === undefined) return
     const now = Date.now()
     if (now - panel.lastReissueAt < previewReissueCooldownMs) return
-    this.reissueSubtaskPanel(parentKey, panel, cu, rows, now)
+    this.reissueSubtaskPanel(parentKey, panel, p, cu, rows, now)
   }
 
   /**
@@ -7774,9 +7799,13 @@ export class Engine {
     this.subtaskPanels.delete(parentKey)
     asSubagentActivitySource(this.agent)?.forgetSubagentActivity(this.childIdsOf(parentKey))
     if (mode === 'silent') return
+    // Captured after deregistration: the generation guard in
+    // reissueSubtaskPanel never mutates a deregistered panel, so this stays
+    // the panel's last adopted card.
+    const old = panel.handle
     const cu = asCardSenderWithUpdate(this.reportCapablePlatform() ?? this.platforms[0] ?? ({} as Platform))
     const card = renderSubtaskPanelCard(this.i18n, { pending: [], reportedCount: 0, startedAt: panel.startedAt, phase: 'drained' }, Date.now(), this.subtaskPanelStallMs)
-    void cu?.updateCardWithHandle(panel.handle, card).catch((error: unknown) => {
+    void cu?.updateCardWithHandle(old, card).catch((error: unknown) => {
       console.warn(`subtask: background panel drained update failed (${parentKey}): ${String(error)}`)
     })
   }

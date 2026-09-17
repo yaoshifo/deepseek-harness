@@ -1,7 +1,8 @@
 /**
  * Background-subtask live panel: the pure renderer's layout and the engine
  * lifecycle around it (post at settle-with-pending, PATCH on flips and ticks,
- * finalize at zero, drain and stop-all paths).
+ * finalize at zero, drain and stop-all paths, and the reissue/finalization
+ * race interleavings).
  *
  * @module dsh-feishu-bridge/tests-subtask-panel
  */
@@ -551,6 +552,204 @@ describe('panel follow-tail reclaim', () => {
       // handle-1 stays orphaned — its delete failed earlier; the restored
       // cleaner removes only the live predecessor of the newest card.
       expect(p.deletedHandles).toEqual(['handle-2'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('panel reissue vs finalization race', () => {
+  const parentKey = 'test:panel-race:u1'
+
+  function panelEngine(p: Platform, agent = createStubAgent()): Engine {
+    return panelEngineFor(p, parentKey, agent)
+  }
+
+  function seedChild(e: Engine, childId: string, reported: boolean): void {
+    seedPanelChild(e, parentKey, childId, reported)
+  }
+
+  /** Microtask flush: the panel reissue/finalize chains are microtask-only. */
+  async function flush(rounds = 12): Promise<void> {
+    for (let i = 0; i < rounds; i++) await Promise.resolve()
+  }
+
+  /** Mark every unreported child of the panel's parent reported. */
+  function reportAll(e: Engine): void {
+    for (const [childId, rec] of Object.entries(e.nativeChildEntries())) {
+      if (rec.parent_key === parentKey && !rec.reported) e.projectState?.setNativeChild(childId, { ...rec, reported: true })
+    }
+  }
+
+  /**
+   * Hold the next card send under test control: one shot, installed after the
+   * initial panel post, released to land (or fail) at the chosen interleaving
+   * point.
+   */
+  function holdNextSend(p: PanelPlatform): { land: () => void; fail: (error: unknown) => void } {
+    const base = p.sendCardWithHandle.bind(p)
+    let release!: () => void
+    let reject!: (error: unknown) => void
+    const gate = new Promise<void>((resolve, fail) => { release = resolve; reject = fail })
+    p.sendCardWithHandle = (rc: unknown, card: unknown) => gate.then(() => base(rc, card))
+    return {
+      land: () => { release(); p.sendCardWithHandle = base },
+      fail: (error: unknown) => { reject(error); p.sendCardWithHandle = base },
+    }
+  }
+
+  /** Hold the next card PATCH under test control (one shot, like the send). */
+  function holdNextUpdate(p: PanelPlatform): { land: () => void } {
+    const base = p.updateCardWithHandle.bind(p)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    p.updateCardWithHandle = async (handle: unknown, card: unknown) => { await gate; return base(handle, card) }
+    return { land: () => { release(); p.updateCardWithHandle = base } }
+  }
+
+  it('keeps the finalized card when an in-flight reissue resolves after the terminal PATCH landed', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = panelPlatform()
+      const e = panelEngine(p)
+      seedChild(e, 'child-a', false)
+      e.ensureSubtaskPanel(parentKey)
+      await flush()
+      expect(p.postedCards).toHaveLength(1)
+
+      // The next tick reissues (displaced) and the fresh card's send stays
+      // in flight while the children finish.
+      const held = holdNextSend(p)
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      reportAll(e)
+
+      // The following tick finalizes: the terminal PATCH lands on the
+      // still-live card.
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(e.subtaskPanels.has(parentKey)).toBe(false)
+      expect(p.updatedHandles).toEqual(['handle-1'])
+      expect((p.updateCards[0] as RecordedCard).header?.title).toContain('all reported')
+
+      // The reissue lands last: its running card is the orphan now — delete
+      // that one, never the card carrying the terminal content.
+      held.land()
+      await flush()
+      expect(p.postedCards).toHaveLength(2)
+      expect(p.deletedHandles).toEqual(['handle-2'])
+      expect((p.updateCards[p.updateCards.length - 1] as RecordedCard).header?.title).toContain('all reported')
+
+      // No map residue and a dead timer: later ticks PATCH nothing.
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(e.subtaskPanels.has(parentKey)).toBe(false)
+      expect(p.updateCards).toHaveLength(1)
+      expect(p.deletedHandles).toEqual(['handle-2'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('deletes the reissued running card when it resolves between deregistration and the terminal PATCH landing', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = panelPlatform()
+      const e = panelEngine(p)
+      seedChild(e, 'child-a', false)
+      e.ensureSubtaskPanel(parentKey)
+      await flush()
+
+      const heldSend = holdNextSend(p)
+      const heldUpdate = holdNextUpdate(p)
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      reportAll(e)
+
+      // The finalize tick deregisters synchronously and fires the terminal
+      // PATCH, which stays in flight — the tightest window: the panel entry
+      // is gone while neither card has taken its final content.
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(e.subtaskPanels.has(parentKey)).toBe(false)
+      expect(p.updatedHandles).toHaveLength(0)
+
+      // The reissue resolves inside the window: its card is the orphan.
+      heldSend.land()
+      await flush()
+      expect(p.postedCards).toHaveLength(2)
+      expect(p.deletedHandles).toEqual(['handle-2'])
+
+      // The terminal PATCH then lands on the card that kept its place.
+      heldUpdate.land()
+      await flush()
+      expect(p.updatedHandles).toEqual(['handle-1'])
+      expect((p.updateCards[0] as RecordedCard).header?.title).toContain('all reported')
+
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(e.subtaskPanels.has(parentKey)).toBe(false)
+      expect(p.updateCards).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('finalizes the reissued card when the reissue resolves before the children finish', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = panelPlatform()
+      const e = panelEngine(p)
+      seedChild(e, 'child-a', false)
+      e.ensureSubtaskPanel(parentKey)
+      await flush()
+
+      // The reverse order: the reissue completes first — new handle adopted,
+      // displaced card deleted.
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(p.postedCards).toHaveLength(2)
+      expect(p.deletedHandles).toEqual(['handle-1'])
+
+      // The children finish afterwards: the terminal PATCH must land on the
+      // newest card — the generation guard must not discard a legitimate
+      // adoption as an orphan.
+      reportAll(e)
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(e.subtaskPanels.has(parentKey)).toBe(false)
+      expect(p.updatedHandles).toEqual(['handle-2'])
+      expect((p.updateCards[0] as RecordedCard).header?.title).toContain('all reported')
+
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(p.updateCards).toHaveLength(1)
+      expect(p.deletedHandles).toEqual(['handle-1'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not PATCH running content onto the finalized card when a late reissue fails', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = panelPlatform()
+      const e = panelEngine(p)
+      seedChild(e, 'child-a', false)
+      e.ensureSubtaskPanel(parentKey)
+      await flush()
+
+      const held = holdNextSend(p)
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      reportAll(e)
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(e.subtaskPanels.has(parentKey)).toBe(false)
+      expect((p.updateCards[0] as RecordedCard).header?.title).toContain('all reported')
+
+      // The reissue send fails after finalization: the fallback PATCH must
+      // not overwrite the terminal card with running content.
+      held.fail(new Error('send denied'))
+      await flush()
+      expect(p.updateCards).toHaveLength(1)
+      expect((p.updateCards[p.updateCards.length - 1] as RecordedCard).header?.title).toContain('all reported')
+
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(p.updateCards).toHaveLength(1)
     } finally {
       vi.useRealTimers()
     }
