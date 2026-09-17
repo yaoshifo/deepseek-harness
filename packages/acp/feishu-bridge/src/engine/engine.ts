@@ -4202,6 +4202,22 @@ export class Engine {
           : '')
       }
     }
+    // A leaked count must not reach the settled card: ask the registry before
+    // the terminal render. The reader's idle reconcile runs a minute later,
+    // long after this card froze, and the hint it would clear had already been
+    // rendered onto the card (2026-09-17 oc_f7b306: the settled card carried a
+    // 💡 1 个后台任务 line for a job that settled and was collected in-turn).
+    // Same three states as the reader's reconcile, minus the hint write — the
+    // hint block below recomputes it from the reconciled count.
+    if (state.backgroundTasksPending > 0 && state.agentSession !== undefined) {
+      const live = state.agentSession.pendingBackgroundJobs()
+      const inflight = state.agentSession.settledUnreportedBackgroundJobs()
+      if (live === 0 && inflight === 0) {
+        console.info(`engine: settled card background count reconciled away (${sessionKey}: ${state.backgroundTasksPending} pending, every job settled and collected)`)
+        state.backgroundTasksPending = 0
+        state.bgWaitStartedAt = 0
+      }
+    }
     // Unreported native subtasks stay visible on the settled card: the body
     // hint plus the title suffix count children still running in the
     // background (the turn itself is done — the header stays terminal).

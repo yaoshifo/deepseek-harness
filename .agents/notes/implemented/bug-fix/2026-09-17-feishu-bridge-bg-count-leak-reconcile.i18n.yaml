@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-17-feishu-bridge-bg-count-leak-reconcile.md
-2026-09-17-feishu-bridge-bg-count-leak-reconcile.md: 1e56e1d5247f5840b6e330e2f1ee81069f0c4cda
-2026-09-17-feishu-bridge-bg-count-leak-reconcile.zh.md: 3807ee8b80ef0341c88967eb568d9c013cda9402
+2026-09-17-feishu-bridge-bg-count-leak-reconcile.md: 5628870cbac2987aca4e1013aa83761cd3aace82
+2026-09-17-feishu-bridge-bg-count-leak-reconcile.zh.md: f88a0d7e79b7303e77489a6670cd6f8298205caf

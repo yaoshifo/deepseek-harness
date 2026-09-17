@@ -27,16 +27,17 @@ The engine's two hint-cleanup comments (`engine.ts`, the reconcile tick and the 
 
 A settled card the engine detached therefore keeps the hint its settlement render carried. That snapshot is what the card showed while the turn ran; the late clear could never have updated it — it could only add a second card.
 
+That leaves the hint itself: a count the registry cannot justify must not be rendered at all. `handleResultEvent` asks the registry once before the terminal render and drops a count with no live job and no owed notice, so the settled card carries the hint the registry justified at settlement ([reconcile note](2026-09-17-feishu-bridge-bg-count-leak-reconcile.md) owns the three-state probe).
+
 ## Alternatives considered
 
 - **Guard each engine cleanup call site.** Four sites clear a hint or a count-derived title, and the same trap sits under the todo/subtask/text flushes the engine does not call through those sites; per-caller guards would leave the defect reproducible from the next caller. The decision belongs where the message is opened. Rejected.
-- **Reconcile the count before the terminal render** so a leaked count never renders `💡` on a settled card. It removes this incident's hint but not the class: a genuinely pending job whose grace later expires still flushes after settlement. Worth doing for display honesty on its own, not as this fix. Rejected here.
 - **Route the hint clear through the parked card's handle** (`settleParkedCard`'s argument). A settled card keeps no handle to route through — that is what detaching means — and the parked card's hint is equally a snapshot. Rejected.
 
 ## Consequences
 
 - A settled or frozen card can no longer add a message to the chat: the only updates it accepts are in-place PATCHes, and a detached card accepts none.
-- The frozen card's `💡 N` hint is a settlement-time snapshot. When the count was already stale at settlement the line reads wrong — fixed at the source by the [reconcile note](2026-09-17-feishu-bridge-bg-count-leak-reconcile.md)'s registry probe, not by re-rendering a dead card.
+- The frozen card's `💡 N` hint is the count the registry justified at settlement. A count that outlives its jobs after settlement keeps that line (the card accepts no later render); what the settle-time reconcile removes is the case this incident showed — a count already unjustifiable when the card settled.
 - Cost: a hint clear that used to produce a visible (duplicate) card now produces nothing. Recovery from a mistake here means re-deploying, not a card edit.
 - Duplicate-card triage: a `feishu: preview card sent` line with no matching `preview card deleted` is a new message, not a reissue — the reissue path always deletes the card it replaces.
 
@@ -44,3 +45,4 @@ A settled card the engine detached therefore keeps the hint its settlement rende
 
 - `tests/streaming.spec.ts`: a completed card and a failed card, each detached after settlement, take no further platform call when the hint clears; the settled parked card case now asserts the clear opens no message and the card keeps its outcome clock (it previously pinned the duplicate as expected behavior).
 - `tests/feishu/preview-send.spec.ts`: the same scenario over the real platform — a settled, detached preview issues exactly one card create.
+- `tests/engine/engine-events.spec.ts`: a leaked count is reconciled before the terminal render, so the settled card renders no hint; a still-live job keeps both the count and the hint.

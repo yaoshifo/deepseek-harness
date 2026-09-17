@@ -1964,6 +1964,45 @@ describe('todo_write progress section', () => {
   })
 })
 
+describe('background count at settlement', () => {
+  /** One turn that opens a run_in_background call, then settles on a result. */
+  async function settleBackgroundTurn(e: Engine, key: string, sess: ControllableAgentSession): Promise<InteractiveState> {
+    const session = e.sessions.getOrCreateActive(key)
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = e.platforms[0]
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    sess.channel.push({
+      type: 'tool_use', toolName: 'bash', toolID: 't1',
+      toolInput: '{"command":"pnpm run build"}', toolBackground: true, content: '', done: false,
+    } as never)
+    sess.channel.push({ type: 'result', content: 'done', done: true } as never)
+    await e.processInteractiveEvents(state, session, e.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+    return state
+  }
+
+  it('a leaked count is reconciled before the terminal render, so the settled card shows no hint', async () => {
+    // 2026-09-17 oc_f7b306: a run_in_background call collected in the same
+    // turn with job_output(wait) — tool-jobs suppresses that completion
+    // notice, nothing ever decrements the count, and the settled card kept
+    // rendering 💡 1 个后台任务 until the reader reconciled it a minute later.
+    const { e, updates } = newPreviewCaptureEngine()
+    const state = await settleBackgroundTurn(e, 'test:bg-leak', newControllableSession('bg-leak'))
+    expect(state.backgroundTasksPending).toBe(0)
+    expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).not.toContain('💡')
+  })
+
+  it('keeps the count and the hint while the counted job is still live', async () => {
+    const { e, updates } = newPreviewCaptureEngine()
+    const sess = newControllableSession('bg-live')
+    sess.pendingBackgroundJobs = () => 1
+    const state = await settleBackgroundTurn(e, 'test:bg-live', sess)
+    expect(state.backgroundTasksPending).toBe(1)
+    expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).toContain('💡')
+  })
+})
+
 describe('quiet-mode thinking preview (cc-connect parity)', () => {
   /**
    * Quiet-mode preview-capture engine: thinkingMessages off (quiet), tool

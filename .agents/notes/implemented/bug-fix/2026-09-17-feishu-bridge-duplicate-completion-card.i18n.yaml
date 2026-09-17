@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-17-feishu-bridge-duplicate-completion-card.md
-2026-09-17-feishu-bridge-duplicate-completion-card.md: 5cbceaa3e80291cca23a6625aae026315e8312a5
-2026-09-17-feishu-bridge-duplicate-completion-card.zh.md: 86817bd8a03e2800081e2593f8fc227d2813f4c2
+2026-09-17-feishu-bridge-duplicate-completion-card.md: 3aced447e7a70f8a9f7515bce3513474f5489d4c
+2026-09-17-feishu-bridge-duplicate-completion-card.zh.md: 40a3583f9cc03de586d8f4c745c842c78b60a215

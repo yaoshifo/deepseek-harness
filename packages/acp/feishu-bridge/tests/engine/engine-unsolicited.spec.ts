@@ -320,6 +320,10 @@ describe('background task hint closed loop', () => {
   it('increments on a background tool call and clears when the completion turn finishes', async () => {
     const p = createPreviewRecorderPlatform()
     const agentSession = newControllableSession('s1')
+    // The job is still running while the first turn settles: the registry
+    // reports it live, so the settle-time reconcile leaves the count alone.
+    let liveJobs = 1
+    agentSession.pendingBackgroundJobs = () => liveJobs
     agentSession.send = async () => {
       agentSession.sendCalls.push('sent')
       agentSession.channel.push({
@@ -351,6 +355,7 @@ describe('background task hint closed loop', () => {
     // The task completes later as an engine-woken turn: the reader consumes
     // it, the placeholder announces the background-task processing, and the
     // count (and hint) drop to zero at the result.
+    liveJobs = 0
     agentSession.channel.push({ type: 'result', content: 'deploy finished', done: true })
     await waitFor(() => (e.interactiveStates.get(KEY)?.backgroundTasksPending ?? -1) === 0)
     expect(session.lastResult).toBe('deploy finished')
@@ -402,6 +407,9 @@ describe('background task hint closed loop', () => {
   it('consumes a late re-projection of the same notice exactly once', async () => {
     const p = createPreviewRecorderPlatform()
     const agentSession = newControllableSession('s1')
+    // The second job is still running when this turn settles: the registry
+    // reports it live, so the settle-time reconcile keeps the remaining slot.
+    agentSession.pendingBackgroundJobs = () => 1
     agentSession.send = async () => {
       agentSession.sendCalls.push('sent')
       for (const id of ['c1', 'c2']) {

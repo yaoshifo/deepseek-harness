@@ -19,7 +19,7 @@ The 2026-09-16 fix worked as designed — its probe separates slow jobs from dea
 
 Two independent fixes:
 
-- **Reconcile at every idle tick** (`engine.ts`, unsolicited reader idle branch): while `backgroundTasksPending > 0`, ask the registry before any clock decision. Three states: live jobs (`pendingBackgroundJobs()`, running/stopping) keep waiting (49f177d17c semantics, unchanged); settled-unreported jobs (`settledUnreportedBackgroundJobs()`, a new probe over the same registry cut: settled + `reported === false`) mean a notice is in flight — the existing grace clock keeps waiting for those; live == 0 and inflight == 0 means every counted job settled AND was collected in-turn — a leak, cleared at this tick with the same cleanup as the exhausted path (zero the count, clear the card hint — the clear a no-op on a settled card the engine already detached, per the [duplicate-card note](2026-09-17-feishu-bridge-duplicate-completion-card.md)), under a distinct log line ("reconciled away" vs "grace exhausted").
+- **Reconcile against the registry wherever the count is consumed** (`engine.ts`): while `backgroundTasksPending > 0`, ask the registry before any clock or render decision — in the unsolicited reader's idle branch, and once more in the turn's settle path before the terminal render, so a count the registry cannot justify never reaches the settled card (`engine: settled card background count reconciled away`; [duplicate-card note](2026-09-17-feishu-bridge-duplicate-completion-card.md)). Three states: live jobs (`pendingBackgroundJobs()`, running/stopping) keep waiting (49f177d17c semantics, unchanged); settled-unreported jobs (`settledUnreportedBackgroundJobs()`, a new probe over the same registry cut: settled + `reported === false`) mean a notice is in flight — the existing grace clock keeps waiting for those; live == 0 and inflight == 0 means every counted job settled AND was collected in-turn — a leak, cleared where it was found, under a distinct log line ("reconciled away" vs "grace exhausted").
 - **Freeze the settled header clock** (`streaming.ts`): the first settled-state render (completed/truncated/failed plus the resolved parked-ask states) freezes the title timestamp at settlement; later renders — a live card's PATCH, the displacement-heal reissue, a parked card's outcome render — reuse the frozen value. Non-settled states keep advancing the clock.
 
 Why not change tool-jobs: suppressing the notice after a wait/read delivered the terminal state is deliberate (the model must not be told twice); the bridge owns the count, so the bridge reconciles it.
@@ -32,7 +32,7 @@ Why not change tool-jobs: suppressing the notice after a wait/read delivered the
 
 ## Consequences
 
-- The "background start + collect in-turn" pattern now settles its card within one idle tick (~60s), not 30 minutes.
+- The "background start + collect in-turn" pattern settles its card with no background hint at all: the settle-time reconcile drops the leaked count before the terminal render, and the reader's idle reconcile still clears a count it can no longer justify so the reader disarms within one idle tick (~60s) instead of the 30-minute grace.
 - A settled card shows its true settlement time in every render it takes, and with the duplicate-card guard it no longer re-appears in the chat at all; a late-appearing card cannot masquerade as a fresh completion.
 - Slow jobs and in-flight notices keep every existing protection (2026-09-16 oc_3c16b semantics unchanged).
 - Cost: one registry `list` per idle tick while a count is pending (in-memory filter).
@@ -42,5 +42,6 @@ Why not change tool-jobs: suppressing the notice after a wait/read delivered the
 ## Tests
 
 - `tests/engine/engine-unsolicited.spec.ts`: a leaked count reconciles away at the first idle tick; the retargeted in-flight-notice grace boundary; the live-job grace test unchanged.
+- `tests/engine/engine-events.spec.ts`: the settle-time reconcile — a leaked count never renders on the settled card, and a still-live job keeps both the count and the hint.
 - `tests/agent-dsh/adapter-projection.spec.ts`: `settledUnreportedBackgroundJobs` owner/status/reported filtering; absent registry → 0.
 - `tests/streaming.spec.ts`: settled header timestamp freeze — a completed card re-rendered later keeps its settlement timestamp, a settled parked card takes no later render and keeps its outcome clock, and non-settled renders keep advancing the clock.
