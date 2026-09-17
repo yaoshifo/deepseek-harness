@@ -1138,6 +1138,46 @@ describe('StreamPreview', () => {
     const final = mp.contents[mp.contents.length - 1] as ProgressContent
     expect(final.text).toContain('💡 2 个后台任务')
   })
+
+  it('a completed card detached after settlement is not re-sent when its hint clears later', async () => {
+    const mp = createMockUpdaterPlatform()
+    // progressFlushIntervalMs 0 keeps the clear on the inline flush path; the
+    // delayed one already refuses a detached card, which would hide the send.
+    const sp = newStreamPreview(cfg({ maxChars: 5000, progressFlushIntervalMs: 0 }), mp, 'ctx', undefined, undefined)
+    await sp.appendProgress(new ProgressEntry({
+      header: `**${new Date().toTimeString().slice(0, 8)}**`,
+      body: 'deploy --prod',
+      lang: 'bash',
+      isTool: true,
+      toolName: 'Bash',
+    }))
+    await sp.setBackgroundHint('💡 1 个后台任务')
+    await sp.markCompleted()
+    await sp.detachPreview()
+    const settled = mp.messages.length
+    await sp.setBackgroundHint('')
+    expect(mp.messages.length).toBe(settled)
+    expect(mp.messages.filter(m => m.startsWith('start:'))).toHaveLength(1)
+  })
+
+  it('a failed card detached after settlement is not re-sent when its hint clears later', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(cfg({ maxChars: 5000, progressFlushIntervalMs: 0 }), mp, 'ctx', undefined, undefined)
+    await sp.appendProgress(new ProgressEntry({
+      header: `**${new Date().toTimeString().slice(0, 8)}**`,
+      body: 'deploy --prod',
+      lang: 'bash',
+      isTool: true,
+      toolName: 'Bash',
+    }))
+    await sp.setBackgroundHint('💡 1 个后台任务')
+    await sp.markFailed()
+    await sp.detachPreview()
+    const settled = mp.messages.length
+    await sp.setBackgroundHint('')
+    expect(mp.messages.length).toBe(settled)
+    expect(mp.messages.filter(m => m.startsWith('start:'))).toHaveLength(1)
+  })
 })
 
 describe('markCompleted / markFailed fallbacks', () => {
@@ -2047,10 +2087,12 @@ describe('whole-card flush dedup', () => {
 })
 
 describe('settled header timestamp freeze', () => {
-  // 2026-09-17 oc_f85284: a card completed at 14:37:59 was re-rendered by the
-  // background-hint cleanup 31 minutes later, and the title「执行完成 ·
-  // 15:09:08」read as a completion notice arriving 31 minutes late. The
-  // header clock must freeze at the preview's first settled render.
+  // 2026-09-17 oc_f85284: a card completed at 14:37:59 was rendered again 31
+  // minutes later by the background-hint cleanup, and the title「执行完成 ·
+  // 15:09:08」read as a completion notice arriving 31 minutes late. The header
+  // clock must freeze at the preview's first settled render, so any later
+  // render — a PATCH on a live card, a reissue, a cached rebuild — reuses the
+  // settlement time instead of stamping its own.
   const T0 = Date.UTC(2026, 8, 17, 14, 37, 59)
   const pinClock = (ms: number): void => {
     vi.useFakeTimers({ toFake: ['Date'], now: ms })
@@ -2067,7 +2109,7 @@ describe('settled header timestamp freeze', () => {
       await sp.markCompleted()
       const settled = statusOf(mp.contents[mp.contents.length - 1] as ProgressContent)
       expect(settled?.state).toBe('completed')
-      // 31 minutes later the background-hint cleanup re-renders the card.
+      // 31 minutes later the background-hint cleanup re-renders the live card.
       vi.setSystemTime(T0 + 31 * 60_000)
       const renders = mp.contents.length
       await sp.setBackgroundHint('💡 后台任务已结束')
@@ -2098,26 +2140,30 @@ describe('settled header timestamp freeze', () => {
     }
   })
 
-  it('a settled parked card re-issued later keeps its settlement timestamp', async () => {
+  it('a settled parked card takes no later render and keeps its outcome clock', async () => {
     pinClock(T0)
     try {
       const mp = createMockUpdaterPlatform()
       const sp = newStreamPreview(noThrottle(), mp, 'ctx', undefined, undefined)
       await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**14:37:50**', body: 'ls', lang: 'bash', toolID: 't1' }))
       const handle = await sp.completeAndDetach(true)
-      // The ask resolves a minute later: that render freezes the clock.
+      // The ask resolves a minute later: the outcome render is the card's first
+      // settled render, so it freezes the clock.
       vi.setSystemTime(T0 + 60_000)
       await sp.settleParkedCard(handle, 'approved')
       const settled = statusOf(mp.contents[mp.contents.length - 1] as ProgressContent)
       expect(settled?.state).toBe('approved')
-      // Another minute on, a hint flush re-issues the detached card as a new
-      // message (the displacement-heal reissue path).
+      // Another minute on, a hint flush must not open a second card for the
+      // detached parked card — the park left no handle to render through, and
+      // the flush used to re-send the whole card as a new message
+      // (2026-09-17 oc_f7b306 duplicate「执行完成」card).
       vi.setSystemTime(T0 + 120_000)
       const renders = mp.contents.length
       await sp.setBackgroundHint('💡 后台任务已结束')
-      expect(mp.contents.length, 'the settled card must re-render for the hint').toBe(renders + 1)
-      const re = statusOf(mp.contents[mp.contents.length - 1] as ProgressContent)
-      expect(re?.ts, 'the title clock must stay at settlement').toBe(settled?.ts)
+      expect(mp.contents.length, 'a detached parked card accepts no later render').toBe(renders)
+      const last = statusOf(mp.contents[mp.contents.length - 1] as ProgressContent)
+      expect(last?.state).toBe('approved')
+      expect(last?.ts, 'the parked card keeps the outcome render clock').toBe(settled?.ts)
     } finally {
       vi.useRealTimers()
     }

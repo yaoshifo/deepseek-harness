@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
+import { newStreamPreview } from '../../src/streaming.ts'
 
 /** Client recording which outbound verb each send used, and card contents. */
 function recordingClient(): FeishuApiClient & { replies: number; creates: number; replyInThread: boolean[]; cardContents: string[] } {
@@ -127,5 +128,22 @@ describe('background hint on the stop-button row', () => {
     const startColumns = lastRow(api.cardContents[0] ?? '').columns ?? []
     expect(startColumns).toHaveLength(1)
     expect(JSON.stringify(startColumns[0])).toContain('cmd:/stop')
+  })
+})
+
+describe('settled card lifetime', () => {
+  it('a settled, detached card is not posted a second time when its hint clears later', async () => {
+    const api = recordingClient()
+    const p = newPlatform(api)
+    // progressFlushIntervalMs 0 keeps the clear on the inline flush path.
+    const sp = newStreamPreview({
+      enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 5000, progressFlushIntervalMs: 0, maxAnalysisChars: 6000,
+    }, p, rc, undefined, undefined)
+    await sp.showPlaceholder('推敲中…')
+    await sp.setBackgroundHint('💡 1 个后台任务')
+    await sp.markCompleted()
+    await sp.detachPreview()
+    await sp.setBackgroundHint('')
+    expect(api.creates).toBe(1)
   })
 })

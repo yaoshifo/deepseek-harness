@@ -2889,7 +2889,11 @@ export class Engine {
               console.info(`engine: unsolicited reader background count reconciled away (${interactiveKey}: ${state.backgroundTasksPending} pending, every job settled and collected)`)
               state.backgroundTasksPending = 0
               state.bgWaitStartedAt = 0
-              // Same card-hint cleanup as the grace-exhausted give-up below.
+              // Same card-hint cleanup as the grace-exhausted give-up below,
+              // and like it, it reaches only a card that still holds a handle:
+              // a settled card the engine detached keeps the hint its
+              // settlement render carried, because the preview refuses to open
+              // a message for it (2026-09-17 oc_f7b306 duplicate「执行完成」card).
               const sp = state.preview
               if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
                 await sp.setBackgroundHint('')
@@ -2909,7 +2913,9 @@ export class Engine {
               state.bgWaitStartedAt = 0
               // The card keeps rendering the 💡 N hint until it is cleared
               // here; the count alone does not touch it (2026-09-16 oc_3c16b:
-              // the settled card froze on 💡 1 for 40+ minutes).
+              // the settled card froze on 💡 1 for 40+ minutes). A settled card
+              // the engine already detached is out of reach: its hint stays as
+              // the settlement-time snapshot.
               const sp = state.preview
               if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
                 await sp.setBackgroundHint('')

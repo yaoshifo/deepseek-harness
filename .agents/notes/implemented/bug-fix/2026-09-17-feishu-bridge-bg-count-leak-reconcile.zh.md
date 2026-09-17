@@ -6,12 +6,12 @@ Status: implemented
 
 ## 问题
 
-活体证据（2026-09-17，oc_f85284）：会话 turn 30 于 14:37:59 完成，但群里 15:09 才出现绿色「执行完成 · 15:09:08 · 8」卡——被读成迟到 31 分钟的完成通知。同群 13:58 已发生过一次（3 pending）。链条：
+活体证据（2026-09-17，oc_f85284）：会话 turn 30 于 14:37:59 完成，但群里 15:09 才出现该回合定稿卡的**第二份副本**，标题「执行完成 · 15:09:08 · 8」——在[重复卡 note](2026-09-17-feishu-bridge-duplicate-completion-card.zh.md) 认定它只是被重发的同一张卡之前，一直被读成迟到 31 分钟的完成通知。同群 13:58 已发生过一次（3 pending）。链条：
 
 1. turn 30 里一次 `bash run_in_background` 调用把 `backgroundTasksPending` 加到 1。
 2. agent 在**同一回合内**用 `job_output(wait: true)` 领取了任务；tool-jobs 把这类 job 标记 `reported` 并抑制其完成通知——wait 已经把终态交给模型（tool-jobs 自己的测试钉死了这一点："suppresses the notice when a wait returned the terminal state"）。
 3. bridge 的计数只在通知到达时递减（引擎唤醒回合结算，或 `bg_task_notice` 拼接事件）。通知被抑制后两条路都不触发：计数泄漏。
-4. 泄漏计数把已定稿卡压满 30 分钟后台宽限。宽限到点，放弃路径的善后——49f177d17c 的注册表探针正确判定无活 job——清零计数并清卡片提示；该 PATCH 触发位移自愈重发，而重发的标题盖的是渲染时刻（15:09:08）而非定稿时刻，「迟到通知」的假象就此完成。
+4. 泄漏计数把已定稿卡压满 30 分钟后台宽限。宽限到点，放弃路径的善后——49f177d17c 的注册表探针正确判定无活 job——清零计数并清卡片提示。这次清理谁也没清到：定稿路径早已把这张卡摘了句柄，于是这次提示清理**新开了一张卡**，把整份定稿内容又发了一遍（见[重复卡 note](2026-09-17-feishu-bridge-duplicate-completion-card.zh.md)）；在标题时钟冻结修复之前，那张副本盖的是渲染时刻（15:09:08）而非定稿时刻，「迟到通知」的假象就此完成。全程没有发生位移自愈重发：重发会删掉被替换的卡，而 oc_f85284 的原卡至今还在群里。
 
 2026-09-16 的修复按设计工作——它的探针能区分慢任务与死计数——但它只管宽限**到点时**发生什么；对一个从来没有活 job 可等的计数无能为力。
 
@@ -19,8 +19,8 @@ Status: implemented
 
 两个独立修复：
 
-- **每个 idle tick 对账**（`engine.ts`，unsolicited reader 的 idle 分支）：`backgroundTasksPending > 0` 时，任何时钟决策前先问注册表。三态：活 job（`pendingBackgroundJobs()`，running/stopping）继续等（49f177d17c 语义，不变）；已结算未回报的 job（`settledUnreportedBackgroundJobs()`，同一注册表切面上的新探针：终态 + `reported === false`）意味着通知在途——现有宽限计时继续为它们等；活 == 0 且在途 == 0 意味着被计数的 job 全部已结算**且**已被同回合领取——泄漏，本节拍即清（善后与耗尽路径相同：清零计数、清卡片提示），日志行独立措辞（"reconciled away" 与 "grace exhausted" 区分）。
-- **冻结终态标题时钟**（`streaming.ts`）：首次终态渲染（completed/truncated/failed 加已结算的挂起提问态）把标题时间戳定格在定稿时刻；后续渲染——提示清理 PATCH、位移自愈重发——复用定格值。非终态时钟照常前进。
+- **每个 idle tick 对账**（`engine.ts`，unsolicited reader 的 idle 分支）：`backgroundTasksPending > 0` 时，任何时钟决策前先问注册表。三态：活 job（`pendingBackgroundJobs()`，running/stopping）继续等（49f177d17c 语义，不变）；已结算未回报的 job（`settledUnreportedBackgroundJobs()`，同一注册表切面上的新探针：终态 + `reported === false`）意味着通知在途——现有宽限计时继续为它们等；活 == 0 且在途 == 0 意味着被计数的 job 全部已结算**且**已被同回合领取——泄漏，本节拍即清（善后与耗尽路径相同：清零计数、清卡片提示——后者对引擎已摘句柄的定稿卡是无害空操作，见[重复卡 note](2026-09-17-feishu-bridge-duplicate-completion-card.zh.md)），日志行独立措辞（"reconciled away" 与 "grace exhausted" 区分）。
+- **冻结终态标题时钟**（`streaming.ts`）：首次终态渲染（completed/truncated/failed 加已结算的挂起提问态）把标题时间戳定格在定稿时刻；后续渲染——存活卡上的 PATCH、位移自愈重发、挂起卡的结果渲染——复用定格值。非终态时钟照常前进。
 
 为什么不改 tool-jobs：wait/read 交付终态后抑制通知是有意设计（不能对模型讲两遍）；计数归 bridge 所有，就该由 bridge 对账。
 
@@ -33,7 +33,7 @@ Status: implemented
 ## 后果
 
 - 「后台启动 + 同回合领取」模式现在一个 idle tick（约 60 秒）内放行定稿卡，而不是 30 分钟。
-- 重发或重新 PATCH 的终态卡显示真实定稿时刻；迟到的卡不能再冒充刚发生的完成。
+- 终态卡在任何一次渲染里都显示真实定稿时刻；加上重复卡守卫后它根本不会再在群里出现一次，迟到的卡无法再冒充刚发生的完成。
 - 慢任务与在途通知保留全部现有保护（2026-09-16 oc_3c16b 语义不变）。
 - 代价：计数挂起期间每个 idle tick 一次注册表 `list`（内存过滤）。
 - 漂移警报：两个探针锚定 `JobSnapshot.ownerSession`/`status`/`reported`；jobs 包改动任一字段形状都会让 adapter-projection 的过滤用例大声失败。
@@ -43,4 +43,4 @@ Status: implemented
 
 - `tests/engine/engine-unsolicited.spec.ts`：泄漏计数在首个 idle tick 对账清零；重定向后的在途通知宽限边界；活 job 宽限测试不变。
 - `tests/agent-dsh/adapter-projection.spec.ts`：`settledUnreportedBackgroundJobs` 的 owner/status/reported 过滤；注册表缺席 → 0。
-- `tests/streaming.spec.ts`：终态标题时间戳冻结——completed 卡后渲染保持定稿时刻、已结算挂起卡重发保持定稿时刻、非终态渲染时钟照常前进。
+- `tests/streaming.spec.ts`：终态标题时间戳冻结——completed 卡后渲染保持定稿时刻、已结算挂起卡不再接受任何后渲染并保持结果时钟、非终态渲染时钟照常前进。

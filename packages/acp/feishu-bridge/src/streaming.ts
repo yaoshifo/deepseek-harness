@@ -934,6 +934,16 @@ export class StreamPreview {
     }
 
     if (this.previewMsgID === undefined) {
+      // A terminal preview never opens a message: `markCompleted`/`markFailed`
+      // followed by `detachPreview` (the engine's settle-and-freeze path) clears
+      // the handle while leaving this object bound to the state, so a later
+      // flush — the background-hint clear the unsolicited reader runs when a
+      // leaked count reconciles away or its grace expires — would re-send the
+      // whole settled card as a second message (2026-09-17 oc_f7b306 and
+      // oc_f85284 both showed the duplicated 「执行完成」 card). Same terminal
+      // set `reissueLocked` refuses, applied to the create instead of the
+      // reissue.
+      if (this.completed || this.failed || this.degraded) return
       // First preview: try to send a new preview message
       const starter = asPreviewStarter(this.platform)
       if (starter !== undefined) {
