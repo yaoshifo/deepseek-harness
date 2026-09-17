@@ -25,9 +25,9 @@ import { Msg } from '../i18n/index.ts'
 import { newCard } from '../card.ts'
 import { spawnGroupCommon } from './commands.ts'
 import { cronSenderUserID } from './cron.ts'
-import { extractChannelID, sessionDisplayName, type Engine } from './engine.ts'
-import { truncateGroupName } from './groupname.ts'
-import type { Session, SessionManager } from './session.ts'
+import { extractChannelID, type Engine } from './engine.ts'
+import { spawnPlaceholderName, truncateGroupName } from './groupname.ts'
+import { defaultSessionName, type Session, type SessionManager } from './session.ts'
 
 /**
  * The featureState section this module owns. Both sides of the link ride the
@@ -102,6 +102,25 @@ function canLaunch(e: Engine, p: Platform, req: PlanShadowRequest): boolean {
 }
 
 /**
+ * The origin chat's own name, as far as it is known: the session label when it
+ * is a real one, else the name recorded from the chat's messages. '' when the
+ * chat never had one. Deliberately NOT `sessionDisplayName`, whose remaining
+ * fallbacks (the generic session placeholder, then the raw session key) name
+ * the /list and /status rows — neither belongs in a chat-list entry this
+ * feature creates.
+ *
+ * @param sessions - The manager holding the chat's records.
+ * @param session - The origin chat's session record.
+ * @param sessionKey - The origin chat's session key.
+ * @returns The chat's name, or '' when it has none.
+ */
+function chatNameOf(sessions: SessionManager, session: Session, sessionKey: string): string {
+  const own = session.getName().trim()
+  if (own !== '' && own !== defaultSessionName) return own
+  return sessions.getUserMeta(sessionKey)?.chatName.trim() ?? ''
+}
+
+/**
  * The synthetic message the shared group-spawn skeleton reads: the origin
  * chat's key, name, and user, so the child inherits working directory,
  * provider route, breadcrumb, and membership.
@@ -113,14 +132,15 @@ function canLaunch(e: Engine, p: Platform, req: PlanShadowRequest): boolean {
  */
 function originMessage(e: Engine, p: Platform, req: PlanShadowRequest): Message {
   const session = e.sessions.findActive(req.sessionKey)
-  const label = sessionDisplayName(session, e.sessions, req.sessionKey)
+  const name = session === undefined ? '' : chatNameOf(e.sessions, session, req.sessionKey)
   return {
     sessionKey: req.sessionKey,
     platform: p.name(),
     messageID: '',
     userID: session?.getSpawnUserID().trim() ?? '',
     userName: '',
-    chatName: label,
+    // The breadcrumb is the one place a raw key still beats an empty label.
+    chatName: name !== '' ? name : req.sessionKey,
     chatType: 'group',
     content: '',
     originalContent: '',
@@ -160,9 +180,15 @@ async function runLaunch(e: Engine, p: Platform, req: PlanShadowRequest): Promis
   const session = e.sessions.findActive(req.sessionKey)
   if (session === undefined) return
   const nativeID = session.getAgentSessionID()
+  const name = chatNameOf(e.sessions, session, req.sessionKey)
+  // No name to build on: take the /fork placeholder instead, whose
+  // first-message rename names the shadow from the review prompt.
+  const groupName = name === ''
+    ? spawnPlaceholderName(e.name, true)
+    : truncateGroupName(`${name}${e.i18n.t(Msg.PlanShadowNameSuffix)}`)
   const child = await spawnGroupCommon(
     e, p, originMessage(e, p, req),
-    truncateGroupName(`${sessionDisplayName(session, e.sessions, req.sessionKey)}${e.i18n.t(Msg.PlanShadowNameSuffix)}`),
+    groupName,
     e.planShadowPrompt,
     {
       dirArg: '',

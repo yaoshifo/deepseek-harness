@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { defaultPlanShadowPrompt } from '../../src/engine/plan-shadow.ts'
+import { spawnPlaceholderName } from '../../src/engine/groupname.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import {
   createStubAgentSession,
@@ -142,6 +143,19 @@ describe('PlanShadowSpawn', () => {
     expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginNotice))
     expect(p.sent.join('\n')).toContain(e.i18n.t(Msg.PlanShadowChildNotice))
 
+    await deny(e, p, key, decision)
+  })
+
+  it('a chat with no recorded name falls back to the rename placeholder', async () => {
+    // The label falls back to the session key, and a raw key in the chat list
+    // is worse than the placeholder the first-message rename replaces.
+    const { e, p } = newShadowEngine()
+    const key = 'feishu:oc_unnamed:ou_u'
+
+    const decision = parkPlan(e, p, key)
+    await settleLaunch()
+
+    expect(p.groupNames).toEqual([spawnPlaceholderName(e.name, true)])
     await deny(e, p, key, decision)
   })
 
@@ -342,8 +356,8 @@ describe('PlanShadowAbort', () => {
   })
 
   it('a platform that cannot reconstruct reply contexts skips the void notice', async () => {
-    const base = createStubChatroomSpawner('feishu')
-    const p = Object.assign(base, { reconstructReplyCtx: undefined })
+    const p = createStubChatroomSpawner('feishu')
+    delete (p as { reconstructReplyCtx?: unknown }).reconstructReplyCtx
     const teardown = withTeardownRecorder(p)
     const e = new Engine('test', recordingAgent(), [p], '', 'en')
     e.setPlanShadow(true, reviewPrompt)

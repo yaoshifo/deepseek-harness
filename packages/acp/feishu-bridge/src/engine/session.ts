@@ -733,6 +733,13 @@ export interface UserMeta {
   chatName: string
 }
 
+/**
+ * Name a chat's session carries until a real one is known (a spawn group's
+ * name, a platform rename, an LLM rename): a placeholder, not a display name,
+ * so surfaces that name things for the user can tell it apart from one.
+ */
+export const defaultSessionName = 'default'
+
 /** JSON-serializable SessionManager state (version 3, bridge-native camelCase + nested featureState). */
 interface SessionSnapshot {
   version: number
@@ -1067,7 +1074,7 @@ export class SessionManager {
       const s = this.sessions.get(sid)
       if (s !== undefined) return s
     }
-    const s = this.createLocked(userKey, 'default')
+    const s = this.createLocked(userKey, defaultSessionName)
     this.saveLocked()
     return s
   }

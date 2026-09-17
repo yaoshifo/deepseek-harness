@@ -963,7 +963,7 @@ export function jumpButtonsMarkdown(buttons: CardButton[]): CardMarkdownLike & {
 }
 
 /** Session's display name: its own name, the chat's user meta, or the key (Go sessionDisplayName). */
-export function sessionDisplayName(s: Session | undefined, sessions: SessionManager, sessionKey: string): string {
+function sessionDisplayName(s: Session | undefined, sessions: SessionManager, sessionKey: string): string {
   const own = s?.getName().trim()
   if (own !== undefined && own !== '') return own
   const meta = sessions.getUserMeta(sessionKey)
