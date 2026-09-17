@@ -242,7 +242,7 @@ else
     i=$((i + 1))
     if [ "$i" -gt 60 ]; then
       echo "error: no 'ws client ready' for $UNIT since restart; recent journal:" >&2
-      journalctl --user -u "$UNIT" -n 5 2>/dev/null >&2 || true
+      journalctl --user -u "$UNIT" -n 5 >&2 2>/dev/null || true
       print_rollback_hint
       exit 1
     fi
@@ -258,7 +258,7 @@ else
      || ! systemctl --user is-active --quiet "$UNIT" 2>/dev/null \
      || [ "$(systemctl --user show "$UNIT" -p MainPID --value 2>/dev/null)" != "$pid" ]; then
     echo "error: daemon exited within the stability window after 'ws client ready'; recent journal:" >&2
-    journalctl --user -u "$UNIT" -n 5 2>/dev/null >&2 || true
+    journalctl --user -u "$UNIT" -n 5 >&2 2>/dev/null || true
     print_rollback_hint
     exit 1
   fi

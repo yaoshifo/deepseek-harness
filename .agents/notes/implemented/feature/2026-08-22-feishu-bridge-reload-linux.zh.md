@@ -24,8 +24,8 @@ reload.sh 以 `uname` 分支，公共前缀（参数解析、两个拒绝守卫�
 
 ## 后果
 
-`/reload` 在 Linux 部署上可用，回复契约不变：restart 之前的失败（构建错误、unit 缺失）聊天内回复，之后的失败（探活超时）只有日志——已文档化的天花板。探活超时会把 journal 最后五行 tail 进 `feishu-bridge-reload.log` 供诊断。`journalctl --user` 需要用户总线（`XDG_RUNTIME_DIR`）；systemd unit 已设置，普通终端天然具备。
+`/reload` 在 Linux 部署上可用，回复契约不变：restart 之前的失败（构建错误、unit 缺失）聊天内回复，之后的失败（探活超时）只有日志——已文档化的天花板。探活超时、以及 daemon 在稳定性窗口内死掉这两种情况，都会把 journal 最后五行 tail 进 `feishu-bridge-reload.log` 供诊断。这段摘录必须写成 `>&2 2>/dev/null`：shell 的重定向从左到右生效，`2>/dev/null >&2` 复制到的是已经指向 `/dev/null` 的描述符，摘录会被丢掉——2026-09-17 那次 dev reload 实际死在 profile 配置校验上，正因为这行被丢掉，回滚 runbook 反而被读成了原因。`journalctl --user` 需要用户总线（`XDG_RUNTIME_DIR`）；systemd unit 已设置，普通终端天然具备。
 
 ## 测试
 
-`tests/reload-script.spec.ts` 新增 `reload.sh on Linux/systemd` 套件（6 例），在 darwin 与 linux 上都运行：PATH 上遮蔽 `uname`/`systemctl`/`journalctl`/`ps`（no-op 的 `sleep` 桩让 60 轮探活超时在毫秒级耗尽）。用例：happy path（恰为 `cat` + `restart`）、`DSH_SESSION_JSONL` 拒绝且 systemctl 零调用、unit 缺失 fail loud、探活超时、`FB_RELOAD_FROM_DAEMON=1` 绕过 ppid 回溯、该绕过在 daemon 承载会话下仍被拒绝。真机冒烟按 MIGRATION.md（dev 服务器终端直跑 + 聊天侧 `/reload --skip-build`）。
+`tests/reload-script.spec.ts` 新增 `reload.sh on Linux/systemd` 套件，在 darwin 与 linux 上都运行：PATH 上遮蔽 `uname`/`systemctl`/`journalctl`/`ps`（no-op 的 `sleep` 桩让 60 轮探活超时在毫秒级耗尽）。用例：happy path（恰为 `cat` + `restart`）、`DSH_SESSION_JSONL` 拒绝且 systemctl 零调用、unit 缺失 fail loud、探活超时、稳定性窗口内重生成、回滚 runbook 的干净/脏/无 git 三个分支、`FB_RELOAD_FROM_DAEMON=1` 绕过 ppid 回溯、该绕过在 daemon 承载会话下仍被拒绝。两条用例钉住失败摘录：探活失败与稳定性窗口内死亡都必须把指明真因的那行 journal 显示出来。真机冒烟按 MIGRATION.md（dev 服务器终端直跑 + 聊天侧 `/reload --skip-build`）。

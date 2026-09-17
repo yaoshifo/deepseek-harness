@@ -265,16 +265,27 @@ interface LinuxStaging {
 /**
  * Build a stub bin dir for the systemd path. `unitExists` makes the
  * `systemctl cat` precheck fail; `wsOk` controls whether `systemctl restart`
- * appends the WS-ready line to the (stubbed) journal; `configOk=false` makes
+ * appends the WS-ready line to the (stubbed) journal; `journalLine` appends an
+ * unrelated journal line on restart (the production shape when the daemon
+ * boots without reaching readiness — the error the failure path must show);
+ * `configOk=false` makes
  * the config preflight (stubbed `node`) fail; `psDaemon` makes the ppid walk
  * see a daemon-shaped ancestor; `sessionStore` names the hosting daemon for
  * the DSH_SESSION_JSONL guard; `respawn` makes every `systemctl show` report
  * a fresh MainPID so the stability re-check sees a crash-looping daemon.
  */
 async function stageLinux(
-  opts: { unitExists?: boolean; wsOk?: boolean; configOk?: boolean; psDaemon?: boolean; sessionStore?: string; respawn?: boolean } = {},
+  opts: {
+    unitExists?: boolean
+    wsOk?: boolean
+    configOk?: boolean
+    psDaemon?: boolean
+    sessionStore?: string
+    respawn?: boolean
+    journalLine?: string
+  } = {},
 ): Promise<LinuxStaging> {
-  const { unitExists = true, wsOk = true, configOk = true, psDaemon = false, sessionStore = 'none', respawn = false } = opts
+  const { unitExists = true, wsOk = true, configOk = true, psDaemon = false, sessionStore = 'none', respawn = false, journalLine = '' } = opts
   const root = await mkdtemp(join(tmpdir(), 'reload-linux-spec-'))
   stubs.push(root)
   const bin = join(root, 'bin')
@@ -296,7 +307,7 @@ async function stageLinux(
     `echo "$*" >> ${callsPath}`,
     'case "$2" in',
     `  cat) exit ${unitExists ? 0 : 1} ;;`,
-    '  restart) if [ "$FB_SPEC_WS_OK" = 1 ]; then printf "ws client ready\\n" >> "$FB_SPEC_JOURNAL"; fi; exit 0 ;;',
+    '  restart) if [ -n "$FB_SPEC_JOURNAL_LINE" ]; then printf "%s\\n" "$FB_SPEC_JOURNAL_LINE" >> "$FB_SPEC_JOURNAL"; fi; if [ "$FB_SPEC_WS_OK" = 1 ]; then printf "ws client ready\\n" >> "$FB_SPEC_JOURNAL"; fi; exit 0 ;;',
     '  show) n=$(cat "$FB_SPEC_SHOW_COUNT" 2>/dev/null || echo 0); if [ "$FB_SPEC_RESPAWN" = 1 ]; then echo $((n + 1)) > "$FB_SPEC_SHOW_COUNT"; fi; echo $((4242 + n)) ;;',
     '  is-active) exit 0 ;;',
     'esac',
@@ -334,6 +345,7 @@ async function stageLinux(
     LOG_DIR: logDir,
     FB_SPEC_WS_OK: wsOk ? '1' : '0',
     FB_SPEC_JOURNAL: journalPath,
+    FB_SPEC_JOURNAL_LINE: journalLine,
     FB_SPEC_RESPAWN: respawn ? '1' : '0',
     FB_SPEC_SHOW_COUNT: join(root, 'show-count'),
     // Keep the suite fast: the stability re-check runs with a zero window.
@@ -407,6 +419,26 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
     const result = await runScript(s.env)
     expect(result.code).toBe(1)
     expect(result.stderr).toContain("no 'ws client ready'")
+  }, 10000)
+
+  it('shows the journal tail on a failed probe so the real error reaches the operator', async () => {
+    // 2026-09-17 dev reload: the boot died in the profile-config validation
+    // (a removed knob) and the only line naming it lived in the journal — but
+    // the failure path discarded its own excerpt, leaving the rollback runbook
+    // to read as the cause.
+    const s = await stageLinux({ wsOk: false, journalLine: '[E] feishu-bridge Error: stub rejected config' })
+    const result = await runScript(s.env)
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain("no 'ws client ready'")
+    expect(result.stderr, `stderr=${result.stderr}`).toContain('stub rejected config')
+  }, 10000)
+
+  it('shows the journal tail when the daemon dies inside the stability window', async () => {
+    const s = await stageLinux({ respawn: true, journalLine: '[E] feishu-bridge Error: stub died after ready' })
+    const result = await runScript(s.env)
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('stability window')
+    expect(result.stderr, `stderr=${result.stderr}`).toContain('stub died after ready')
   }, 10000)
 
   it('prints the rollback runbook when the WS probe times out (clean tree)', async () => {
