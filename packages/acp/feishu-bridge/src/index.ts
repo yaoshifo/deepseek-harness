@@ -164,6 +164,8 @@ export interface FeatureSwitches {
   subtaskLivePanelIntervalMs?: number
   /** Silence window in ms after which a panel row flags a child as stalled (default 120000). */
   subtaskLivePanelStallMs?: number
+  /** Reissue a displaced live panel at the chat tail so it keeps owning the newest-message chat summary; default true. */
+  subtaskLivePanelFollowTail?: boolean
 }
 
 /** LLM group-name generation + Lucide icon avatars for one project (Go [projects.group_name], #49/#52). */
@@ -556,6 +558,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       subtaskLivePanel: Schema.boolean().description('Live per-child panel card while a settled parent turn has unreported native subtasks; default true'),
       subtaskLivePanelIntervalMs: Schema.natural().description('Panel refresh interval in ms (default 15000; 0 disables the panel)'),
       subtaskLivePanelStallMs: Schema.natural().description('Silence window in ms before a panel row flags a child as stalled (default 120000)'),
+      subtaskLivePanelFollowTail: Schema.boolean().description('Reissue a displaced live panel at the chat tail (delete old card, post fresh) so the chat summary keeps showing subtask status; default true'),
     }),
     groupName: Schema.object({
       enabled: Schema.boolean().description('LLM group naming (#49); default true'),
@@ -1526,6 +1529,7 @@ export function buildProjectAssembly(
   engine.setSubtaskPanelConfig({
     enabled: project.features?.subtaskLivePanel !== false,
     intervalMs: project.features?.subtaskLivePanelIntervalMs ?? 15_000,
+    followTail: project.features?.subtaskLivePanelFollowTail !== false,
     ...(project.features?.subtaskLivePanelStallMs !== undefined
       ? { stallMs: project.features.subtaskLivePanelStallMs }
       : {}),

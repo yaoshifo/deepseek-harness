@@ -6,7 +6,7 @@
  * @module dsh-feishu-bridge/tests-subtask-panel
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { renderSubtaskPanelCard, type PanelI18n } from '../../src/engine/subtask-panel.ts'
 import { ProjectStateStore } from '../../src/engine/project-state.ts'
@@ -25,20 +25,34 @@ import {
 interface PanelPlatform extends StubCardPlatform {
   postedCards: unknown[]
   updateCards: unknown[]
+  updatedHandles: unknown[]
+  deletedHandles: unknown[]
+  /** Displacement ledger: epoch ms of the last tracked chat activity. */
+  lastActivityMs: number
   sendCardWithHandle(replyCtx: unknown, card: unknown): Promise<unknown>
   updateCardWithHandle(handle: unknown, card: unknown): Promise<void>
+  previewDisplaced(handle: unknown, sinceMs: number): boolean
+  deletePreviewMessage(handle: unknown): Promise<void>
 }
 
 function panelPlatform(): PanelPlatform {
   const p = createStubCardPlatformFull('test') as unknown as PanelPlatform
   p.postedCards = []
   p.updateCards = []
+  p.updatedHandles = []
+  p.deletedHandles = []
+  p.lastActivityMs = 0
   p.sendCardWithHandle = async (_replyCtx, card) => {
     p.postedCards.push(card)
     return `handle-${p.postedCards.length}`
   }
-  p.updateCardWithHandle = async (_handle, card) => {
+  p.updateCardWithHandle = async (handle, card) => {
     p.updateCards.push(card)
+    p.updatedHandles.push(handle)
+  }
+  p.previewDisplaced = (_handle, sinceMs) => p.lastActivityMs > sinceMs
+  p.deletePreviewMessage = async (handle) => {
+    p.deletedHandles.push(handle)
   }
   return p
 }
@@ -58,6 +72,30 @@ const i18n: PanelI18n = {
 /** One macrotask tick: flushes the fire-and-forget panel sends. */
 async function settle(): Promise<void> {
   await new Promise((resolve) => { setTimeout(resolve, 0) })
+}
+
+/** Engine with a live interactive parent state over the given session key. */
+function panelEngineFor(p: Platform, parentKey: string, agent: ReturnType<typeof createStubAgent> = createStubAgent()): Engine {
+  const e = new Engine('test', agent, [p], '', 'en')
+  e.setProjectStateStore(new ProjectStateStore(''))
+  e.sessions.getOrCreateActive(parentKey)
+  const state = new InteractiveState()
+  state.agentSession = newControllableSession('parent-live-1')
+  state.platform = p
+  state.replyCtx = 'parent-rctx'
+  e.interactiveStates.set(parentKey, state)
+  return e
+}
+
+/** Seed one native-child record under the given parent session key. */
+function seedPanelChild(e: Engine, parentKey: string, childId: string, reported: boolean): void {
+  e.projectState?.setNativeChild(childId, {
+    parent_key: parentKey,
+    parent_agent_session_id: 'parent-live-1',
+    label: `task ${childId}`,
+    worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+    reported,
+  })
 }
 
 /** Markdown text of a recorded card (all markdown elements joined). */
@@ -189,25 +227,11 @@ describe('background panel lifecycle', () => {
   }
 
   function panelEngine(p: Platform, agent: ReturnType<typeof activityAgent>['agent']): Engine {
-    const e = new Engine('test', agent, [p], '', 'en')
-    e.setProjectStateStore(new ProjectStateStore(''))
-    e.sessions.getOrCreateActive(parentKey)
-    const state = new InteractiveState()
-    state.agentSession = newControllableSession('parent-live-1')
-    state.platform = p
-    state.replyCtx = 'parent-rctx'
-    e.interactiveStates.set(parentKey, state)
-    return e
+    return panelEngineFor(p, parentKey, agent)
   }
 
   function seedChild(e: Engine, childId: string, reported: boolean): void {
-    e.projectState?.setNativeChild(childId, {
-      parent_key: parentKey,
-      parent_agent_session_id: 'parent-native-1',
-      label: `task ${childId}`,
-      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
-      reported,
-    })
+    seedPanelChild(e, parentKey, childId, reported)
   }
 
   it('posts a panel when a parent settles with pending children, then finalizes when all report', async () => {
@@ -341,5 +365,194 @@ describe('background panel lifecycle', () => {
     await settle()
     expect(e.subtaskPanels.has(parentKey)).toBe(false)
     expect((p.updateCards[p.updateCards.length - 1] as RecordedCard).header?.title).toContain('all reported')
+  })
+})
+
+describe('panel follow-tail reclaim', () => {
+  const parentKey = 'test:panel-follow:u1'
+
+  function panelEngine(p: Platform, agent = createStubAgent()): Engine {
+    return panelEngineFor(p, parentKey, agent)
+  }
+
+  function seedChild(e: Engine, childId: string, reported: boolean): void {
+    seedPanelChild(e, parentKey, childId, reported)
+  }
+
+  /** Microtask flush: the panel post/reissue chains are microtask-only. */
+  async function flush(rounds = 12): Promise<void> {
+    for (let i = 0; i < rounds; i++) await Promise.resolve()
+  }
+
+  it('reissues the panel at the chat tail when displaced, then PATCHes the new card', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = panelPlatform()
+      const e = panelEngine(p)
+      seedChild(e, 'child-a', false)
+      e.ensureSubtaskPanel(parentKey)
+      await flush()
+      expect(p.postedCards).toHaveLength(1)
+
+      // A newer message landed after the panel posted: the next tick must
+      // reissue the card at the tail instead of PATCHing above the intruder.
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(p.postedCards).toHaveLength(2)
+      expect(p.deletedHandles).toEqual(['handle-1'])
+
+      // Nothing landed after the reissue: the next tick PATCHes in place.
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(p.postedCards).toHaveLength(2)
+      expect(p.updatedHandles[p.updatedHandles.length - 1]).toBe('handle-2')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('finalizes in place when all children report, even while displaced', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = panelPlatform()
+      const e = panelEngine(p)
+      seedChild(e, 'child-a', false)
+      seedChild(e, 'child-b', false)
+      e.ensureSubtaskPanel(parentKey)
+      await flush()
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(p.postedCards).toHaveLength(2)
+
+      // Every child reports while the chat stays busy: the panel must settle
+      // to its done card via PATCH, never jump the tail again.
+      for (const childId of ['child-a', 'child-b']) {
+        const rec = e.nativeChildEntries()[childId]!
+        e.projectState?.setNativeChild(childId, { ...rec, reported: true })
+      }
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(p.postedCards).toHaveLength(2)
+      expect(e.subtaskPanels.has(parentKey)).toBe(false)
+      expect(p.updatedHandles[p.updatedHandles.length - 1]).toBe('handle-2')
+      expect((p.updateCards[p.updateCards.length - 1] as RecordedCard).header?.title).toContain('all reported')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps PATCH-only when follow-tail is disabled by config', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = panelPlatform()
+      const e = panelEngine(p)
+      e.setSubtaskPanelConfig({ enabled: true, intervalMs: 15_000, followTail: false })
+      seedChild(e, 'child-a', false)
+      e.ensureSubtaskPanel(parentKey)
+      await flush()
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(p.postedCards).toHaveLength(1)
+      expect(p.deletedHandles).toHaveLength(0)
+      expect(p.updatedHandles).toEqual(['handle-1'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('defers a second tail jump inside the cooldown window', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = panelPlatform()
+      const e = panelEngine(p)
+      seedChild(e, 'child-a', false)
+      e.ensureSubtaskPanel(parentKey)
+      await flush()
+
+      e.reclaimSubtaskPanelTail(parentKey)
+      await flush()
+      expect(p.postedCards).toHaveLength(2)
+
+      // An immediate second reclaim stays inside the 2s cooldown: no jump.
+      e.reclaimSubtaskPanelTail(parentKey)
+      await flush()
+      expect(p.postedCards).toHaveLength(2)
+
+      // Past the cooldown the reclaim goes through again.
+      await vi.advanceTimersByTimeAsync(2_500)
+      e.reclaimSubtaskPanelTail(parentKey)
+      await flush()
+      expect(p.postedCards).toHaveLength(3)
+      expect(p.deletedHandles).toEqual(['handle-1', 'handle-2'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reclaimSubtaskPanelTail reissues without the displacement probe', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = panelPlatform()
+      const e = panelEngine(p)
+      seedChild(e, 'child-a', false)
+      e.ensureSubtaskPanel(parentKey)
+      await flush()
+      // No ledger activity at all — the probe would say "not displaced";
+      // the turn-end reclaim jumps anyway (the placeholder card exemption
+      // keeps the probe blind to a settled turn card).
+      e.reclaimSubtaskPanelTail(parentKey)
+      await flush()
+      expect(p.postedCards).toHaveLength(2)
+      expect(p.deletedHandles).toEqual(['handle-1'])
+
+      // No live panel, or the feature off: both stay no-ops.
+      e.reclaimSubtaskPanelTail('test:other-chat:u1')
+      e.setSubtaskPanelConfig({ enabled: true, intervalMs: 15_000, followTail: false })
+      e.reclaimSubtaskPanelTail(parentKey)
+      await flush()
+      expect(p.postedCards).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the new handle when the old card delete fails, and the old card when the reissue send fails', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = panelPlatform()
+      const e = panelEngine(p)
+      seedChild(e, 'child-a', false)
+      e.ensureSubtaskPanel(parentKey)
+      await flush()
+
+      // Delete failure only orphans the old card; the reissue stands.
+      p.deletePreviewMessage = async () => { throw new Error('delete denied') }
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(p.postedCards).toHaveLength(2)
+      p.deletePreviewMessage = async (handle: unknown) => { p.deletedHandles.push(handle) }
+
+      // Send failure keeps the old card delivering content.
+      const base = p.sendCardWithHandle.bind(p)
+      p.sendCardWithHandle = async (rc: unknown, card: unknown) => {
+        if (p.postedCards.length >= 2) throw new Error('send denied')
+        return base(rc, card)
+      }
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(p.postedCards).toHaveLength(2)
+      expect(p.updatedHandles[p.updatedHandles.length - 1]).toBe('handle-2')
+
+      // Restored sender: the deferred reissue goes through on the next tick.
+      p.sendCardWithHandle = base
+      p.lastActivityMs = Date.now() + 10
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(p.postedCards).toHaveLength(3)
+      // handle-1 stays orphaned — its delete failed earlier; the restored
+      // cleaner removes only the live predecessor of the newest card.
+      expect(p.deletedHandles).toEqual(['handle-2'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

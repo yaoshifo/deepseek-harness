@@ -30,6 +30,7 @@ import type {
   AskDecision,
   AskRequest,
   CardSender,
+  CardSenderWithUpdate,
   DeliveryOutcome,
   Event,
   FeishuWorkspaceInfo,
@@ -150,7 +151,7 @@ import {
   truncateGroupName,
 } from './groupname.ts'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.ts'
-import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, ProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.ts'
+import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, previewReissueCooldownMs, ProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.ts'
 import { isTodoToolName, parseTodoItems } from '../progress.ts'
 import { newAsyncSender, type AsyncSender } from '../async-sender.ts'
 import { RateLimiter } from '../ratelimit.ts'
@@ -159,7 +160,7 @@ import { rm } from 'node:fs/promises'
 import { dirname, join as joinPath } from 'node:path'
 import { atomicWriteFileSync } from '../atomicwrite.ts'
 import { createHash } from 'node:crypto'
-import { asCompletionNoticePreference, asCompletionNotifier, asChatPhasePainter, asDeliveryOutcomeClassifier, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
+import { asCompletionNoticePreference, asCompletionNotifier, asChatPhasePainter, asDeliveryOutcomeClassifier, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asPreviewCleaner, asPreviewDisplacementProber, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.ts'
 import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.ts'
 import { renderHelpGroupCard } from './misc-commands.ts'
@@ -1034,6 +1035,12 @@ interface SubtaskPanelState {
   startedAt: number
   /** Header spinner image key resolved at post time ('' when the platform has none). */
   iconKey: string
+  /** Reply context the panel was posted under; reissues send through it. */
+  replyCtx: unknown
+  /** Epoch ms the current card last landed (post or reissue); the displacement probe's baseline. */
+  placedAtMs: number
+  /** Epoch ms of the last reissue attempt; the cooldown defers tail churn. */
+  lastReissueAt: number
 }
 
 /**
@@ -1126,6 +1133,8 @@ export class Engine {
   subtaskPanelIntervalMs: number = 15_000
   /** Silence window after which a panel row flags a child as stalled. */
   subtaskPanelStallMs: number = 120_000
+  /** Whether a displaced live panel reissues at the chat tail (features.subtaskLivePanelFollowTail). */
+  subtaskPanelFollowTail: boolean = true
   /** Gather barrier fallback timeout; 0 = defaultSubtaskGatherTimeout (Go subtaskGatherTimeout). */
   subtaskGatherTimeout: number = 0
   /** Cap on a subtask report's delivered text, in code points (`subtask.reportMaxChars`). */
@@ -4448,6 +4457,10 @@ export class Engine {
       await this.applyChatPhase(phasePlatform, sessionKey, errored ? 'attention' : this.chatBasePhase(phasePlatform, sessionKey))
     }
 
+    // The turn's settled card and its trailing sends hold the chat tail
+    // below a live background-subtask panel — reclaim it so the panel keeps
+    // owning the newest-message chat summary. No-op without a panel.
+    this.reclaimSubtaskPanelTail(sessionKey)
 
     // Queued messages take over this loop as a fresh turn (Go in-loop drain).
     const queued = state.pendingMessages.shift()
@@ -7500,7 +7513,13 @@ export class Engine {
           const handle = await cu.sendCardWithHandle(parentRctx, card)
           if (this.subtaskPanels.has(parentKey)) return // a racing post won
           const timer = setInterval(() => { this.refreshSubtaskPanel(parentKey) }, this.subtaskPanelIntervalMs)
-          this.subtaskPanels.set(parentKey, { handle, timer, startedAt, iconKey })
+          // placedAt is read after the send resolves, so it postdates the
+          // platform's activity-ledger touch inside sendCardWithHandle — the
+          // panel's own post can never read as displacing itself.
+          this.subtaskPanels.set(parentKey, {
+            handle, timer, startedAt, iconKey,
+            replyCtx: parentRctx, placedAtMs: Date.now(), lastReissueAt: 0,
+          })
           console.info(`subtask: background panel posted (${parentKey}: ${rows.length} child/children)`)
         } catch (error) {
           console.warn(`subtask: background panel post failed (${parentKey}): ${String(error)}`)
@@ -7519,7 +7538,19 @@ export class Engine {
     const rows = this.subtaskPanelChildren(parentKey)
     const activity = asSubagentActivitySource(this.agent)
     const now = Date.now()
-    const cu = asCardSenderWithUpdate(this.reportCapablePlatform() ?? this.platforms[0] ?? ({} as Platform))
+    const p = this.reportCapablePlatform() ?? this.platforms[0] ?? ({} as Platform)
+    const cu = asCardSenderWithUpdate(p)
+    // Follow-tail reclaim: a tracked message landed below the panel, so
+    // PATCHing in place would strand it — and the newest-message chat
+    // summary — above the intruder. Reissue the running card at the tail
+    // instead. Terminal phases always PATCH: the window is over and the
+    // synthesis reply owns the tail. Platforms without a displacement
+    // probe or card deletion keep PATCH-only.
+    if (cu !== undefined && rows.length > 0 && this.subtaskPanelFollowTail
+      && this.panelDisplaced(panel, p, now)
+      && this.reissueSubtaskPanel(parentKey, panel, cu, rows, now)) {
+      return
+    }
     const card = renderSubtaskPanelCard(
       this.i18n,
       rows.length === 0
@@ -7543,6 +7574,102 @@ export class Engine {
         activity?.forgetSubagentActivity(this.childIdsOf(parentKey))
       }
     })
+  }
+
+  /**
+   * Whether the platform's activity ledger shows the panel card displaced —
+   * a tracked message landed in its chat after the card last landed — and the
+   * reissue cooldown allows a tail jump now. Probe-less and cleaner-less
+   * platforms never reclaim (PATCH-only, the pre-follow-tail behavior).
+   * @param panel - Live panel state carrying the handle and baselines.
+   * @param p - Platform owning the card and the ledger.
+   * @param now - Current epoch ms.
+   */
+  private panelDisplaced(panel: SubtaskPanelState, p: Platform, now: number): boolean {
+    if (now - panel.lastReissueAt < previewReissueCooldownMs) return false
+    if (asPreviewDisplacementProber(p) === undefined || asPreviewCleaner(p) === undefined) return false
+    try {
+      return asPreviewDisplacementProber(p)?.previewDisplaced(panel.handle, panel.placedAtMs) === true
+    } catch {
+      // A handle the prober cannot read is not a preview handle; PATCH stays safe.
+      return false
+    }
+  }
+
+  /**
+   * Reissue the running panel card at the chat tail: send a fresh card with
+   * the current content, delete the displaced one, adopt the new handle.
+   * Fire-and-forget like the tick PATCH — a failed send keeps the old card
+   * (and its content) with the cooldown deferring the retry; a failed delete
+   * only orphans the old card. The cooldown mark is set at initiation, so a
+   * second refresh inside the window cannot double-send.
+   * @param parentKey - Parent session key whose panel reissues.
+   * @param panel - Live panel state mutated onto the new handle.
+   * @param cu - Card sender capability of the owning platform.
+   * @param rows - Pending panel rows rendered onto the reissued card.
+   * @param now - Current epoch ms.
+   * @returns True when a reissue was initiated (the caller skips this tick's PATCH).
+   */
+  private reissueSubtaskPanel(
+    parentKey: string,
+    panel: SubtaskPanelState,
+    cu: CardSenderWithUpdate,
+    rows: Array<{ childId: string; label: string; toolCalls: number; lastEventAt: number }>,
+    now: number,
+  ): boolean {
+    panel.lastReissueAt = now
+    const card = renderSubtaskPanelCard(
+      this.i18n,
+      { pending: rows, reportedCount: this.reportedNativeChildrenOf(parentKey), startedAt: panel.startedAt, phase: 'running' },
+      now, this.subtaskPanelStallMs, panel.iconKey,
+    )
+    void cu.sendCardWithHandle(panel.replyCtx, card).then(
+      async (handle) => {
+        const old = panel.handle
+        panel.handle = handle
+        panel.placedAtMs = Date.now()
+        console.info(`subtask: background panel reissued to the chat tail (${parentKey})`)
+        const cleaner = asPreviewCleaner(this.reportCapablePlatform() ?? this.platforms[0] ?? ({} as Platform))
+        if (cleaner === undefined) return
+        try {
+          await cleaner.deletePreviewMessage(old)
+        } catch (error) {
+          console.warn(`subtask: background panel displaced card delete failed (${parentKey}): ${String(error)}`)
+        }
+      },
+      (error: unknown) => {
+        console.warn(`subtask: background panel reissue failed (${parentKey}): ${String(error)}`)
+        // Fresh content outranks the tail position (the stream preview's
+        // displacement-heal discipline): PATCH the card that is still live
+        // so the panel does not go stale while the reissue retries.
+        void cu.updateCardWithHandle(panel.handle, card).catch(() => undefined)
+      },
+    )
+    return true
+  }
+
+  /**
+   * Turn-end tail reclaim: a turn that ran while the panel was live leaves
+   * its settled card — and its ✅/followups trailing sends — below the panel.
+   * Reissue the running panel at the tail without the displacement probe:
+   * the turn's placeholder card never touches the activity ledger (the
+   * stream-preview self-displacement exemption), so on projects without a
+   * per-turn ✅ the probe stays blind to it. Cooldown-gated like the tick
+   * path; a no-op without a live running panel or the follow-tail feature.
+   * @param parentKey - Parent session key whose panel reclaims the tail.
+   */
+  reclaimSubtaskPanelTail(parentKey: string): void {
+    const panel = this.subtaskPanels.get(parentKey)
+    if (panel === undefined || !this.subtaskPanelFollowTail) return
+    const rows = this.subtaskPanelChildren(parentKey)
+    if (rows.length === 0) return
+    const p = this.reportCapablePlatform()
+    if (p === undefined) return
+    const cu = asCardSenderWithUpdate(p)
+    if (cu === undefined || asPreviewCleaner(p) === undefined) return
+    const now = Date.now()
+    if (now - panel.lastReissueAt < previewReissueCooldownMs) return
+    this.reissueSubtaskPanel(parentKey, panel, cu, rows, now)
   }
 
   /**
@@ -7596,12 +7723,14 @@ export class Engine {
   /**
    * Configure the background-subtask live panel (features.subtaskLivePanel*).
    * A zero interval disables the panel entirely.
-   * @param cfg - Enabled flag, refresh interval ms, and stall-flag window ms.
+   * @param cfg - Enabled flag, refresh interval ms, stall-flag window ms, and
+   *   the follow-tail reclaim switch (default on).
    */
-  setSubtaskPanelConfig(cfg: { enabled: boolean; intervalMs: number; stallMs?: number }): void {
+  setSubtaskPanelConfig(cfg: { enabled: boolean; intervalMs: number; stallMs?: number; followTail?: boolean }): void {
     this.subtaskPanelEnabled = cfg.enabled && cfg.intervalMs > 0
     this.subtaskPanelIntervalMs = cfg.intervalMs
     if (cfg.stallMs !== undefined && cfg.stallMs > 0) this.subtaskPanelStallMs = cfg.stallMs
+    this.subtaskPanelFollowTail = cfg.followTail !== false
   }
 
   /** Live native session id of an engine session's running agent ('' = none). */
