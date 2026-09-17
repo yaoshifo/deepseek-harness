@@ -48,7 +48,7 @@
                 },
                 "multi_select": {
                   "type": "boolean",
-                  "description": "Whether the user may select more than one option. Defaults to false."
+                  "description": "Whether the user may select more than one option. Defaults to false — if the question text tells the user multiple selections are allowed (e.g. 「可多选」), set true, otherwise the card renders single-select."
                 }
               },
               "required": [

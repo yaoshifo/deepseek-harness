@@ -42,7 +42,7 @@
                       },
                       "recommended": {
                         "type": "boolean",
-                        "description": "Marks a recommended option; capable multi-select UIs pre-check it."
+                        "description": "Marks a recommended option; the UI tags it — do not write the marker into the label."
                       }
                     },
                     "required": [
@@ -52,7 +52,7 @@
                 },
                 "multi_select": {
                   "type": "boolean",
-                  "description": "Whether the user may select more than one option. Defaults to false."
+                  "description": "Whether the user may select more than one option. Defaults to false — if the question text tells the user multiple selections are allowed (e.g. 「可多选」), set true, otherwise the card renders single-select."
                 }
               },
               "required": [
