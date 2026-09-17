@@ -9,7 +9,7 @@ English | [中文](2026-09-17-feishu-bridge-duplicate-completion-card.zh.md)
 Two groups saw the same「执行完成」card twice on 2026-09-17:
 
 - oc_f7b306: the turn's card, created at 20:50:17 and settled at 21:10:03, appeared a second time at 21:11:07 as a new message at the chat tail. The copy was identical except for the four nodes only an in-place update injects — the `💡 1 个后台任务` body line, the 导出文件 / 查看完整回复 buttons, and the `✅ 已发送 26s` render status.
-- oc_f85284: the turn's card settled at 14:38:00 and a second copy appeared at 15:09:09, headed 15:09:08 instead of the settlement time — the observation [the background-count reconcile note](2026-09-17-feishu-bridge-bg-count-leak-reconcile.md) first recorded. Eight sends with the same signature appear across the daemon logs from 2026-09-14 on, each one second after a background-grace give-up or its reconcile tick.
+- oc_f85284: the turn's card settled at 14:38:00 and a second copy appeared at 15:09:09, headed 15:09:08 instead of the settlement time — the observation [the background-count reconcile note](2026-09-17-feishu-bridge-bg-count-leak-reconcile.md) first recorded. A hint clear and a card send land in the same second 23 times across the retained daemon logs (2026-09-01 through 2026-09-17), each pairing one second after a background-grace give-up or a reconcile tick.
 
 The chain, identical in both:
 
