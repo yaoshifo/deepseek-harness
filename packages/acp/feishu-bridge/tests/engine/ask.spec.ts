@@ -257,6 +257,22 @@ describe('buildAskQuestionCard', () => {
     expect((card.elements[3] as { text: string }).text).toBe('Probe concurrently (recommended)')
   })
 
+  it('bracket, case, and spacing variants of the recommended form never double-tag', () => {
+    const variants: UserQuestion = {
+      ...singleQuestion(),
+      options: [
+        { label: '探针并发化 (推荐)', description: '', recommended: true },
+        { label: '探针并发化 [Recommended]', description: '', recommended: true },
+        { label: '探针并发化 ( 推薦 )', description: '', recommended: true },
+      ],
+    }
+    const card = buildAskQuestionCard(variants, 0, 1)
+
+    expect((card.elements[1] as { text: string }).text).toBe('探针并发化 (推荐)')
+    expect((card.elements[2] as { text: string }).text).toBe('探针并发化 [Recommended]')
+    expect((card.elements[3] as { text: string }).text).toBe('探针并发化 ( 推薦 )')
+  })
+
   it('a multi-question ask titles its per-question card with the progress suffix (2/5)', () => {
     const card = buildAskQuestionCard(singleQuestion(), 1, 5)
     expect(card.header?.title).toBe('‼️ Setup (2/5)')

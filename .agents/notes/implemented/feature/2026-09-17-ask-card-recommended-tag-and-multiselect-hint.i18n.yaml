@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-17-ask-card-recommended-tag-and-multiselect-hint.md
-2026-09-17-ask-card-recommended-tag-and-multiselect-hint.md: cb4ccae62f39498a2bccb3a277ac479953e90bdc
-2026-09-17-ask-card-recommended-tag-and-multiselect-hint.zh.md: 940966a71fb5469ab0c247a776e0837238be02dc
+2026-09-17-ask-card-recommended-tag-and-multiselect-hint.md: 22b9e422a5eaedb07514ccb0243621956f8c87d6
+2026-09-17-ask-card-recommended-tag-and-multiselect-hint.zh.md: 933f286ae79fc8f4152e8970bf97ea52e21bdfb1

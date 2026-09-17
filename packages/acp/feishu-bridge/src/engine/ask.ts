@@ -463,11 +463,29 @@ export function buildAskQuestionCardSettled(
 }
 
 /**
+ * Fold one string for recommended-tag detection: lowercase, every bracket
+ * glyph (full/half-width, square, lenticular) to its ASCII pair, and all
+ * whitespace away — so bracket, case, and spacing variants of the message
+ * table's standard forms compare equal. Bare marker words (no brackets)
+ * never match: an option like 「不推荐」 must not read as already tagged.
+ *
+ * @param s - The label or message-table form to fold.
+ * @returns The folded comparison skeleton.
+ */
+function foldTagForm(s: string): string {
+  return s.toLowerCase()
+    .replace(/[（【\[]/g, '(')
+    .replace(/[）】\]]/g, ')')
+    .replace(/\s+/g, '')
+}
+
+/**
  * The display label of one single-select option: a recommended option's
  * label gains the localized recommended suffix unless it already carries
- * any of the message table's standard forms anywhere (a model-authored
- * marker stays as-is, so it can never double-tag). The wire-facing
- * `askq_label` always keeps the raw label.
+ * a bracketed marker matching any of the message table's standard forms
+ * under {@link foldTagForm} folding (a model-authored marker stays as-is,
+ * so it can never double-tag). The wire-facing `askq_label` always keeps
+ * the raw label.
  *
  * @param opt - The option whose display label renders.
  * @param i18n - Ask-card copy face supplying the localized suffix.
@@ -477,7 +495,8 @@ function recommendedDisplayLabel(opt: UserQuestionOption, i18n: AskCardI18n): st
   if (opt.recommended !== true) return opt.label
   const forms = Object.values(messages.ask_recommended_suffix)
     .filter((form): form is string => form !== undefined)
-  return forms.some(form => opt.label.includes(form)) ? opt.label
+    .map(foldTagForm)
+  return forms.some(form => foldTagForm(opt.label).includes(form)) ? opt.label
     : `${opt.label}${i18n.t(Msg.AskRecommendedSuffix)}`
 }
 
