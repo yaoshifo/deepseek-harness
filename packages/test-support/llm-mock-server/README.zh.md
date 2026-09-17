@@ -60,6 +60,7 @@ pnpm dsh --profile headless "test provider recovery"
 | `partial_disconnect` | 发送文本增量，然后重置 socket |
 | `stall` | 发送 SSE 标头，并保持空闲，直到客户端／服务器取消 |
 | `empty` | 发送有效的无内容 stop 和 `[DONE]` |
+| `reasoning_only_stop` | 发送推理增量，然后发送有效的无内容 stop 和 `[DONE]` |
 | `empty_body` / `stream_eof` / `partial_eof` | 正常结束，但缺少必需的 `[DONE]` 边界 |
 | `malformed_json` / `malformed_event` | 发送无效 SSE JSON 或无效提供方分片形态 |
 | `rate_limit` / `server_error` / `service_unavailable` | 返回面向重试的 429/500/503 JSON 错误 |

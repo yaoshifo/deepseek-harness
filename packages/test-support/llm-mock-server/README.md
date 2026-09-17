@@ -60,6 +60,7 @@ The repository script writes JSONL to stdout: a `ready` record carries the `/v1`
 | `partial_disconnect` | Send text deltas, then reset the socket |
 | `stall` | Send SSE headers and remain idle until client/server cancellation |
 | `empty` | Send a valid content-less stop and `[DONE]` |
+| `reasoning_only_stop` | Send reasoning deltas, then a valid content-less stop and `[DONE]` |
 | `empty_body` / `stream_eof` / `partial_eof` | End cleanly without the required `[DONE]` boundary |
 | `malformed_json` / `malformed_event` | Send invalid SSE JSON or an invalid provider chunk shape |
 | `rate_limit` / `server_error` / `service_unavailable` | Return retry-oriented 429/500/503 JSON errors |

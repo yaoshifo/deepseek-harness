@@ -34,6 +34,7 @@ export const MOCK_LLM_BEHAVIORS = [
   'quota_exceeded',
   'success',
   'reasoning_success',
+  'reasoning_only_stop',
   'tool_call_success',
   'max_tokens',
   'slow_success',
@@ -568,6 +569,20 @@ async function runBehavior(
         })
       }
       await completeText(options, record, response, 'stop', 0)
+      return
+    case 'reasoning_only_stop':
+      // Wire-valid degenerate completion: reasoning only, then a clean stop —
+      // the shape providers have shipped when truncating mid-thinking.
+      openSse(response)
+      for (const chunk of splitText(options.reasoningText, options.chunkSize)) {
+        writeSse(record, response, {
+          choices: [{ index: 0, delta: { reasoning_content: chunk }, finish_reason: null }],
+        })
+      }
+      writeSse(record, response, terminalChunk('stop', Array.from(options.reasoningText).length))
+      writeDone(record, response)
+      response.end()
+      finishRecord(options, record, 'completed')
       return
     case 'tool_call_success':
       openSse(response)

@@ -175,6 +175,34 @@ describe('bounded retry through the real DeepSeek HTTP/SSE adapter', () => {
     expect(finalAssistantText(agent)).toBe('recovered from empty')
   })
 
+  it('retries a reasoning-only stop completion without committing a thinking-only message', async () => {
+    const server = await start(['reasoning_only_stop', 'success'], {
+      apiKey: 'mock-key',
+      reasoningText: 'drafted the whole plan then vanished',
+      successText: 'recovered from reasoning only',
+    })
+    context = await harness(server.baseURL)
+    const agent = await context.agentLoop.create(SessionId('wire-reasoning-only'), {
+      provider: 'deepseek-official',
+      model: 'mock-model',
+    })
+
+    await sendAndWait(context, agent)
+
+    expect(server.requests).toHaveLength(2)
+    expect(server.requests[0]?.body).toEqual(server.requests[1]?.body)
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'llm/retry').map(event => event.data.failure.code))
+      .toEqual(['EMPTY_RESPONSE'])
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'assistant/message')
+      .map(event => [event.data.turn, event.data.step]))
+      .toEqual([[1, 1]])
+    expect(agent.session.snapshotEvents().at(-1)).toMatchObject({
+      type: 'turn/end',
+      data: { reason: { kind: 'completed' } },
+    })
+    expect(finalAssistantText(agent)).toBe('recovered from reasoning only')
+  })
+
   it('exposes a clean partial EOF as non-default-retryable STREAM_CLOSED', async () => {
     const server = await start(['partial_eof', 'success'], {
       apiKey: 'mock-key',

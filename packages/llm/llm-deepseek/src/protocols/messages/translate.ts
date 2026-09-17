@@ -100,6 +100,8 @@ function stopReason(raw: unknown): FinishReason {
  * @param events - framed, decoded provider events in arrival order.
  * @param model - requested model id stored in durable replay state.
  * @returns blocks, one final usage value, and exactly one terminal finish.
+ *   A `stop` finish with no text or tool-call blocks (reasoning-only included)
+ *   aborts with `EMPTY_RESPONSE` instead of a successful empty message.
  */
 export async function* translate(events: AsyncIterable<Record<string, unknown>>, model: string): AsyncGenerator<StreamChunk> {
   const blocks = new Map<number, Block>()
@@ -146,7 +148,14 @@ export async function* translate(events: AsyncIterable<Record<string, unknown>>,
       if (event.usage !== undefined) updateUsage(usage, event.usage)
     } else {
       if (reason === undefined || [...blocks.values()].some(block => !block.closed)) return malformed('message_stop without settled blocks and stop reason')
-      if (blocks.size === 0 && reason.kind === 'stop') throw new LlmError('DeepSeek Messages returned no content', 'EMPTY_RESPONSE')
+      // A stop with no text or tool-call content is a degenerate completion
+      // (no blocks at all, or reasoning only — production has observed
+      // mid-thinking truncation reported as a clean end_turn), not a
+      // successful (empty) assistant message.
+      if (reason.kind === 'stop' && ![...blocks.values()].some(block => block.content.type === 'text' || block.content.type === 'tool-call')) {
+        const reasoningOnly = blocks.size > 0
+        throw new LlmError(`DeepSeek Messages returned no content${reasoningOnly ? ' (reasoning only)' : ''}`, 'EMPTY_RESPONSE')
+      }
       // Truncated tool JSON is retained in the stream, then pruned by the shared assembler.
       if (reason.kind !== 'max-tokens') {
         for (const { content } of blocks.values()) {

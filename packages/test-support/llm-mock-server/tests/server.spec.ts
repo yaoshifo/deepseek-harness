@@ -215,6 +215,7 @@ describe('mock LLM server wire behaviors', () => {
   it('emits reasoning, tool calls, max-token finishes, slow chunks, and a wrong content type', async () => {
     const server = await start([
       'reasoning_success',
+      'reasoning_only_stop',
       'tool_call_success',
       'max_tokens',
       'slow_success',
@@ -230,20 +231,23 @@ describe('mock LLM server wire behaviors', () => {
 
     const bodies: string[] = []
     const contentTypes: Array<string | null> = []
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       const response = await chat(server)
       contentTypes.push(response.headers.get('content-type'))
       bodies.push(await response.text())
     }
 
     expect(bodies[0]).toContain('"reasoning_content":"th"')
-    expect(bodies[1]).toContain('"name":"lookup"')
-    expect(bodies[1]).toContain('"arguments":"{\\"id"')
-    expect(bodies[1]).toContain('"finish_reason":"tool_calls"')
-    expect(bodies[2]).toContain('"finish_reason":"length"')
-    expect(bodies[3]).toContain('"finish_reason":"stop"')
-    expect(contentTypes[4]).toBe('application/json')
-    expect(server.requests).toHaveLength(5)
+    expect(bodies[1]).toContain('"reasoning_content":"th"')
+    expect(bodies[1]).toContain('"content":""')
+    expect(bodies[1]).toContain('"finish_reason":"stop"')
+    expect(bodies[2]).toContain('"name":"lookup"')
+    expect(bodies[2]).toContain('"arguments":"{\\"id"')
+    expect(bodies[2]).toContain('"finish_reason":"tool_calls"')
+    expect(bodies[3]).toContain('"finish_reason":"length"')
+    expect(bodies[4]).toContain('"finish_reason":"stop"')
+    expect(contentTypes[5]).toBe('application/json')
+    expect(server.requests).toHaveLength(6)
     expect(server.requests.every(record => record.outcome === 'completed')).toBe(true)
   })
 

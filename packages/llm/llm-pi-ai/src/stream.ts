@@ -73,9 +73,10 @@ function classifyPiAiError(message: string): string {
  * @param contextWindow - resolved catalog capacity for usage-based overflow detection.
  * @returns the mapped harness reason. Recognized error text, `stop` usage above
  *   `contextWindow`, and zero-output `length` usage that fills the window map
- *   to `CONTEXT_WINDOW_EXCEEDED`; a `stop` with no content blocks maps to an
- *   `EMPTY_RESPONSE` error, while terminal `pending` and `deferred` states map
- *   to non-retryable `PI_AI_ERROR` failures.
+ *   to `CONTEXT_WINDOW_EXCEEDED`; a `stop` with no text or tool-call content
+ *   (no blocks at all, or thinking only) maps to an `EMPTY_RESPONSE` error,
+ *   while terminal `pending` and `deferred` states map to non-retryable
+ *   `PI_AI_ERROR` failures.
  */
 export function mapStopReason(message: AssistantMessage, contextWindow?: number): FinishReason {
   const piAiOverflow = isContextOverflow(message, contextWindow)
@@ -93,19 +94,25 @@ export function mapStopReason(message: AssistantMessage, contextWindow?: number)
   }
 
   switch (message.stopReason) {
-    case 'stop':
-      // A terminal stop that produced no content blocks is a degenerate
+    case 'stop': {
+      // A terminal stop with no text or tool-call content is a degenerate
       // provider completion, not a successful (empty) assistant message.
-      if (message.content.length === 0) {
+      // Thinking-only stops are included: production has observed providers
+      // truncating mid-thinking yet reporting a clean end_turn, which would
+      // otherwise end the turn with zero user-visible output.
+      const usable = message.content.filter(block => block.type !== 'thinking')
+      if (usable.length === 0) {
+        const thinkingOnly = message.content.length > 0
         return {
           kind: 'error',
           failure: {
-            message: `model "${message.model}" returned a completed response with no content`,
+            message: `model "${message.model}" returned a completed response with no content${thinkingOnly ? ' (thinking only)' : ''}`,
             code: EMPTY_RESPONSE_CODE,
           },
         }
       }
       return { kind: 'stop' }
+    }
     case 'length': return { kind: 'max-tokens' }
     case 'toolUse': return { kind: 'tool-calls' }
     case 'pending': return {

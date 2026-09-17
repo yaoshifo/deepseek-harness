@@ -230,14 +230,20 @@ describe('translate: finish and usage handling', () => {
     ])
   })
 
-  it('keeps a reasoning-only stream a successful stop (any opened block counts)', async () => {
+  it('classifies a reasoning-only stream with an explicit stop as EMPTY_RESPONSE', async () => {
     const chunks = await collect(translate(feed(
       firstChunk,
       { choices: [{ delta: { content: null, reasoning_content: 'mull' } }] },
       { choices: [{ delta: {}, finish_reason: 'stop' }] },
       DONE,
     )))
-    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+    expect(chunks.at(-1)).toEqual({
+      type: 'finish',
+      reason: {
+        kind: 'error',
+        failure: { message: 'model returned a completed response with no content (reasoning only)', code: EMPTY_RESPONSE_CODE },
+      },
+    })
   })
 
   it('leaves non-stop finishes unclassified even with no opened blocks', async () => {

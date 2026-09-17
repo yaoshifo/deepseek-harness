@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-17-thinking-only-stop-empty-response.md
+2026-09-17-thinking-only-stop-empty-response.md: 12cea3c0b1db488635ea46b96f91a990b23f3f7a
+2026-09-17-thinking-only-stop-empty-response.zh.md: 00dba0bfeef62683fb77c319a3a2cf11eb715408
