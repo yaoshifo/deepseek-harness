@@ -462,6 +462,7 @@ export const ALL_MSG_KEYS = [
   'status_build',
   'status_build_disk_newer',
   'status_build_head_moved',
+  'ask_recommended_suffix',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -898,4 +899,5 @@ export const Msg = {
   StatusBuild: 'status_build',
   StatusBuildDiskNewer: 'status_build_disk_newer',
   StatusBuildHeadMoved: 'status_build_head_moved',
+  AskRecommendedSuffix: 'ask_recommended_suffix',
 } as const

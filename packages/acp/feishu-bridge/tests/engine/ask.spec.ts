@@ -215,6 +215,48 @@ describe('buildAskQuestionCard', () => {
     }
   })
 
+  it('a recommended single-select option appends the localized suffix while askq_label stays raw', () => {
+    const q: UserQuestion = {
+      ...singleQuestion(),
+      options: [
+        { label: 'PostgreSQL', description: 'Recommended for production', recommended: true },
+        { label: 'SQLite', description: 'Lightweight, file-based' },
+        { label: 'MySQL', description: 'Popular open-source' },
+      ],
+    }
+    const card = buildAskQuestionCard(q, 0, 1)
+
+    const recommended = card.elements[1] as { text: string; btnType?: string; extra?: Record<string, string> }
+    expect(recommended.text).toBe('PostgreSQL（推荐）')
+    expect(recommended.btnType).toBe('primary')
+    expect(recommended.extra?.askq_label).toBe('PostgreSQL')
+
+    const plain = card.elements[2] as { text: string; btnType?: string; extra?: Record<string, string> }
+    expect(plain.text).toBe('SQLite')
+    expect(plain.btnType).toBe('default')
+    expect(plain.extra?.askq_label).toBe('SQLite')
+
+    const en = buildAskQuestionCard(q, 0, 1, enAskCardI18n())
+    const enRecommended = en.elements[1] as { text: string }
+    expect(enRecommended.text).toBe('PostgreSQLen:ask_recommended_suffix')
+  })
+
+  it('a label already carrying a standard recommended form is not tagged again', () => {
+    const carries: UserQuestion = {
+      ...singleQuestion(),
+      options: [
+        { label: '探针并发化（推荐）', description: '', recommended: true },
+        { label: '探针并发化（推荐）+ 缩小范围', description: '', recommended: true },
+        { label: 'Probe concurrently (recommended)', description: '', recommended: true },
+      ],
+    }
+    const card = buildAskQuestionCard(carries, 0, 1)
+
+    expect((card.elements[1] as { text: string }).text).toBe('探针并发化（推荐）')
+    expect((card.elements[2] as { text: string }).text).toBe('探针并发化（推荐）+ 缩小范围')
+    expect((card.elements[3] as { text: string }).text).toBe('Probe concurrently (recommended)')
+  })
+
   it('a multi-question ask titles its per-question card with the progress suffix (2/5)', () => {
     const card = buildAskQuestionCard(singleQuestion(), 1, 5)
     expect(card.header?.title).toBe('‼️ Setup (2/5)')
@@ -303,6 +345,19 @@ describe('buildAskQuestionCard', () => {
     expect(form.textInput?.placeholder).toBe('en:askq_multi_text_placeholder')
     expect(form.submitLabel).toBe('en:askq_submit_this_question')
   })
+
+  it('a multi-select recommended option pre-checks without a label tag', () => {
+    const q: UserQuestion = {
+      ...singleQuestion(),
+      multiSelect: true,
+      options: [{ label: 'PostgreSQL', description: 'Recommended for production', recommended: true }],
+    }
+    const card = buildAskQuestionCard(q, 0, 1)
+
+    const form = card.elements[1] as { kind: string; options: Array<{ label: string; checked?: boolean }> }
+    expect(form.kind).toBe('checkOptions')
+    expect(form.options[0]).toMatchObject({ label: 'PostgreSQL', checked: true })
+  })
 })
 
 describe('buildAskQuestionCardSettled', () => {
@@ -318,6 +373,21 @@ describe('buildAskQuestionCardSettled', () => {
     expect(card.elements.some(e => e.kind === 'listItem')).toBe(false)
     expect(card.elements.some(e => e.kind === 'form')).toBe(false)
     expect(card.elements.some(e => e.kind === 'checkOptions')).toBe(false)
+  })
+
+  it('settled marks keep recommended labels raw', () => {
+    const q: UserQuestion = {
+      ...singleQuestion(),
+      options: [
+        { label: 'PostgreSQL', description: 'Recommended for production', recommended: true },
+        { label: 'SQLite', description: 'Lightweight, file-based' },
+      ],
+    }
+    const card = buildAskQuestionCardSettled(q, 0, 1, { indices: [1] })
+
+    const marks = card.elements[1] as { kind: string; content: string }
+    expect(marks.content).toContain('✅ **PostgreSQL**')
+    expect(marks.content).not.toContain('（推荐）')
   })
 
   it('shows the card-input custom text under its question', () => {

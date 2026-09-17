@@ -468,4 +468,5 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   status_build: { en: 'Build: daemon started %s · lib %s · HEAD %s', zh: '构建：daemon %s 启动 · lib %s · HEAD %s' },
   status_build_disk_newer: { en: '⚠️ A newer build is on disk (%s) but not loaded — run /reload to activate it', zh: '⚠️ 磁盘上有新构建（%s）未加载——跑 /reload 生效' },
   status_build_head_moved: { en: '⚠️ HEAD has moved to %s (+%s commits, not loaded by this daemon)', zh: '⚠️ HEAD 已前移至 %s（+%s 提交，未随本 daemon 加载）' },
+  ask_recommended_suffix: { en: ' (recommended)', zh: '（推荐）', 'zh-TW': '（推薦）', ja: '（推奨）', es: ' (recomendado)' },
 }

@@ -12,8 +12,8 @@
 
 import type { Card, CardElement } from '../card.ts'
 import { newCard } from '../card.ts'
-import { I18n, langChinese, Msg, type MsgKey } from '../i18n/index.ts'
-import type { AskRequest, PendingAskAnswer, UserQuestion } from '../core/types.ts'
+import { I18n, langChinese, messages, Msg, type MsgKey } from '../i18n/index.ts'
+import type { AskRequest, PendingAskAnswer, UserQuestion, UserQuestionOption } from '../core/types.ts'
 import { isAllowResponse, isApproveAllResponse, isDenyResponse } from './permission.ts'
 
 /**
@@ -463,14 +463,35 @@ export function buildAskQuestionCardSettled(
 }
 
 /**
+ * The display label of one single-select option: a recommended option's
+ * label gains the localized recommended suffix unless it already carries
+ * any of the message table's standard forms anywhere (a model-authored
+ * marker stays as-is, so it can never double-tag). The wire-facing
+ * `askq_label` always keeps the raw label.
+ *
+ * @param opt - The option whose display label renders.
+ * @param i18n - Ask-card copy face supplying the localized suffix.
+ * @returns The label as shown on the card.
+ */
+function recommendedDisplayLabel(opt: UserQuestionOption, i18n: AskCardI18n): string {
+  if (opt.recommended !== true) return opt.label
+  const forms = Object.values(messages.ask_recommended_suffix)
+    .filter((form): form is string => form !== undefined)
+  return forms.some(form => opt.label.includes(form)) ? opt.label
+    : `${opt.label}${i18n.t(Msg.AskRecommendedSuffix)}`
+}
+
+/**
  * Render one live question's elements: the bold question, interactive
  * options (single-select list rows — a recommended option's button renders
- * primary — or the multi-select checker form). An option-bearing
- * single-select question ends at its rows plus the chat-answer hint note —
- * its on-card text input was removed (the input's relationship to a pressed
- * option button was ambiguous: a draft typed into the input did not ride
- * the button click). The per-question text-input form remains only for
- * option-less questions, where it is the sole on-card answer path.
+ * primary and its label gains the localized recommended suffix — or the
+ * multi-select checker form, which signals recommendation by pre-checking
+ * alone). An option-bearing single-select question ends at its rows plus
+ * the chat-answer hint note — its on-card text input was removed (the
+ * input's relationship to a pressed option button was ambiguous: a draft
+ * typed into the input did not ride the button click). The per-question
+ * text-input form remains only for option-less questions, where it is the
+ * sole on-card answer path.
  */
 function questionElements(q: UserQuestion, qIdx: number, i18n: AskCardI18n): CardElement[] {
   const elements: CardElement[] = [
@@ -496,7 +517,7 @@ function questionElements(q: UserQuestion, qIdx: number, i18n: AskCardI18n): Car
   for (const [i, opt] of q.options.entries()) {
     elements.push({
       kind: 'listItem',
-      text: opt.label,
+      text: recommendedDisplayLabel(opt, i18n),
       description: opt.description,
       btnText: String(i + 1),
       btnType: opt.recommended === true ? 'primary' : 'default',

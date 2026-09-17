@@ -44,13 +44,13 @@ export function apply(ctx: Context): void {
                 properties: {
                   label: { type: 'string', required: true, description: 'Short user-facing option label.' },
                   description: { type: 'string', description: 'One sentence explaining the tradeoff or impact.' },
-                  recommended: { type: 'boolean', description: 'Marks a recommended option; capable multi-select UIs pre-check it.' },
+                  recommended: { type: 'boolean', description: 'Marks a recommended option; the UI tags it — do not write the marker into the label.' },
                 },
               },
             },
             multi_select: {
               type: 'boolean',
-              description: 'Whether the user may select more than one option. Defaults to false.',
+              description: 'Whether the user may select more than one option. Defaults to false — if the question text tells the user multiple selections are allowed (e.g. 「可多选」), set true, otherwise the card renders single-select.',
             },
           },
         },
