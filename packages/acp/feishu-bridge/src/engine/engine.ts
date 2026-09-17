@@ -80,6 +80,7 @@ import {
   asWorkDirSwitcher,
   asWorktreeOrphanResolver,
   ContinueSession,
+  DoneEmoji,
   ErrNotSupported,
   ForkAtSessionPrefix,
   ForkSessionPrefix,
@@ -8959,7 +8960,7 @@ export class Engine {
       if (msgID !== '') {
         const mr = asMessageReactionAdder(p)
         if (mr !== undefined) {
-          void mr.addReactionToMessage(chatIDFromSessionKey(parentKey, p.name()), msgID, 'Done')
+          void mr.addReactionToMessage(chatIDFromSessionKey(parentKey, p.name()), msgID, DoneEmoji)
             .catch((error: unknown) => {
               console.warn(`subtask: monitor done reaction failed (parent=${parentKey}): ${String(error)}`)
             })

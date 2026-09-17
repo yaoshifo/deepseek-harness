@@ -28,6 +28,7 @@ import {
   asReactionAdder,
   asReactionManager,
   asSpawnedChatLister,
+  DoneEmoji,
   type ImageAttachment,
   type Message,
   type MonitorPoller,
@@ -1012,7 +1013,7 @@ export class MonitorCore {
     // Mark the original message Done now that dispatch succeeded.
     if (msg.messageID !== '') {
       const mr = asMessageReactionAdder(p)
-      if (mr !== undefined) void mr.addReactionToMessage(chatID, msg.messageID, 'Done')
+      if (mr !== undefined) void mr.addReactionToMessage(chatID, msg.messageID, DoneEmoji)
     }
     // Suppress the one-shot auto-report for monitor children: the monitored
     // chat has no coordinator agent to wake, so per-turn auto-report cards
@@ -1508,7 +1509,7 @@ export class MonitorCore {
     // Mark the original message Done — same semantics as a spawn: dispatched.
     if (msg.messageID !== '') {
       const mr = asMessageReactionAdder(p)
-      if (mr !== undefined) void mr.addReactionToMessage(chatID, msg.messageID, 'Done')
+      if (mr !== undefined) void mr.addReactionToMessage(chatID, msg.messageID, DoneEmoji)
     }
     if (this.spawnNotice) {
       const childChat = chatIDFromSessionKey(childKey, p.name())

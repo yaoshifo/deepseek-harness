@@ -14,7 +14,7 @@ import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Msg } from '../i18n/index.ts'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.ts'
-import { asCardSender, asCardSenderWithUpdate, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, asStagedForkSeedForgetter, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.ts'
+import { asCardSender, asCardSenderWithUpdate, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, asStagedForkSeedForgetter, ContinueSession, DoneEmoji, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.ts'
 import { newCard, type CardButton } from '../card.ts'
 import type { Engine } from './engine.ts'
 import type { SessionManager } from './session.ts'
@@ -1320,7 +1320,7 @@ export async function cmdDone(e: Engine, p: Platform, msg: Message, args: string
     }
   }
 
-  e.addReaction(p, msg.replyCtx, 'Done')
+  e.addReaction(p, msg.replyCtx, DoneEmoji)
 
   // Feature plugins owning state under this subtree clean it here (the
   // chatroom plugin interrupts a live room); keys they push into `handled`

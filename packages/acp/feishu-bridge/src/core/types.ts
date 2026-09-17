@@ -1555,6 +1555,14 @@ export const SteerPickupEmoji = 'Get'
 export const SteerClaimedEmoji = 'DONE'
 
 /**
+ * Terminal-state reaction emoji (Feishu emoji key `DONE`): the mark a
+ * monitored alert message or a `/done` teardown leaves behind. The official
+ * Feishu emoji key table has no `Done` key, so the lowercase variant fails
+ * silently.
+ */
+export const DoneEmoji = 'DONE'
+
+/**
  * Platform that can brand a chat as the monitor dispatch hub: rename it and
  * set a named icon avatar (Go ChatBrander).
  */

@@ -132,7 +132,7 @@ describe('cmdDone pre-done dispatch', () => {
       expect(p.doneKeys.has('test:child-b:u1')).toBe(true)
       expect(p.phaseCalls.find(c => c.sessionKey === 'test:child-b:u1')?.phase).toBe('done')
       expect(p.doneKeys.has('test:hub:u1')).toBe(true)
-      expect(p.reactions).toContain('Done')
+      expect(p.reactions).toContain('DONE')
     } finally {
       dispose()
     }

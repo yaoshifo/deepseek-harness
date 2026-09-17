@@ -518,7 +518,7 @@ describe('replyToParent monitor-group semantics', () => {
     e.replyToParent(p, child, '排查完成：内存泄漏在 handler.go')
     await settleN(4)
 
-    expect(p.doneReactions).toEqual(['oc_parent/om_orig123/Done'])
+    expect(p.doneReactions).toEqual(['oc_parent/om_orig123/DONE'])
   })
 
   it('wakes a normal parent with a synthetic message', async () => {
@@ -1103,7 +1103,7 @@ describe('spawnMonitorSubgroup', () => {
     )
     await settleN(3)
 
-    expect(p.reactions).toContain('oc_hub/om_orig/Done')
+    expect(p.reactions).toContain('oc_hub/om_orig/DONE')
   })
 
   it('no-report marks the child and reworks the injected message', async () => {
