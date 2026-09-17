@@ -162,10 +162,11 @@ export interface DshContextLike {
 /**
  * Structural slice of the `jobs` registry the background-count probe reads:
  * `list` already scopes to the caller's own and unowned jobs, so the owner,
- * status, and reported filters below stay the probe's own responsibility.
+ * status, settlement, and reported filters below stay the probe's own
+ * responsibility.
  */
 interface DshJobsRegistryLike {
-  list(caller?: unknown): Array<{ ownerSession?: unknown; status?: unknown; reported?: unknown }>
+  list(caller?: unknown): Array<{ ownerSession?: unknown; status?: unknown; reported?: unknown; finishedAt?: unknown }>
 }
 
 /**
@@ -2593,15 +2594,20 @@ export class DshAgentSession implements AgentSession {
   }
 
   /**
-   * In-flight-notice probe over the same registry cut: counts this session's
-   * own settled jobs still marked unreported — their completion notices have
-   * not reached the model yet, so a pending background count must keep
-   * waiting for them. A job collected in-turn (job_output wait/read, a kill,
-   * a teardown cancel) settles reported, and tool-jobs then suppresses its
-   * notice: a count whose jobs are all settled-and-reported is a leak. 0
-   * when the registry is absent.
+   * Owed-notice probe over the same registry cut, anchored at a wait start:
+   * counts this session's own settled jobs that finished after `since` and
+   * are still marked unreported. `reported` flips only when the model
+   * collects the job (a `job_output` wait/read, a kill, a teardown cancel);
+   * tool-jobs delivers the notice without flipping it, so an unreported job
+   * from before the anchor already had its notice delivered or suppressed —
+   * counting it forever would pin the reconcile to the grace fallback
+   * instead of clearing the leak (2026-09-17 oc_f85284). 0 when the
+   * registry is absent.
+   * @param since - epoch milliseconds of the wait start; jobs finished at
+   *   or before it no longer owe a notice.
+   * @returns number of this session's settled, unreported jobs finished after since.
    */
-  settledUnreportedBackgroundJobs(): number {
+  settledUnreportedBackgroundJobs(since: number): number {
     const jobs = this.ctx?.get('jobs') as DshJobsRegistryLike | undefined
     if (jobs === undefined) return 0
     const sid = this.currentSessionID()
@@ -2609,7 +2615,8 @@ export class DshAgentSession implements AgentSession {
     for (const snapshot of jobs.list(this.handle.agent)) {
       if (typeof snapshot.ownerSession === 'string' && snapshot.ownerSession === sid
         && (snapshot.status === 'completed' || snapshot.status === 'killed' || snapshot.status === 'failed')
-        && snapshot.reported !== true) inflight++
+        && snapshot.reported !== true
+        && typeof snapshot.finishedAt === 'number' && snapshot.finishedAt > since) inflight++
     }
     return inflight
   }

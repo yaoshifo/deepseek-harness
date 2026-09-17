@@ -21,6 +21,30 @@ import type {
 } from '../../src/core/types.ts'
 import { EventChannel as EventChannelImpl } from '../../src/core/types.ts'
 
+/** One jobs-registry snapshot as the background-count probes read it (the jobs-local JobSnapshot cut). */
+export interface StubJobSnapshot {
+  id: string
+  ownerSession?: string
+  status: 'running' | 'stopping' | 'completed' | 'killed' | 'failed'
+  startedAt: number
+  finishedAt?: number
+  reported: boolean
+}
+
+/** The adapter's live-job filter over a stub job list (mirrors pendingBackgroundJobs). */
+function stubPendingJobs(jobs: StubJobSnapshot[], sid: string): number {
+  return jobs.filter(j => j.ownerSession === sid
+    && (j.status === 'running' || j.status === 'stopping')).length
+}
+
+/** The adapter's owed-notice filter over a stub job list (mirrors settledUnreportedBackgroundJobs). */
+function stubSettledUnreported(jobs: StubJobSnapshot[], sid: string, since: number): number {
+  return jobs.filter(j => j.ownerSession === sid
+    && (j.status === 'completed' || j.status === 'killed' || j.status === 'failed')
+    && j.reported !== true
+    && j.finishedAt !== undefined && j.finishedAt > since).length
+}
+
 /** Go stubAgent: empty agent, StartSession returns a stubAgentSession. */
 export type StubAgent = Agent
 
@@ -35,6 +59,7 @@ export function createStubAgent(): StubAgent {
 
 /** Go stubAgentSession: empty session, Events returns a never-fed channel. */
 export function createStubAgentSession(): AgentSession {
+  const jobs: StubJobSnapshot[] = []
   return {
     send: async () => {},
     steer: () => '',
@@ -42,8 +67,8 @@ export function createStubAgentSession(): AgentSession {
     currentSessionID: () => 'stub-session',
     alive: () => true,
     close: async () => {},
-    pendingBackgroundJobs: () => 0,
-    settledUnreportedBackgroundJobs: () => 0,
+    pendingBackgroundJobs: () => stubPendingJobs(jobs, 'stub-session'),
+    settledUnreportedBackgroundJobs: since => stubSettledUnreported(jobs, 'stub-session', since),
   }
 }
 
@@ -60,6 +85,10 @@ export interface ControllableAgentSession extends AgentSession {
   aliveFlag: boolean
   sendCalls: string[]
   steerCalls: string[]
+  /** Registry snapshots the background-count probes filter (empty = no jobs). */
+  jobs: StubJobSnapshot[]
+  /** Anchors handed to settledUnreportedBackgroundJobs, in call order. */
+  settledUnreportedSince: number[]
   /** Optional Go AgentInterrupter capability for the Interrupt-preference specs. */
   cancelTurn?: () => void
   eventsImpl(): EventChannel
@@ -74,6 +103,8 @@ export function newControllableSession(id: string): ControllableAgentSession {
     aliveFlag: true,
     sendCalls: [],
     steerCalls: [],
+    jobs: [],
+    settledUnreportedSince: [],
     send: async () => {},
     steer: (prompt: string) => {
       s.steerCalls.push(prompt)
@@ -83,8 +114,11 @@ export function newControllableSession(id: string): ControllableAgentSession {
     events: () => channel,
     currentSessionID: () => s.sessionID,
     alive: () => s.aliveFlag,
-    pendingBackgroundJobs: () => 0,
-    settledUnreportedBackgroundJobs: () => 0,
+    pendingBackgroundJobs: () => stubPendingJobs(s.jobs, s.sessionID),
+    settledUnreportedBackgroundJobs: (since: number) => {
+      s.settledUnreportedSince.push(since)
+      return stubSettledUnreported(s.jobs, s.sessionID, since)
+    },
     close: async () => {
       if (!s.aliveFlag) return
       s.aliveFlag = false

@@ -1996,8 +1996,33 @@ describe('background count at settlement', () => {
   it('keeps the count and the hint while the counted job is still live', async () => {
     const { e, updates } = newPreviewCaptureEngine()
     const sess = newControllableSession('bg-live')
-    sess.pendingBackgroundJobs = () => 1
+    sess.jobs.push({ id: 'j1', ownerSession: 'bg-live', status: 'running', startedAt: 0, reported: false })
     const state = await settleBackgroundTurn(e, 'test:bg-live', sess)
+    expect(state.backgroundTasksPending).toBe(1)
+    expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).toContain('💡')
+  })
+
+  it('clears a pre-turn zombie before the terminal render, anchored at the settling turn\'s start', async () => {
+    // The notice-delivered zombie shape: the job settled in an earlier turn,
+    // its notice was consumed by the turn it woke, and `reported` never
+    // flips on delivery — unanchored, it kept the 💡 line on every later
+    // settled card for good.
+    const { e, updates } = newPreviewCaptureEngine()
+    const sess = newControllableSession('bg-zombie')
+    sess.jobs.push({ id: 'j1', ownerSession: 'bg-zombie', status: 'completed', startedAt: 0, finishedAt: 1, reported: false })
+    const state = await settleBackgroundTurn(e, 'test:bg-zombie', sess)
+    expect(state.backgroundTasksPending).toBe(0)
+    expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).not.toContain('💡')
+    // The settle-time probe is anchored at the settling turn's start, so a
+    // job finished before the turn began cannot owe this card a notice.
+    expect(sess.settledUnreportedSince, `anchors=${JSON.stringify(sess.settledUnreportedSince)}`).toContain(state.timing.turnStart)
+  })
+
+  it('keeps the 💡 hint for a job that settled during the turn (its notice is still owed)', async () => {
+    const { e, updates } = newPreviewCaptureEngine()
+    const sess = newControllableSession('bg-fresh')
+    sess.jobs.push({ id: 'j1', ownerSession: 'bg-fresh', status: 'completed', startedAt: 0, finishedAt: Date.now() + 60_000, reported: false })
+    const state = await settleBackgroundTurn(e, 'test:bg-fresh', sess)
     expect(state.backgroundTasksPending).toBe(1)
     expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).toContain('💡')
   })

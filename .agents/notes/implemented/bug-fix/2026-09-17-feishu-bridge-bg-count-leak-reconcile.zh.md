@@ -19,7 +19,7 @@ Status: implemented
 
 两个独立修复：
 
-- **凡消费计数之处都对账注册表**（`engine.ts`）：`backgroundTasksPending > 0` 时，任何时钟或渲染决策前先问注册表——unsolicited reader 的 idle 分支一处，回合结算路径在终态渲染前再问一处，于是注册表无法佐证的计数根本到不了定稿卡（`engine: settled card background count reconciled away`；见[重复卡 note](2026-09-17-feishu-bridge-duplicate-completion-card.zh.md)）。三态：活 job（`pendingBackgroundJobs()`，running/stopping）继续等（49f177d17c 语义，不变）；已结算未回报的 job（`settledUnreportedBackgroundJobs()`，同一注册表切面上的新探针：终态 + `reported === false`）意味着通知在途——现有宽限计时继续为它们等；活 == 0 且在途 == 0 意味着被计数的 job 全部已结算**且**已被同回合领取——泄漏，就地清掉，日志行独立措辞（"reconciled away" 与 "grace exhausted" 区分）。
+- **凡消费计数之处都对账注册表**（`engine.ts`）：`backgroundTasksPending > 0` 时，任何时钟或渲染决策前先问注册表——unsolicited reader 的 idle 分支一处，回合结算路径在终态渲染前再问一处，于是注册表无法佐证的计数根本到不了定稿卡（`engine: settled card background count reconciled away`；见[重复卡 note](2026-09-17-feishu-bridge-duplicate-completion-card.zh.md)）。三态：活 job（`pendingBackgroundJobs()`，running/stopping）继续等（49f177d17c 语义，不变）；已结算未回报的 job（`settledUnreportedBackgroundJobs(since)`，同一注册表切面上的探针：终态 + `reported === false` + 结算晚于调用方的等待锚点）仍欠一份通知——现有宽限计时继续为它们等（投递不翻转 `reported`，所以是否仍欠由锚点而非单靠标志判定；该精化归 [finishedAt 锚定 note](2026-09-17-feishu-bridge-bg-reconcile-finished-at-anchor.zh.md) 所有）；活 == 0 且在途 == 0 意味着被计数的 job 全部已结算**且**已被同回合领取——泄漏，就地清掉，日志行独立措辞（"reconciled away" 与 "grace exhausted" 区分）。
 - **冻结终态标题时钟**（`streaming.ts`）：首次终态渲染（completed/truncated/failed 加已结算的挂起提问态）把标题时间戳定格在定稿时刻；后续渲染——存活卡上的 PATCH、位移自愈重发、挂起卡的结果渲染——复用定格值。非终态时钟照常前进。
 
 为什么不改 tool-jobs：wait/read 交付终态后抑制通知是有意设计（不能对模型讲两遍）；计数归 bridge 所有，就该由 bridge 对账。
@@ -36,8 +36,8 @@ Status: implemented
 - 终态卡在任何一次渲染里都显示真实定稿时刻；加上重复卡守卫后它根本不会再在群里出现一次，迟到的卡无法再冒充刚发生的完成。
 - 慢任务与在途通知保留全部现有保护（2026-09-16 oc_3c16b 语义不变）。
 - 代价：计数挂起期间每个 idle tick 一次注册表 `list`（内存过滤）。
-- 漂移警报：两个探针锚定 `JobSnapshot.ownerSession`/`status`/`reported`；jobs 包改动任一字段形状都会让 adapter-projection 的过滤用例大声失败。
-- 旧的「盲等宽限」测试重定向到在途通知语义（无 job 的 stub 默认值在对账语义下读作泄漏）；对账场景有独立测试。
+- 漂移警报：两个探针锚定 `JobSnapshot.ownerSession`/`status`/`reported`/`finishedAt`；jobs 包改动任一字段形状都会让 adapter-projection 的过滤用例大声失败。
+- 旧的「盲等宽限」测试重定向到在途通知语义（无 job 的 stub 默认值在对账语义下读作泄漏）；对账场景有独立测试，锚定探针的用例归 [finishedAt 锚定 note](2026-09-17-feishu-bridge-bg-reconcile-finished-at-anchor.zh.md) 所有。
 
 ## 测试
 

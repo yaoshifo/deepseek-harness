@@ -118,14 +118,20 @@ describe('unsolicited reader background grace', () => {
 
   it('keeps the reader armed while a completion notice is in flight, then resets the count and clears the card hint at the grace cap', async () => {
     const { e, state, agentSession } = armed()
-    agentSession.settledUnreportedBackgroundJobs = () => 2
+    // The wait is already 30s old when the reader takes over; both counted
+    // jobs settled 5s ago — after the anchor, before the notice landed.
+    state.backgroundTasksPending = 2
+    state.bgWaitStartedAt = Date.now() - 30_000
+    agentSession.jobs.push(
+      { id: 'j1', ownerSession: 's1', status: 'completed', startedAt: 0, finishedAt: Date.now() - 5_000, reported: false },
+      { id: 'j2', ownerSession: 's1', status: 'completed', startedAt: 0, finishedAt: Date.now() - 5_000, reported: false },
+    )
     const hints: string[] = []
     state.preview = {
       canPreview: () => true,
       setBackgroundHint: (hint: string) => { hints.push(hint) },
     } as never
     e.setDisplayConfig({ toolProgress: true })
-    state.backgroundTasksPending = 2
     e.startUnsolicitedReader(e.sessions.getOrCreateActive(KEY), e.sessions, KEY)
 
     for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(60_000)
@@ -144,7 +150,7 @@ describe('unsolicited reader background grace', () => {
 
   it('keeps waiting past the grace cap while the owner still has a live background job', async () => {
     const { e, state, agentSession } = armed()
-    agentSession.pendingBackgroundJobs = () => 1
+    agentSession.jobs.push({ id: 'j1', ownerSession: 's1', status: 'running', startedAt: 0, reported: false })
     const hints: string[] = []
     state.preview = {
       canPreview: () => true,
@@ -170,9 +176,7 @@ describe('unsolicited reader background grace', () => {
     // delivered the terminal state), no decrement path ever fires, and the
     // leaked count held the settled card for the whole 30-minute grace
     // before the reissued card showed a fresh timestamp.
-    const { e, state, agentSession } = armed()
-    agentSession.pendingBackgroundJobs = () => 0
-    agentSession.settledUnreportedBackgroundJobs = () => 0
+    const { e, state } = armed()
     const hints: string[] = []
     state.preview = {
       canPreview: () => true,
@@ -190,6 +194,63 @@ describe('unsolicited reader background grace', () => {
     expect(state.backgroundTasksPending).toBe(0)
     expect(state.bgWaitStartedAt).toBe(0)
     expect(hints).toEqual([''])
+  })
+
+  it('stops counting a notice-delivered zombie that settled before the wait anchor', async () => {
+    // The residual oc_f85284 shape: the notice WAS delivered (an
+    // engine-woken turn consumed it) but `reported` never flips on delivery,
+    // so the unanchored probe counted the job forever and the reconcile
+    // fell through to the 30-minute grace give-up.
+    const { e, state, agentSession } = armed()
+    agentSession.jobs.push({ id: 'j1', ownerSession: 's1', status: 'completed', startedAt: 0, finishedAt: Date.now() - 60_000, reported: false })
+    const hints: string[] = []
+    state.preview = {
+      canPreview: () => true,
+      setBackgroundHint: (hint: string) => { hints.push(hint) },
+    } as never
+    e.setDisplayConfig({ toolProgress: true })
+    state.backgroundTasksPending = 1
+    e.startUnsolicitedReader(e.sessions.getOrCreateActive(KEY), e.sessions, KEY)
+
+    // First idle fire: the anchor does not exist yet (bgWaitStartedAt 0
+    // counts every settled job — conservative for a job whose notice may be
+    // mid-delivery right now); this tick only sets the anchor.
+    await vi.advanceTimersByTimeAsync(61_000)
+    expect(state.backgroundTasksPending).toBe(1)
+    expect(state.bgWaitStartedAt).not.toBe(0)
+
+    // Second idle fire: the zombie settled before the anchor — reconciled
+    // away in ~2 minutes, not at the 30-minute cap.
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(state.unsolicitedReader).toBeUndefined()
+    expect(state.backgroundTasksPending).toBe(0)
+    expect(state.bgWaitStartedAt).toBe(0)
+    expect(hints).toEqual([''])
+  })
+
+  it('keeps waiting for a job that settled during the wait, anchored at bgWaitStartedAt', async () => {
+    const { e, state, agentSession } = armed()
+    state.backgroundTasksPending = 1
+    state.bgWaitStartedAt = Date.now() - 30_000
+    agentSession.jobs.push({ id: 'j1', ownerSession: 's1', status: 'completed', startedAt: 0, finishedAt: Date.now() - 5_000, reported: false })
+    const hints: string[] = []
+    state.preview = {
+      canPreview: () => true,
+      setBackgroundHint: (hint: string) => { hints.push(hint) },
+    } as never
+    e.setDisplayConfig({ toolProgress: true })
+    e.startUnsolicitedReader(e.sessions.getOrCreateActive(KEY), e.sessions, KEY)
+
+    for (let i = 0; i < 5; i++) await vi.advanceTimersByTimeAsync(60_000)
+    // The job settled after the wait anchor: its notice is still owed, so
+    // the count, the hint, and the armed reader all stay.
+    expect(state.unsolicitedReader).toBeDefined()
+    expect(state.backgroundTasksPending).toBe(1)
+    expect(state.bgWaitStartedAt).not.toBe(0)
+    expect(hints).toEqual([])
+    // The probe is anchored at the wait start, not at the tick time.
+    expect(agentSession.settledUnreportedSince.length).toBeGreaterThan(0)
+    expect(Math.max(...agentSession.settledUnreportedSince)).toBe(state.bgWaitStartedAt)
   })
 })
 

@@ -48,7 +48,7 @@ describe('pendingBackgroundJobs', () => {
 describe('settledUnreportedBackgroundJobs', () => {
   const job = (over: Record<string, unknown>): Record<string, unknown> => ({
     id: 'bash-1', kind: 'bash', label: 'build', status: 'completed',
-    ownerSession: 'a1', startedAt: 0, reported: false, ...over,
+    ownerSession: 'a1', startedAt: 0, finishedAt: 2_000, reported: false, ...over,
   })
 
   function newSessionWithJobs(list: () => Array<Record<string, unknown>>): DshAgentSession {
@@ -56,25 +56,35 @@ describe('settledUnreportedBackgroundJobs', () => {
     return new DshAgentSession('test:u1', { agent: { id: 'a1' } } as never, '', ctx as never)
   }
 
-  it("counts this session's settled jobs whose completion notice has not reached the model", () => {
+  it("counts this session's settled jobs that finished after the anchor and still owe their notice", () => {
     const s = newSessionWithJobs(() => [
       job({ id: 'bash-1' }),
       job({ id: 'bash-2', status: 'killed' }),
       job({ id: 'bash-3', status: 'failed' }),
       job({ id: 'bash-4', reported: true }),
-      job({ id: 'bash-5', status: 'running' }),
-      job({ id: 'bash-6', status: 'stopping' }),
+      job({ id: 'bash-5', status: 'running', finishedAt: undefined }),
+      job({ id: 'bash-6', status: 'stopping', finishedAt: undefined }),
       job({ id: 'bash-7', ownerSession: 'other-session' }),
       job({ id: 'bash-8', ownerSession: undefined }),
     ])
-    expect(s.settledUnreportedBackgroundJobs()).toBe(3)
+    expect(s.settledUnreportedBackgroundJobs(1_000)).toBe(3)
+  })
+
+  it('drops notice-delivered zombies settled at or before the anchor, and snapshots without finishedAt', () => {
+    const s = newSessionWithJobs(() => [
+      job({ id: 'bash-1', finishedAt: 999 }),
+      job({ id: 'bash-2', finishedAt: 1_000 }),
+      job({ id: 'bash-3', finishedAt: undefined }),
+      job({ id: 'bash-4', finishedAt: 1_001 }),
+    ])
+    expect(s.settledUnreportedBackgroundJobs(1_000)).toBe(1)
   })
 
   it('returns 0 when the registry is absent from the context, and without a context at all', () => {
     const noRegistry = new DshAgentSession('test:u1', { agent: { id: 'a1' } } as never, '',
       { get: () => undefined } as never)
-    expect(noRegistry.settledUnreportedBackgroundJobs()).toBe(0)
-    expect(newSession().settledUnreportedBackgroundJobs()).toBe(0)
+    expect(noRegistry.settledUnreportedBackgroundJobs(0)).toBe(0)
+    expect(newSession().settledUnreportedBackgroundJobs(0)).toBe(0)
   })
 })
 

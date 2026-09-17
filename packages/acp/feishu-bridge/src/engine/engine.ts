@@ -2884,7 +2884,12 @@ export class Engine {
             // (2026-09-17 oc_f85284: the reissued completion card showed the
             // grace-expiry timestamp as its own).
             const live = state.agentSession?.pendingBackgroundJobs() ?? 0
-            const inflight = state.agentSession?.settledUnreportedBackgroundJobs() ?? 0
+            // Anchored at the wait start: a job finished before it already
+            // had its notice delivered or suppressed (delivery never flips
+            // reported), so only jobs settling during the wait still owe
+            // one. Before the first tick sets the anchor it reads 0 and
+            // every settled job counts — conservative for one tick.
+            const inflight = state.agentSession?.settledUnreportedBackgroundJobs(state.bgWaitStartedAt) ?? 0
             if (live === 0 && inflight === 0) {
               console.info(`engine: unsolicited reader background count reconciled away (${interactiveKey}: ${state.backgroundTasksPending} pending, every job settled and collected)`)
               state.backgroundTasksPending = 0
@@ -4211,7 +4216,13 @@ export class Engine {
     // hint block below recomputes it from the reconciled count.
     if (state.backgroundTasksPending > 0 && state.agentSession !== undefined) {
       const live = state.agentSession.pendingBackgroundJobs()
-      const inflight = state.agentSession.settledUnreportedBackgroundJobs()
+      // Anchored at the settling turn's start: a job finished before the
+      // turn began cannot owe this card a notice — its notice woke an
+      // earlier turn, was suppressed, or died with its owner — while one
+      // settling mid-turn still does. state.timing deliberately spans
+      // queued continuations, so jobs finishing between a turn and its
+      // queued follower stay counted.
+      const inflight = state.agentSession.settledUnreportedBackgroundJobs(state.timing.turnStart)
       if (live === 0 && inflight === 0) {
         console.info(`engine: settled card background count reconciled away (${sessionKey}: ${state.backgroundTasksPending} pending, every job settled and collected)`)
         state.backgroundTasksPending = 0

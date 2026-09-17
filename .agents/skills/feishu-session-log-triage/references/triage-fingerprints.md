@@ -97,12 +97,12 @@
 - **判复发先排存量污染**：修复前旧会话的历史里已写进正文的推敲块不会消失，旧会话续聊可能仍被存量样本带偏——**判复发必须用新开会话**。新会话仍泄漏才查：构建新旧（reload.log）→ 配置在否 → 该会话 replayState 签名链与 midturn 大文本块。
 - **根因与修复全程**：`packages/llm/llm-pi-ai` Agent Note `2026-09-14-replay-requested-model-identity`；回滚 = 删配置里 `replayModelIdentity` 一行再 reload。
 
-### M 完成卡迟到 ~30 分钟、时间戳=出现时刻 = 后台计数泄漏（2026-09-17 oc_f85284 实测，已修 102c4a3fa3 + ea562383ba）
+### M 完成卡迟到 ~30 分钟、时间戳=出现时刻 = 后台计数泄漏（2026-09-17 oc_f85284 实测，已修 102c4a3fa3 + ea562383ba；重复卡面 f72b7dd4e9、僵尸形态锚定见 2026-09-17-finished-at-anchor note）
 
 - **症状**：回合早已完成（会话日志 `turn/end completed` 后再无事件），群里数十分钟后才冒出一张绿色「执行完成 · HH:MM:SS · N」卡，时间戳正是冒出时刻——读起来像迟到的完成通知；N 是该回合的工具数。
-- **机制（已修）**：`run_in_background` 启动 + 同回合 `job_output(wait:true)` 领取 → tool-jobs 抑制完成通知（wait 已交付终态）→ 引擎后台计数无递减路径 → 泄漏计数把完成卡压满 30 分钟宽限 → 耗尽善后清提示的 PATCH 触发位移自愈重发，旧版标题时间戳取渲染时刻。
+- **机制（已修）**：`run_in_background` 启动 + 同回合 `job_output(wait:true)` 领取 → tool-jobs 抑制完成通知（wait 已交付终态）→ 引擎后台计数无递减路径 → 泄漏计数把完成卡压满 30 分钟宽限 → 耗尽善后清提示时定稿卡早已被摘句柄，`flushLocked` 的 no-handle 分支无条件**新开一张卡**把整份定稿内容重发（f72b7dd4e9 已修：终态预览拒绝开新卡）；旧版标题时间戳取渲染时刻，造成「迟到通知」假象（ea562383ba 冻结后不再）。同后果的第二种形态：通知已投递、被唤醒回合消化，但 `reported` 不因投递翻转，旧探针把该 job 永久计为「在途」，对账同样退 30 分钟兜底、💡 行常驻定稿卡（finishedAt 锚定修复，Agent Note `2026-09-17-feishu-bridge-bg-reconcile-finished-at-anchor`）。
 - **取证**：daemon stdout.log 搜 `grace exhausted`（旧版指纹）或 `background count reconciled away`（修复后新日志行 = 对账清理泄漏计数，非故障）；会话日志看该 turn 的 `tool/call` 是否 `run_in_background` + `job_output` 同回合配对。
-- **修复后判别**：泄漏计数约 60s 内被对账清（reconciled away 日志）；重发/重 PATCH 的终态卡时间戳冻结为定稿时刻。`grace exhausted` 仍会在「通知在途却超时」场景出现，属既有宽限语义，非本指纹。
+- **修复后判别**：泄漏计数（含「通知已投递未领取」僵尸形态）约 1–2 个 idle tick 内被对账清（reader 以 `bgWaitStartedAt` 为锚，首个 tick 只设锚点）；结算前对账让注册表无法佐证的计数不进终态卡，💡 行不再常驻；终态卡时间戳冻结为定稿时刻且不再新开第二张。`grace exhausted` 仍会在「通知真在途却超时」场景出现，属既有宽限语义，非本指纹。
 
 ## 审批事件判别（卡片没弹 / 反复要授权）
 
