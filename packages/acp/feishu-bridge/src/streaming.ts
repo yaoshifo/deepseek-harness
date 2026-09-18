@@ -173,6 +173,12 @@ export class ProgressEntry {
   toolName: string = ''
   /** Skill 工具条目：调用的 skill 名；空则走通用 toolTagForProgress。 */
   skillName: string = ''
+  /**
+   * 结果槽替代文案：仅成功的结果显示它，取代原始载荷（'' = 显示载荷本身）。
+   * skill 的载荷是模型面 `<skill_content>` 信封（正文是给模型的指令），
+   * 卡面只报状态；失败的载荷是诊断原文，必须照原样给人看。
+   */
+  resultNotice: string = ''
 
   constructor(init: Partial<ProgressEntry> = {}) {
     Object.assign(this, init)
@@ -180,6 +186,13 @@ export class ProgressEntry {
 
   /**
    * Render this entry as the markdown shown in the progress card.
+   *
+   * The code block is always five lines — input line, `---` divider, and the
+   * three-line result window with its first line padded to
+   * {@link minCodeBlockLineWidth} — so the card's block area keeps a constant
+   * height; the input line is never left blank. A settled entry whose
+   * {@link resultNotice} is set and succeeded shows that text instead of the
+   * payload.
    *
    * @param isLatest - True for the newest entry (adds the 🚨 marker).
    * @returns The markdown block for this entry.
@@ -207,7 +220,8 @@ export class ProgressEntry {
     let body = padToFixedLines(this.body, 1)
     let resultText: string
     if (this.hasResult) {
-      resultText = padToFixedLines(this.result, 3)
+      const settled = this.success && this.resultNotice !== '' ? this.resultNotice : this.result
+      resultText = padToFixedLines(settled, 3)
     } else {
       resultText = padToFixedLines('', 3) // placeholder: 3 empty lines
     }
@@ -492,11 +506,12 @@ export function newToolProgressEntry(name: string, summary: string, toolID: stri
   })
   entry.fullName = name
   // Skill 工具：标签改用 skill 名、正文改用可读 args；fullName 清空避免
-  // "Skill -> " 前缀（标签已展示 skill 名）。
+  // "Skill -> " 前缀（标签已展示 skill 名）。无 args 时把技能名留在正文：
+  // 输入行是 5 行代码块的首行，空置会读作坏掉的卡面，而标签里的名字是尾截断的。
   const [skill, args] = parseSkillToolUse(name, summary)
   if (skill !== '') {
     entry.skillName = skill
-    entry.body = args
+    entry.body = args !== '' ? args : skill
     entry.fullName = ''
   }
   return entry

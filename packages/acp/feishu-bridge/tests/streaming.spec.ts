@@ -1547,6 +1547,14 @@ describe('completeAndDetach async ordering', () => {
   })
 })
 
+/** Lines inside an entry's single fenced code block (block-shape assertions). */
+function blockLines(markdown: string): string[] {
+  const lines = markdown.split('\n')
+  const open = lines.findIndex(line => line.startsWith('```'))
+  const close = lines.findIndex((line, i) => i > open && line === '```')
+  return lines.slice(open + 1, close)
+}
+
 describe('skill progress entries', () => {
   it('parseSkillToolUse variants', () => {
     const cases: Array<[name: string, toolName: string, input: string, wantSkill: string, wantArgs: string]> = [
@@ -1573,6 +1581,66 @@ describe('skill progress entries', () => {
     expect(entry.body).toBe('do thing')
     expect(entry.fullName).toBe('')
     expect(entry.isTool).toBe(true)
+  })
+
+  it('newToolProgressEntry keeps the skill name as the input line when the call has no args', () => {
+    const entry = newToolProgressEntry('skill', '{"name":"tdd"}', 'tid')
+    // 输入行不得空置：代码块恒 5 行，空的首行看起来是坏的。
+    expect(entry.body).toBe('tdd')
+  })
+
+  it('keeps every tool block at five lines whose first line carries content', () => {
+    // 块形状是不变量：输入行 / --- / 结果 3 行。高度恒定是卡片不跳的条件，
+    // 所以输入行不因"没有参数"而空置——空的首行读作坏掉的卡面。
+    const shapes: Array<[name: string, entry: ProgressEntry, wantFirstLine: string]> = [
+      ['tool with input', newToolProgressEntry('bash', 'ls -la', 't1'), 'bash -> ls -la'],
+      ['skill without args', newToolProgressEntry('skill', '{"name":"tdd"}', 't2'), 'tdd'],
+      ['skill with args', newToolProgressEntry('skill', '{"skill":"draw","args":"diagram"}', 't3'), 'diagram'],
+    ]
+    for (const [name, entry, wantFirstLine] of shapes) {
+      const lines = blockLines(entry.render(false))
+      expect(lines, name).toHaveLength(5)
+      expect(lines[1], name).toBe('---')
+      const first = lines[0] ?? ''
+      expect(first.trim(), name).toBe(wantFirstLine)
+      // 首行补到 100 列（桌面端横向滚动条从条目出现起就稳定）。
+      expect(first.length, name).toBeGreaterThanOrEqual(100)
+    }
+  })
+
+  it('render shows the result notice instead of the payload for a settled skill load', () => {
+    const e = new ProgressEntry({
+      header: '**12:00:00**',
+      body: 'tdd',
+      isTool: true,
+      toolName: 'skill',
+      skillName: 'tdd',
+      resultNotice: '已加载技能指令',
+      hasResult: true,
+      success: true,
+      result: '<skill_content name="tdd">\n<skill_resources>\n…',
+    })
+    const out = e.render(false)
+    expect(out).toContain('已加载技能指令')
+    // 模型面信封从不进卡面。
+    expect(out).not.toContain('<skill_content')
+  })
+
+  it('render keeps the payload for a failed skill load so the diagnostic stays visible', () => {
+    const e = new ProgressEntry({
+      header: '**12:00:00**',
+      body: 'nope',
+      isTool: true,
+      toolName: 'skill',
+      skillName: 'nope',
+      resultNotice: '已加载技能指令',
+      hasResult: true,
+      success: false,
+      result: 'Error: skill "nope" is unknown or no longer available',
+    })
+    const out = e.render(false)
+    expect(out).toContain('skill "nope" is unknown or no longer available')
+    expect(out).not.toContain('已加载技能指令')
   })
 
   it('appendProgress accumulates deduped skill names', async () => {

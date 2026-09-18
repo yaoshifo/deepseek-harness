@@ -3838,6 +3838,12 @@ export class Engine {
                 event.toolID ?? '',
               )
               if (event.fromSubagent === true) entry.fullName = event.toolName ?? ''
+              // A skill load's result payload is the model-facing
+              // `<skill_content>` envelope — the entry settles to the loaded
+              // notice instead, which is also what the `/<name>` gesture path
+              // shows. A failed load keeps its payload: that text is the
+              // diagnostic the user needs.
+              if (entry.skillName !== '') entry.resultNotice = this.i18n.t(Msg.SkillLoaded)
               await sp.appendProgress(entry)
             }
             break
@@ -3969,15 +3975,18 @@ export class Engine {
           case 'skill_invocation': {
           // A user's `/<name>` gesture injected the skill body through
           // pre-step, so no `skill` tool call will follow; surface the load
-          // with the same 📚 entry presentation that path gets.
+          // with the same 📚 entry presentation that path gets. The gesture
+          // carries no tool input, so the entry's input line takes the skill
+          // name — the five-line block never leaves that line blank.
             if (this.display.toolProgress && sp.canPreview()) {
               const entry = new ProgressEntry({
                 header: `**${new Date().toTimeString().slice(0, 8)}**`,
                 isTool: true,
                 skillName: event.content,
+                body: event.content,
                 hasResult: true,
                 success: true,
-                result: this.i18n.t(Msg.SkillLoaded),
+                resultNotice: this.i18n.t(Msg.SkillLoaded),
               })
               await sp.appendProgress(entry)
             }
