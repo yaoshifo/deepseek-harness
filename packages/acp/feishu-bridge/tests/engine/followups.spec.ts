@@ -473,38 +473,42 @@ describe('agent conventions prompt (followups contract)', () => {
   })
 })
 
-describe('followups locator separation (plain-language card, locating dispatch)', () => {
-  const locating = q({
+describe('followups details (grey on the card, plain in the dispatch)', () => {
+  const detailed = q({
     options: [
-      { label: '修 A', description: '空指针崩溃，勾选后补上空值检查', locator: 'src/a.ts:1' },
-      { label: '查 B', description: '日志缺失', locator: 'src/b.ts:2' },
+      { label: '修 A', description: '空指针崩溃，勾选后补上空值检查', details: '涉及 src/a.ts:1 的判空分支' },
+      { label: '查 B', description: '日志缺失', details: '涉及 src/b.ts:2 的日志点' },
       { label: '暂不处理', description: '' },
     ],
   })
 
-  it('the dispatched selection message carries the locator line for the checked option only', () => {
-    const text = followupsSelectionMessage(locating, [1], '')
+  it('the dispatched selection message carries every option detail as plain text', () => {
+    const text = followupsSelectionMessage(detailed, [1], '')
     expect(text).toContain('✅ **修 A**')
-    expect(text).toContain('📍 src/a.ts:1')
+    expect(text).toContain('🔎 涉及 src/a.ts:1 的判空分支')
     expect(text).toContain('◻️ **查 B**')
-    // The unchecked option keeps its label and description but carries no
-    // locator: the dispatch is an instruction for the checked items only.
-    expect(text).not.toContain('src/b.ts:2')
+    expect(text).toContain('🔎 涉及 src/b.ts:2 的日志点')
+    // The dispatch is a model input, not a card: rendering tags never ride along.
+    expect(text).not.toContain('<font')
   })
 
-  it('options without a locator dispatch without a locator line (legacy registrations)', () => {
+  it('an option without a detail dispatches without a detail line', () => {
     const text = followupsSelectionMessage(q(), [1], '')
     expect(text).toContain('✅ **修复 A**')
-    expect(text).not.toContain('📍')
+    expect(text).not.toContain('🔎')
   })
 
-  it('the live card never renders the locator (the card stays plain-language)', () => {
-    const card: Card = buildFollowupsCard(locating)
-    expect(JSON.stringify(card)).not.toContain('src/a.ts:1')
+  it('the live card carries the detail on its checker options', () => {
+    // The grey wrapper is added by the Feishu renderer (pinned in
+    // tests/feishu/card.spec.ts); at the card-model layer the detail rides
+    // the option so the send-time read-back can rebuild the question.
+    const card: Card = buildFollowupsCard(detailed)
+    expect(JSON.stringify(card)).toContain('涉及 src/a.ts:1 的判空分支')
   })
 
-  it('the settled card never renders the locator either', () => {
-    const card: Card = buildFollowupsCardSettled(locating, [1], '')
-    expect(JSON.stringify(card)).not.toContain('src/a.ts:1')
+  it('the settled card renders the detail in grey too', () => {
+    const card: Card = buildFollowupsCardSettled(detailed, [1], '')
+    expect(JSON.stringify(card)).toContain('涉及 src/a.ts:1 的判空分支')
+    expect(JSON.stringify(card)).toContain("<font color='grey'>")
   })
 })

@@ -30,6 +30,21 @@ describe('card renderText', () => {
     const want = '**Help**\n\nUse `/help` to see commands.\n\n---\n\n[Run]  [Cancel]\n\nCurrent session  [Switch]\nMode: Default | YOLO\n\nTip: /new starts a fresh session.'
     expect(got).toBe(want)
   })
+
+  it('checkOptions degrades the factual detail onto its own indented line', () => {
+    const card = newCard()
+      .checkOptions('后续处理', [
+        { label: '修 A', description: '空指针崩溃', details: '涉及 src/a.ts:1 的判空分支', checked: true },
+        { label: '暂不处理', description: '' },
+      ], 'fw_multi:0')
+      .build()
+
+    const got = card.renderText()
+    expect(got).toContain('☐ 1. 修 A — 空指针崩溃')
+    expect(got).toContain('🔎 涉及 src/a.ts:1 的判空分支')
+    // Plain-text degradation carries no card rendering tags.
+    expect(got).not.toContain('<font')
+  })
 })
 
 describe('card hasButtons', () => {

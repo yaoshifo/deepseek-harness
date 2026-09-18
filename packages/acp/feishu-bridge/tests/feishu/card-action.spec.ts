@@ -1047,6 +1047,70 @@ describe('onCardAction fw_multi submit (followups suggestion card)', () => {
     expect(JSON.stringify(response)).toContain('go')
   })
 
+  it('keeps the option details through the send-time read-back and dispatches them', async () => {
+    const api: FeishuApiClient = {
+      async create() { return { messageId: 'om_fw_card' } },
+      async reply() { return { messageId: 'om_fw_card' } },
+      async patch() {},
+      async delete() {},
+    }
+    const p = newPlatform({ allowChat: '*', apiClient: api })
+    const { buildFollowupsCard } = await import('../../src/engine/ask.ts')
+    // The details live on the card face (the option text), so the send-time
+    // read-back that rebuilds the question from the sent card must keep them:
+    // they are the executing agent's factual context for the checked item.
+    await p.sendCard({ messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' },
+      buildFollowupsCard({
+        question: 'fix?',
+        header: '后续处理',
+        options: [
+          {
+            label: 'Fix A',
+            description: '空指针崩溃，勾选后补上空值检查',
+            details: '涉及 src/a.ts:1 的判空分支',
+            recommended: true,
+          },
+          { label: 'Skip', description: '' },
+        ],
+        multiSelect: true,
+      }))
+
+    const messages = await dispatched(p, fwEvent({ askq_opt_0_1: true }))
+    expect(messages).toHaveLength(1)
+    const content = messages[0]!.content
+    expect(content).toContain('✅ **Fix A**')
+    expect(content).toContain('🔎 涉及 src/a.ts:1 的判空分支')
+    // The dispatched text is a model input, not a card: no rendering tags.
+    expect(content).not.toContain('<font')
+  })
+
+  it('keeps the option details when the card leaves through the threaded-reply egress', async () => {
+    const api: FeishuApiClient = {
+      async create() { return { messageId: 'om_fw_card' } },
+      async reply() { return { messageId: 'om_fw_card' } },
+      async patch() {},
+      async delete() {},
+    }
+    const p = newPlatform({ allowChat: '*', apiClient: api })
+    const { buildFollowupsCard } = await import('../../src/engine/ask.ts')
+    // replyCard is the other egress into the send-time meta cache; a card
+    // routed as a threaded reply must not lose its details to a second,
+    // card-face-only cache write.
+    await p.replyCard({ messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' },
+      buildFollowupsCard({
+        question: 'fix?',
+        header: '后续处理',
+        options: [
+          { label: 'Fix A', description: '空指针崩溃', details: '涉及 src/a.ts:1 的判空分支', recommended: true },
+        ],
+        multiSelect: true,
+      }))
+
+    const messages = await dispatched(p, fwEvent({ askq_opt_0_1: true }))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toContain('🔎 涉及 src/a.ts:1 的判空分支')
+  })
+
   it('leaves a cached askq meta untouched on an fw submit', async () => {
     const p = newPlatform({ allowChat: '*' })
     // Seed the cache with an askq (non-followups) meta, as a later live

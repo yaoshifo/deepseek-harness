@@ -150,8 +150,8 @@ describe('feishu_bridge_followups execution', () => {
     const test = await harness(() => ({ engine: r.engine, sessionKey: 'feishu:chat-9:u1' }))
     const v = value(await execute(test, {
       options: [
-        { label: '修持久化测试偶发失败', description: '重启后的卡片回放偶发丢选择，勾选后改为轮询等落盘再断言', locator: 'tests/feishu/card-action.spec.ts:1102', recommended: true },
-        { label: '补 README 使用说明', description: '新开关没有文档，勾选后补一段用法和默认值说明', locator: 'README.md:12' },
+        { label: '修持久化测试偶发失败', description: '重启后的卡片回放偶发丢选择，勾选后改为轮询等落盘再断言', details: '涉及 tests/feishu/card-action.spec.ts 的重启用例', recommended: true },
+        { label: '补 README 使用说明', description: '新开关没有文档，勾选后补一段用法和默认值说明', details: 'README.md 的开关表缺一行' },
       ],
     }))
     expect(r.ask).toHaveBeenCalledTimes(1)
@@ -168,8 +168,8 @@ describe('feishu_bridge_followups execution', () => {
         header: FOLLOWUPS_ASK_HEADER,
         multiSelect: true,
         options: [
-          { label: '修持久化测试偶发失败', description: '重启后的卡片回放偶发丢选择，勾选后改为轮询等落盘再断言', locator: 'tests/feishu/card-action.spec.ts:1102', recommended: true },
-          { label: '补 README 使用说明', description: '新开关没有文档，勾选后补一段用法和默认值说明', locator: 'README.md:12' },
+          { label: '修持久化测试偶发失败', description: '重启后的卡片回放偶发丢选择，勾选后改为轮询等落盘再断言', details: '涉及 tests/feishu/card-action.spec.ts 的重启用例', recommended: true },
+          { label: '补 README 使用说明', description: '新开关没有文档，勾选后补一段用法和默认值说明', details: 'README.md 的开关表缺一行' },
         ],
       }],
     })
@@ -212,15 +212,15 @@ describe('feishu_bridge_followups real conversion', () => {
     engine.interactiveStates.set('test:p', state)
     const test = await harness(() => ({ engine, sessionKey: 'test:p' }))
     const v = value(await execute(test, {
-      options: [{ label: '修 A', description: '偶发失败，勾选后改为轮询等落盘', locator: 'src/a.ts:1', recommended: true }],
+      options: [{ label: '修 A', description: '偶发失败，勾选后改为轮询等落盘', details: '涉及 src/a.ts:1 的判空分支', recommended: true }],
     }))
     expect(state.pendingFollowups?.header).toBe(FOLLOWUPS_ASK_HEADER)
     expect(state.pendingFollowups?.multiSelect).toBe(true)
     expect(state.pendingFollowups?.question).toBe('以上发现后续如何处理？')
     expect(state.pendingFollowups?.options).toHaveLength(1)
-    // The locator survives the conversion: the registered question is the
-    // dispatched selection message's only locator source.
-    expect(state.pendingFollowups?.options[0]?.locator).toBe('src/a.ts:1')
+    // The factual detail survives the conversion: it renders on the card face
+    // AND rides the dispatched selection message.
+    expect(state.pendingFollowups?.options[0]?.details).toBe('涉及 src/a.ts:1 的判空分支')
     expect(v.message).toContain('已登记 1 项后续处理建议')
   })
 })
@@ -243,7 +243,16 @@ describe('feishu_bridge_followups registration', () => {
     // tool's own contract covers both: a requirement stated only in the
     // resident conventions section leaves one model-facing contract silent.
     expect(description).toContain('收尾正文')
-    // code locations stay in the locator field on every surface
-    expect(description).toContain('locator')
+    // the factual detail is the one field carrying concrete facts, and it
+    // rides both the card face and the dispatched selection message
+    expect(description).toContain('details')
+  })
+
+  it('exposes the detail field and no separate locator field in its option schema', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:chat' }))
+    const schema = JSON.stringify(test.ctx.tools.get('feishu_bridge_followups')?.parameters)
+    expect(schema).toContain('details')
+    expect(schema).not.toContain('locator')
   })
 })

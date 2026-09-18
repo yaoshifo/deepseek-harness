@@ -22,7 +22,7 @@ import {
   renderCardMap,
   renderElement,
 } from '../../src/feishu/card.ts'
-import { buildAskQuestionCard } from '../../src/engine/ask.ts'
+import { buildAskQuestionCard, buildFollowupsCard, buildFollowupsCardSettled } from '../../src/engine/ask.ts'
 import type { UserQuestion } from '../../src/core/types.ts'
 import { buildReplyContent, buildPreviewCardJSON } from '../../src/feishu/progress.ts'
 import { noSpinner } from '../../src/feishu/spinner.ts'
@@ -37,6 +37,22 @@ function getBodyElements(got: JsonObj): Json[] {
   const elements = jArr(jObj(got.body).elements)
   expect(elements.length).toBeGreaterThan(0)
   return elements
+}
+
+/** The closing followups question: one option carrying a factual detail. */
+function detailsQuestion(): UserQuestion {
+  return {
+    id: 'followups',
+    header: '后续处理',
+    question: '以上发现后续如何处理？',
+    multiSelect: true,
+    options: [{
+      label: '两个生成的 schema 文件总在合并时挡路',
+      description: '每次本地跑桌面构建就会把这两个生成文件改脏',
+      details: '涉及 apps/desktop/src-tauri/gen/schemas/acl-manifests.json:1 的生成约定',
+      recommended: true,
+    }],
+  }
 }
 
 describe('renderCardMap', () => {
@@ -157,6 +173,27 @@ describe('renderCardMap', () => {
       ['askq_opt_0_1', true],
       ['askq_opt_0_2', undefined],
     ])
+  })
+
+  it('a followups option renders its factual detail in grey under the description', () => {
+    const got = decodeRenderedCard(buildFollowupsCard(detailsQuestion()))
+    const form = getBodyElements(got).map(jObj).find(e => jStr(e.tag) === 'form')
+    expect(form).toBeDefined()
+    const checker = jArr(jObj(form).elements).map(jObj).find(e => jStr(e.tag) === 'checker')
+    expect(checker).toBeDefined()
+    const content = jStr(jObj(jObj(checker).text).content)
+    expect(content).toContain('**两个生成的 schema 文件总在合并时挡路**')
+    expect(content).toContain('每次本地跑桌面构建就会把这两个生成文件改脏')
+    // The factual detail rides its own grey line: `<font>` is on the card
+    // markdown whitelist, and a path inside the detail belongs there.
+    expect(content).toContain("<font color='grey'>🔎 涉及 apps/desktop/src-tauri/gen/schemas/acl-manifests.json:1 的生成约定</font>")
+  })
+
+  it('the settled followups card keeps the grey detail line', () => {
+    const got = decodeRenderedCard(buildFollowupsCardSettled(detailsQuestion(), [1], ''))
+    const markdown = getBodyElements(got).map(jObj).map(e => jStr(e.content)).join('\n')
+    expect(markdown).toContain('✅ **两个生成的 schema 文件总在合并时挡路**')
+    expect(markdown).toContain("<font color='grey'>🔎 涉及 apps/desktop/src-tauri/gen/schemas/acl-manifests.json:1 的生成约定</font>")
   })
 
   it('a question card renders card-wide unique form-control names', () => {

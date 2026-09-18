@@ -82,10 +82,11 @@ export interface UserQuestionOption {
   description: string
   /** Presentation flag: multi-select cards render this option pre-checked. */
   recommended?: boolean
-  /** Executing-agent locator (`path:line`); rendered on neither the live nor
-   * the settled followups card — only the dispatched selection message
-   * carries it. */
-  locator?: string
+  /** Factual detail (files, mechanism, evidence) shown in grey on the live
+   * followups card, on its settled snapshot, and carried into the dispatched
+   * selection message. Whether it names an exact location (`path:line`) is
+   * the caller's call — there is no separate locator field. */
+  details?: string
 }
 
 /** A structured question from AskUserQuestion (Go UserQuestion). */

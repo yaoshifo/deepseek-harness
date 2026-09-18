@@ -231,6 +231,9 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
       elem.options.forEach((opt, i) => {
         let checkContent = `**${opt.label}**`
         if ((opt.description ?? '') !== '') checkContent += `\n${opt.description ?? ''}`
+        // The factual detail rides its own grey line under the plain-language
+        // description; `<font>` is whitelisted by finalizeFeishuCardMarkdown.
+        if ((opt.details ?? '') !== '') checkContent += `\n<font color='grey'>🔎 ${opt.details ?? ''}</font>`
         checkContent = finalizeFeishuCardMarkdown(checkContent)
         formElements.push({
           tag: 'checker',

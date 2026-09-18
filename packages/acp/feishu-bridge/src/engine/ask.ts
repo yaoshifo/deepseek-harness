@@ -358,6 +358,7 @@ export function buildFollowupsCard(q: UserQuestion, i18n: AskCardI18n = zhAskCar
     options: q.options.map((opt, i) => ({
       label: opt.label,
       description: opt.description,
+      ...(opt.details !== undefined ? { details: opt.details } : {}),
       value: String(i + 1),
       ...(opt.recommended === true ? { checked: true } : {}),
     })),
@@ -369,25 +370,30 @@ export function buildFollowupsCard(q: UserQuestion, i18n: AskCardI18n = zhAskCar
   return cb.build()
 }
 
+/** Render face of the frozen option marks: the card shows the factual detail
+ * in grey, the dispatched message (a model input) keeps it plain. */
+type OptionMarkFace = 'card' | 'dispatch'
+
 /**
  * Frozen selection marks shared by the settled cards and the dispatched
- * followups selection message: `✅/◻️ **label**` plus the option description.
- * With {@link includeLocator}, each checked option also carries its locator
- * (`📍 path:line`) — the dispatch is the executing agent's only locator
- * source, while both card faces stay plain-language.
+ * followups selection message: `✅/◻️ **label**` plus the option description
+ * and its factual detail line. On the card face the detail renders in grey
+ * (`<font>`, whitelisted for Feishu card markdown); the dispatched message is
+ * a model input and stays plain text.
  *
  * @param q - The question whose options render.
  * @param indices - 1-based option indices marked checked.
- * @param includeLocator - Append `📍 locator` lines for checked options
- * (dispatched selection message only; never the card faces).
+ * @param face - Output surface: 'card' (grey detail) or 'dispatch' (plain detail).
  * @returns One mark string per option.
  */
-function settledOptionMarks(q: UserQuestion, indices: number[], includeLocator = false): string[] {
+function settledOptionMarks(q: UserQuestion, indices: number[], face: OptionMarkFace = 'card'): string[] {
+  const dispatch = face === 'dispatch'
   return q.options.map((opt, i) => {
     const checked = indices.includes(i + 1)
+    const detail = opt.details !== undefined && opt.details !== '' ? opt.details : undefined
     return `${checked ? '✅' : '◻️'} **${opt.label}**`
       + (opt.description !== '' ? `\n${opt.description}` : '')
-      + (includeLocator && checked && opt.locator !== undefined && opt.locator !== '' ? `\n📍 ${opt.locator}` : '')
+      + (detail !== undefined ? `\n${dispatch ? `🔎 ${detail}` : `<font color='grey'>🔎 ${detail}</font>`}` : '')
   })
 }
 
@@ -422,10 +428,9 @@ export function buildFollowupsCardSettled(
 /**
  * Compose the self-contained「[后续处理]」message a followups suggestion-card
  * submission dispatches as: the selection headline, the question, the frozen
- * option marks (labels, descriptions, and the checked options' locators —
- * never raw wire indices), and the in-form note. The agent reads this text
- * as its next prompt; the locator lines are its only code-location source,
- * since neither card face renders them.
+ * option marks (labels, descriptions, and each option's factual detail as
+ * plain text — never raw wire indices), and the in-form note. The agent reads
+ * this text as its next prompt.
  *
  * @param q - The followups question the card was built from.
  * @param indices - 1-based option indices the user checked.
@@ -438,7 +443,7 @@ export function followupsSelectionMessage(
 ): string {
   const lines = [i18n.t(Msg.FollowupsSelection)]
   if (q.question !== '') lines.push(`**${q.question}**`)
-  lines.push(...settledOptionMarks(q, indices, true))
+  lines.push(...settledOptionMarks(q, indices, 'dispatch'))
   if (note !== '') lines.push(`✍️ ${note}`)
   return lines.join('\n')
 }

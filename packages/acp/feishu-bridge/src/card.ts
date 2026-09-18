@@ -110,6 +110,10 @@ export interface CardSelect {
 export interface CardCheckOption {
   label: string
   description?: string
+  /** Factual detail rendered on its own line under the description; the
+   * followups card shows it in grey, and the send-time read-back reads it off
+   * the element to rebuild the question for the dispatched message. */
+  details?: string
   /** Submitted value, typically the option index (e.g. "1", "2"). */
   value?: string
   /** Initial checked state; capable checkers render the box pre-ticked. */
@@ -361,6 +365,9 @@ export class Card {
               sb += ` — ${elem.options[i]?.description ?? ''}`
             }
             sb += '\n'
+            if ((opt.details ?? '') !== '') {
+              sb += `   🔎 ${elem.options[i]?.details ?? ''}\n`
+            }
           }
           if (elem.textInput !== undefined) {
             sb += `[${elem.textInput.placeholder}]\n`

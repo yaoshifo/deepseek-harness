@@ -312,7 +312,11 @@ function askCardMeta(card: Card): AskCardMeta | undefined {
       questions.set(0, {
         question: elem.extra?.fw_question ?? elem.question ?? '',
         header: '',
-        options: elem.options.map(o => ({ label: o.label, description: o.description ?? '' })),
+        options: elem.options.map(o => ({
+          label: o.label,
+          description: o.description ?? '',
+          ...(o.details !== undefined && o.details !== '' ? { details: o.details } : {}),
+        })),
         multiSelect: true,
       })
       followupsSeen = true
