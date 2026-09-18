@@ -27,8 +27,8 @@ Status: implemented
 
 ## 后果
 
-- 「已投递未领取」的 job 在等待锚点越过其 `finishedAt` 后不再计数：reader 约两个 idle tick 内对账清掉泄漏计数，结算前对账在终态渲染前丢掉它。
-- 任一锚点之后结算的 job 保留完整宽限与定稿卡提示（2026-09-16 oc_3c16b 语义不变）。
+- 「已投递未领取」的 job 在等待锚点越过其 `finishedAt` 后不再计数：reader 约两个 idle tick 内对账清掉泄漏计数。结算锚点（`state.timing.turnStart`）之下，回合中途结算的 job 仍算作欠通知——它的通知可能正在投递途中——因此该计数会活过这次渲染；但两种情形下定稿卡都不出提示行，因为提示只认注册表的活 job（见[泄漏对账 note](2026-09-17-feishu-bridge-bg-count-leak-reconcile.zh.md)）。
+- 任一锚点之后结算的 job 保留完整宽限并继续计数（2026-09-16 oc_3c16b 语义不变）；卡上的提示行以注册表的活 job 切面为准，而非该计数。
 - 漂移警报：探针除 owner/status/reported 外新增锚定 `JobSnapshot.finishedAt`；jobs 包改动任一字段形状都会让 adapter-projection 的过滤用例大声失败。
 - stub 会话的探针从恒返回常数改为过滤 job 列表（含 `finishedAt`），并记录收到的锚点，让用例能钉死各调用点用的等待起点。
 
@@ -36,4 +36,4 @@ Status: implemented
 
 - `tests/agent-dsh/adapter-projection.spec.ts`：owner/status/reported 过滤不变，新增锚定计数——锚点当时或之前结算的僵尸、无 `finishedAt` 的快照不再计数。
 - `tests/engine/engine-unsolicited.spec.ts`：锚点前僵尸在第二个 idle tick 对账清零（首个 tick 只设锚点）；等待期间结算的 job 保留计数、保持 reader 武装，且探针锚定在 `bgWaitStartedAt`。
-- `tests/engine/engine-events.spec.ts`：结算前对账清掉回合前僵尸不进渲染，回合中途结算的 job 保留 `💡` 行，探针锚定在 `state.timing.turnStart`。
+- `tests/engine/engine-events.spec.ts`：结算前对账清掉回合前僵尸不进渲染，回合中途结算的 job 保留计数但不渲染提示行，探针锚定在 `state.timing.turnStart`。

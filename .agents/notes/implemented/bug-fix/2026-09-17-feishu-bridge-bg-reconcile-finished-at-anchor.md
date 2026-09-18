@@ -27,8 +27,8 @@ Each call site passes its own wait start:
 
 ## Consequences
 
-- A delivered-but-uncollected job stops counting once the wait anchor passes its `finishedAt`: the reader reconciles its leaked count within about two idle ticks, and the settle-time reconcile drops it before the terminal render.
-- Jobs settling after either anchor keep the full grace and the settled-card hint (2026-09-16 oc_3c16b semantics unchanged).
+- A delivered-but-uncollected job stops counting once the wait anchor passes its `finishedAt`: the reader reconciles its leaked count within about two idle ticks. At the settle-time anchor (`state.timing.turnStart`) a job that settled mid-turn still counts as owed — its notice may be mid-delivery — so the count survives that render; the settled card renders no line for it either way, because the hint names only the registry's live jobs ([leak-reconcile note](2026-09-17-feishu-bridge-bg-count-leak-reconcile.md)).
+- Jobs settling after either anchor keep the full grace and keep counting (2026-09-16 oc_3c16b semantics unchanged); the card's hint line follows the registry's live cut rather than this count.
 - Drift alarm: the probe now anchors `JobSnapshot.finishedAt` as well as owner/status/reported; a jobs-package change to any of those shapes fails the adapter-projection filter cases loudly.
 - The stub sessions' probes filter a job list (with `finishedAt`) instead of returning constants, and record the anchors they were handed so specs pin which wait start each call site used.
 
@@ -36,4 +36,4 @@ Each call site passes its own wait start:
 
 - `tests/agent-dsh/adapter-projection.spec.ts`: owner/status/reported filtering unchanged, plus anchored counting — zombies settled at or before the anchor and snapshots without `finishedAt` drop out.
 - `tests/engine/engine-unsolicited.spec.ts`: a pre-anchor zombie reconciles away at the second idle tick (the first tick only sets the anchor); a job settling during the wait keeps the count, the armed reader, and the probe anchored at `bgWaitStartedAt`.
-- `tests/engine/engine-events.spec.ts`: the settle-time reconcile clears a pre-turn zombie before the render, keeps the `💡` line for a job settling during the turn, and anchors the probe at `state.timing.turnStart`.
+- `tests/engine/engine-events.spec.ts`: the settle-time reconcile clears a pre-turn zombie before the render, keeps the count without rendering a hint line for a job settling during the turn, and anchors the probe at `state.timing.turnStart`.

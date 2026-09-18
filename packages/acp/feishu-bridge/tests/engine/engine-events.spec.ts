@@ -2002,6 +2002,39 @@ describe('background count at settlement', () => {
     expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).toContain('💡')
   })
 
+  it('renders the registry\'s live count on the settled card, not the pending count', async () => {
+    // The pending count carries slots a leak left behind; the hint a settled
+    // card keeps must name the jobs the registry still holds as running.
+    const { e, updates } = newPreviewCaptureEngine()
+    const sess = newControllableSession('bg-live-count')
+    sess.jobs.push({ id: 'j1', ownerSession: 'bg-live-count', status: 'running', startedAt: 0, reported: false })
+    sess.jobs.push({ id: 'j2', ownerSession: 'bg-live-count', status: 'running', startedAt: 0, reported: false })
+    const state = await settleBackgroundTurn(e, 'test:bg-live-count', sess)
+    expect(state.backgroundTasksPending).toBe(1)
+    expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).toContain('💡 2 ')
+  })
+
+  it('names a live job the count no longer tracks', async () => {
+    // A grace give-up zeroes the count while a slow job still runs
+    // (2026-09-16 oc_3c16b: the 39-minute build); the settled card still owes
+    // the user that job. The live probe runs on every settlement, so the hint
+    // does not depend on the count being alive.
+    const { e, updates } = newPreviewCaptureEngine()
+    const key = 'test:bg-zeroed'
+    const sess = newControllableSession('bg-zeroed')
+    sess.jobs.push({ id: 'j1', ownerSession: 'bg-zeroed', status: 'running', startedAt: 0, reported: false })
+    const session = e.sessions.getOrCreateActive(key)
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = e.platforms[0]
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    sess.channel.push({ type: 'result', content: 'done', done: true } as never)
+    await e.processInteractiveEvents(state, session, e.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+    expect(state.backgroundTasksPending).toBe(0)
+    expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).toContain('💡 1 ')
+  })
+
   it('clears a pre-turn zombie before the terminal render, anchored at the settling turn\'s start', async () => {
     // The notice-delivered zombie shape: the job settled in an earlier turn,
     // its notice was consumed by the turn it woke, and `reported` never
@@ -2018,13 +2051,17 @@ describe('background count at settlement', () => {
     expect(sess.settledUnreportedSince, `anchors=${JSON.stringify(sess.settledUnreportedSince)}`).toContain(state.timing.turnStart)
   })
 
-  it('keeps the 💡 hint for a job that settled during the turn (its notice is still owed)', async () => {
+  it('keeps the count for an owed notice but renders no hint for a job that is not running', async () => {
+    // 2026-09-18 oc_5677: the count for this shape is legitimate — the notice
+    // may still be mid-delivery, so the reader keeps waiting — but the settled
+    // card froze with 💡 6 个后台任务 while the registry held no running job,
+    // and a settled card accepts no later render.
     const { e, updates } = newPreviewCaptureEngine()
     const sess = newControllableSession('bg-fresh')
     sess.jobs.push({ id: 'j1', ownerSession: 'bg-fresh', status: 'completed', startedAt: 0, finishedAt: Date.now() + 60_000, reported: false })
     const state = await settleBackgroundTurn(e, 'test:bg-fresh', sess)
     expect(state.backgroundTasksPending).toBe(1)
-    expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).toContain('💡')
+    expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).not.toContain('💡')
   })
 })
 

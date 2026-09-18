@@ -4230,33 +4230,48 @@ export class Engine {
     // long after this card froze, and the hint it would clear had already been
     // rendered onto the card (2026-09-17 oc_f7b306: the settled card carried a
     // 💡 1 个后台任务 line for a job that settled and was collected in-turn).
-    // Same three states as the reader's reconcile, minus the hint write — the
-    // hint block below recomputes it from the reconciled count.
-    if (state.backgroundTasksPending > 0 && state.agentSession !== undefined) {
-      const live = state.agentSession.pendingBackgroundJobs()
-      // Anchored at the settling turn's start: a job finished before the
-      // turn began cannot owe this card a notice — its notice woke an
-      // earlier turn, was suppressed, or died with its owner — while one
-      // settling mid-turn still does. state.timing deliberately spans
-      // queued continuations, so jobs finishing between a turn and its
-      // queued follower stay counted.
-      const inflight = state.agentSession.settledUnreportedBackgroundJobs(state.timing.turnStart)
-      if (live === 0 && inflight === 0) {
-        console.info(`engine: settled card background count reconciled away (${sessionKey}: ${state.backgroundTasksPending} pending, every job settled and collected)`)
-        state.backgroundTasksPending = 0
-        state.bgWaitStartedAt = 0
+    // Same three states as the reader's reconcile, and the live probe it takes
+    // also feeds the hint block below, which renders that live count.
+    let liveJobs = 0
+    if (state.agentSession !== undefined) {
+      liveJobs = state.agentSession.pendingBackgroundJobs()
+      if (state.backgroundTasksPending > 0) {
+        // Anchored at the settling turn's start: a job finished before the
+        // turn began cannot owe this card a notice — its notice woke an
+        // earlier turn, was suppressed, or died with its owner — while one
+        // settling mid-turn still does. state.timing deliberately spans
+        // queued continuations, so jobs finishing between a turn and its
+        // queued follower stay counted.
+        const inflight = state.agentSession.settledUnreportedBackgroundJobs(state.timing.turnStart)
+        if (liveJobs === 0 && inflight === 0) {
+          console.info(`engine: settled card background count reconciled away (${sessionKey}: ${state.backgroundTasksPending} pending, every job settled and collected)`)
+          state.backgroundTasksPending = 0
+          state.bgWaitStartedAt = 0
+        }
       }
     }
     // Unreported native subtasks stay visible on the settled card: the body
     // hint plus the title suffix count children still running in the
     // background (the turn itself is done — the header stays terminal).
-    // Subtasks take the hint over a run_in_background count; both pending is
+    // Subtasks take the hint over the background-task count; both pending is
     // rare and the suffix already carries the subtask half.
+    //
+    // The hint a settled card keeps is the registry's live count, never the
+    // pending count: a count an owed notice keeps alive is bookkeeping for the
+    // reader's grace clock, and a settled card accepts no later render (the
+    // engine detaches its handle at settlement), so a hint the registry cannot
+    // back freezes onto the card for good (2026-09-18 oc_5677: 💡 6 个后台任务
+    // stood on a settled card whose registry held no running job).
     const pendingChildren = this.pendingNativeChildrenOf(sessionKey)
     if (this.display.toolProgress && sp.canPreview()) {
       if (pendingChildren > 0) {
         await sp.setBackgroundHint(this.i18n.tf(Msg.SubtasksRunningHint, pendingChildren))
-      } else if (state.backgroundTasksPending === 0) {
+      } else if (liveJobs > 0) {
+        await sp.setBackgroundHint(this.i18n.tf(Msg.BgTaskRunning, liveJobs))
+      } else {
+        if (state.backgroundTasksPending > 0) {
+          console.info(`engine: settled card background hint cleared (${sessionKey}: ${state.backgroundTasksPending} pending, no live job)`)
+        }
         await sp.setBackgroundHint('')
       }
       await sp.setPendingSubtasks(pendingChildren)
