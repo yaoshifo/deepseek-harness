@@ -140,6 +140,14 @@ export interface CardCheckOptions {
    * to its question (提交第 N 题) so it cannot read as a whole-card submit.
    */
   submitLabel?: string
+  /**
+   * Title of the collapsed factual-detail panel: when set, the options'
+   * `details` render inside one collapsed panel above the text input, keyed by
+   * their labels, instead of under their own checker. Absent = the inline grey
+   * line (the element's default), so a producer that omits the title never
+   * drops details off the card.
+   */
+  detailsPanel?: string
 }
 
 /** Renders an image by platform-specific image key (e.g. a Feishu image_key). */

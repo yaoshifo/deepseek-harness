@@ -473,7 +473,7 @@ describe('agent conventions prompt (followups contract)', () => {
   })
 })
 
-describe('followups details (grey on the card, plain in the dispatch)', () => {
+describe('followups details (folded on the live card, grey on the settled one, plain in the dispatch)', () => {
   const detailed = q({
     options: [
       { label: '修 A', description: '空指针崩溃，勾选后补上空值检查', details: '涉及 src/a.ts:1 的判空分支' },
@@ -504,6 +504,27 @@ describe('followups details (grey on the card, plain in the dispatch)', () => {
     // the option so the send-time read-back can rebuild the question.
     const card: Card = buildFollowupsCard(detailed)
     expect(JSON.stringify(card)).toContain('涉及 src/a.ts:1 的判空分支')
+  })
+
+  it('the live card folds the details into a panel titled by the detail-bearing option count', () => {
+    const card: Card = buildFollowupsCard(detailed)
+    const check = card.elements.find(el => el.kind === 'checkOptions') as {
+      kind: 'checkOptions'
+      detailsPanel?: string
+      options: Array<{ label: string; details?: string }>
+    }
+    expect(check.detailsPanel).toBe('🔎 事实细节（2 项）')
+    // The options keep their details: the send-time read-back rebuilds the
+    // question from them and the dispatched message carries them.
+    expect(check.options.map(o => o.details ?? '')).toEqual([
+      '涉及 src/a.ts:1 的判空分支', '涉及 src/b.ts:2 的日志点', '',
+    ])
+  })
+
+  it('an option set without details carries no panel title', () => {
+    const card: Card = buildFollowupsCard(q())
+    const check = card.elements.find(el => el.kind === 'checkOptions') as { detailsPanel?: string }
+    expect(check.detailsPanel).toBeUndefined()
   })
 
   it('the settled card renders the detail in grey too', () => {

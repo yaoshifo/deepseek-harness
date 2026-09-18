@@ -343,8 +343,10 @@ export function buildAskQuestionCard(
  * closing-card ask: the multi-select checker form alone (the question text,
  * labels, and descriptions already live in the delivered reply), acting on
  * the `fw_multi:` callback namespace so submissions route to a fresh turn
- * instead of resolving a parked ask. Rendered after the turn's ✅ completion
- * card; not clicking it declines silently.
+ * instead of resolving a parked ask. Each option's factual detail folds into
+ * one collapsed panel above the action row, titled by the count of options
+ * that carry one, so the checker rows stay two lines tall. Rendered after the
+ * turn's ✅ completion card; not clicking it declines silently.
  *
  * @param q - The registered followups question.
  * @param i18n - Card copy face; defaults to zh.
@@ -352,6 +354,7 @@ export function buildAskQuestionCard(
  */
 export function buildFollowupsCard(q: UserQuestion, i18n: AskCardI18n = zhAskCardI18n): Card {
   const cb = newCard().title(i18n.t(Msg.FollowupsCardTitle), 'blue')
+  const detailed = q.options.filter(opt => (opt.details ?? '') !== '').length
   cb.raw({
     kind: 'checkOptions',
     question: '',
@@ -362,6 +365,7 @@ export function buildFollowupsCard(q: UserQuestion, i18n: AskCardI18n = zhAskCar
       value: String(i + 1),
       ...(opt.recommended === true ? { checked: true } : {}),
     })),
+    ...(detailed > 0 ? { detailsPanel: i18n.tf(Msg.FollowupsDetailsPanel, detailed) } : {}),
     action: 'fw_multi:0',
     extra: { fw_question: q.question },
     textInput: { name: 'fw_text_0', placeholder: i18n.t(Msg.AskqMultiTextPlaceholder) },

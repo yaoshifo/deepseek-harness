@@ -31,10 +31,11 @@ const DESCRIPTION =
   + 'Call it right after delivering your final reply, when the「发现的问题 / 可优化点」'
   + '(problems / improvement findings) section of that reply is non-empty; skip it when there are no findings. '
   + 'Pass one option per finding: label = a short plain-language title from the user\'s '
-  + 'perspective (expand jargon into everyday words). description = plain language only — what '
-  + 'the problem is, what handling it would do, and its cost, for a non-coder making the check '
-  + 'decision. details = the factual side — which files, mechanism, or evidence; it renders in '
-  + 'grey under the description and rides the dispatched [后续处理] message, so the executing '
+  + 'perspective (expand jargon into everyday words). description = plain language only, one '
+  + 'sentence of roughly 30 characters — what the problem is plus what handling it would do, and '
+  + 'the cost only when there is one — for a non-coder making the check decision. details = the '
+  + 'factual side — which files, mechanism, or evidence; it folds into a collapsed panel at the '
+  + 'bottom of the card and rides the dispatched [后续处理] message, so the executing '
   + 'agent reads it too: name an exact location (`path:line`) when one is worth naming, and keep '
   + 'code identifiers out of description and out of the「发现的问题 / 可优化点」收尾正文. '
   + 'recommended = true on the ones worth handling (recommended options render pre-checked). '
@@ -69,11 +70,11 @@ export function registerFollowupsTool(ctx: Context, route: (caller: unknown) => 
             description: {
               type: 'string',
               required: true,
-              description: 'Plain language only: what the problem is, what handling it would do, and its cost — for a non-coder making the check decision. Renders verbatim on the card, so no code identifiers or file paths.',
+              description: 'Plain language only, one sentence of roughly 30 characters: what the problem is plus what handling it would do, and the cost only when there is one — for a non-coder making the check decision. Renders verbatim on the card, so no code identifiers or file paths.',
             },
             details: {
               type: 'string',
-              description: 'The factual side of the finding: files, mechanism, evidence. Rendered in grey under the description on the card and carried into the dispatched [后续处理] message; name an exact location (`path:line`) only when it is worth naming.',
+              description: 'The factual side of the finding: files, mechanism, evidence. Folds into a collapsed panel at the card bottom and is carried into the dispatched [后续处理] message; name an exact location (`path:line`) only when it is worth naming.',
             },
             recommended: {
               type: 'boolean',

@@ -17,7 +17,7 @@ Status: implemented
 一个字段取代两个：选项携带事实字符串 `details`，独立的 `locator` 字段删除。
 
 - `UserQuestionOption.details`（接替 `locator`）承载事实侧——涉及文件、机制、依据；是否写出精确位置（`path:line`）由调用方判断。
-- 两个卡面都把它渲染成白话说明下方独立的一行灰色文字（`<font color='grey'>🔎 …</font>`，在飞书卡片 markdown 白名单内）：活卡拼进 checker 文本（`src/feishu/card.ts`），冻结卡拼进冻结 marks（`settledOptionMarks`，`src/engine/ask.ts`，面 `card`）。
+- 冻结卡把它渲染成白话说明下方独立的一行灰色文字（`<font color='grey'>🔎 …</font>`，在飞书卡片 markdown 白名单内），由冻结 marks 拼出（`settledOptionMarks`，`src/engine/ask.ts`，面 `card`）；活卡当天稍后改成把它收进一个折叠块——见[收尾卡折叠](2026-09-18-feishu-bridge-followups-card-fold.zh.md)。
 - 派发的选择消息携带同一份细节的纯文本（面 `dispatch`）：模型输入不得收到渲染标签。
 - 发卡缓存记录卡片自身的源问题（`Card.askQuestion`），因此两条出口都会保留全部选项字段、sidecar 也跨重启保留——[源问题改动](../bug-fix/2026-09-18-feishu-bridge-ask-meta-source-question.zh.md)取代了当初丢掉定位的卡面反推。
 
@@ -29,8 +29,8 @@ Status: implemented
 
 ## Consequences
 
-- 新卡的卡面会显示灰色事实细节；卡面不再只是白话——这是用户要求下的既定代价（计划卡保留它自己的折叠细节形态）。
+- 新卡的结算卡面会显示灰色事实细节；卡面不再只是白话——这是用户要求下的既定代价（计划卡保留它自己的折叠细节形态）。
 - 本次改动之前登记的卡派发时没有细节行——退化为旧行为，不是故障。
 - `details` 在工具 schema 里是选填；reload 后首批卡的填写质量会被观察，升级路径是改为必填（与计划卡 details 的推进方式一致）。
-- 活卡的灰色包裹在渲染层、冻结卡在 marks 层；两者都有钉子（`tests/feishu/card.spec.ts` 渲染 checker 文本，`tests/engine/followups.spec.ts` 断言冻结 marks 与派发文本）。
-- 测试：`tests/feishu/card-action.spec.ts`（`sendCard` 与 `replyCard` 两条出口的发送时回读都派发细节）、`tests/feishu/card.spec.ts`（活卡与冻结卡面的灰色细节行）、`tests/engine/followups.spec.ts`（`followups details` describe）、`tests/tools/followups-tool.spec.ts`（schema 暴露 `details`、不含 `locator`；转换保留它）、`tests/agent-dsh/adapter-persona.spec.ts`（约定文本更新）。
+- 冻结卡的灰色包裹在 marks 层（`tests/feishu/card.spec.ts`、`tests/engine/followups.spec.ts` 断言冻结 marks 与派发文本）；活卡的折叠形态由[收尾卡折叠](2026-09-18-feishu-bridge-followups-card-fold.zh.md)的用例钉住。
+- 测试：`tests/feishu/card-action.spec.ts`（`sendCard` 与 `replyCard` 两条出口的发送时回读都派发细节）、`tests/feishu/card.spec.ts`（冻结卡面的灰色细节行）、`tests/engine/followups.spec.ts`（`followups details` describe）、`tests/tools/followups-tool.spec.ts`（schema 暴露 `details`、不含 `locator`；转换保留它）、`tests/agent-dsh/adapter-persona.spec.ts`（约定文本更新）。

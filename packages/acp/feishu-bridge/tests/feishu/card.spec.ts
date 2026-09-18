@@ -175,18 +175,63 @@ describe('renderCardMap', () => {
     ])
   })
 
-  it('a followups option renders its factual detail in grey under the description', () => {
+  it('a followups card folds its factual details into a collapsed panel above the action row', () => {
     const got = decodeRenderedCard(buildFollowupsCard(detailsQuestion()))
     const form = getBodyElements(got).map(jObj).find(e => jStr(e.tag) === 'form')
     expect(form).toBeDefined()
-    const checker = jArr(jObj(form).elements).map(jObj).find(e => jStr(e.tag) === 'checker')
-    expect(checker).toBeDefined()
-    const content = jStr(jObj(jObj(checker).text).content)
+    const children = jArr(jObj(form).elements).map(jObj)
+    const checkerIndex = children.findIndex(e => jStr(e.tag) === 'checker')
+    expect(checkerIndex).toBeGreaterThanOrEqual(0)
+
+    // The checker row keeps the label and its plain-language description; the
+    // factual detail no longer shares the row.
+    const content = jStr(jObj(jObj(children[checkerIndex]).text).content)
     expect(content).toContain('**两个生成的 schema 文件总在合并时挡路**')
     expect(content).toContain('每次本地跑桌面构建就会把这两个生成文件改脏')
-    // The factual detail rides its own grey line: `<font>` is on the card
-    // markdown whitelist, and a path inside the detail belongs there.
-    expect(content).toContain("<font color='grey'>🔎 涉及 apps/desktop/src-tauri/gen/schemas/acl-manifests.json:1 的生成约定</font>")
+    expect(content).not.toContain('acl-manifests.json')
+
+    // The detail sits in the collapsed panel between the checkers and the
+    // action row (the in-form text input and submit button).
+    const panelIndex = children.findIndex(e => jStr(e.tag) === 'collapsible_panel')
+    expect(panelIndex).toBeGreaterThan(checkerIndex)
+    expect(panelIndex).toBeLessThan(children.findIndex(e => jStr(e.tag) === 'input'))
+    const panel = children[panelIndex]!
+    expect(panel.expanded).toBe(false)
+    expect(jStr(jObj(jObj(panel.header).title).content)).toBe('🔎 事实细节（1 项）')
+    const body = jArr(panel.elements).map(jObj)
+    expect(body).toHaveLength(1)
+    expect(jStr(body[0]?.content)).toBe(
+      '**两个生成的 schema 文件总在合并时挡路** · 涉及 apps/desktop/src-tauri/gen/schemas/acl-manifests.json:1 的生成约定')
+  })
+
+  it('omits the details panel when no option carries a factual detail', () => {
+    const got = decodeRenderedCard(buildFollowupsCard({
+      ...detailsQuestion(),
+      options: [{ label: '修复 A', description: 'src/a.ts:1 空指针' }],
+    }))
+    const form = getBodyElements(got).map(jObj).find(e => jStr(e.tag) === 'form')
+    const tags = jArr(jObj(form).elements).map(e => jStr(jObj(e).tag))
+    expect(tags).toContain('checker')
+    expect(tags).not.toContain('collapsible_panel')
+  })
+
+  it('a checker element without a details panel keeps its inline grey detail line', () => {
+    // The element's default rendering: a producer that does not opt into
+    // folding still shows the detail under its own checker (no silent drop).
+    const card = newCard().raw({
+      kind: 'checkOptions',
+      question: '',
+      options: [{ label: '修复 A', description: 'src/a.ts:1 空指针', details: 'src/a.ts:1 的判空分支' }],
+      action: 'askq_multi:0',
+    }).build()
+
+    const got = decodeRenderedCard(card)
+    const form = getBodyElements(got).map(jObj).find(e => jStr(e.tag) === 'form')
+    const children = jArr(jObj(form).elements).map(jObj)
+    const checker = children.find(e => jStr(e.tag) === 'checker')
+    expect(jStr(jObj(jObj(checker).text).content))
+      .toContain("<font color='grey'>🔎 src/a.ts:1 的判空分支</font>")
+    expect(children.map(e => jStr(e.tag))).not.toContain('collapsible_panel')
   })
 
   it('the settled followups card keeps the grey detail line', () => {

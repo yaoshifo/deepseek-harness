@@ -228,12 +228,28 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
       if ((elem.question ?? '') !== '') {
         formElements.push({ tag: 'markdown', content: `**${elem.question ?? ''}**` })
       }
+      // A details panel title moves every factual detail out of its checker row
+      // into one collapsed panel above the action row. The same non-empty
+      // predicate gates the caller's title count, so the two change together;
+      // without a title the detail keeps its inline grey line (the element's
+      // default rendering, so details never silently leave the card face).
+      const detailsPanelTitle = elem.detailsPanel ?? ''
+      const detailLines: string[] = []
       elem.options.forEach((opt, i) => {
         let checkContent = `**${opt.label}**`
         if ((opt.description ?? '') !== '') checkContent += `\n${opt.description ?? ''}`
-        // The factual detail rides its own grey line under the plain-language
-        // description; `<font>` is whitelisted by finalizeFeishuCardMarkdown.
-        if ((opt.details ?? '') !== '') checkContent += `\n<font color='grey'>🔎 ${opt.details ?? ''}</font>`
+        const detail = opt.details ?? ''
+        if (detail !== '') {
+          if (detailsPanelTitle === '') {
+            // `<font>` is whitelisted by finalizeFeishuCardMarkdown.
+            checkContent += `\n<font color='grey'>🔎 ${detail}</font>`
+          } else {
+            // The separator carries its own spaces: padBoldDelimiters only
+            // adds one for a delimiter glued to text, and a glued colon would
+            // render as `**label** ：detail`.
+            detailLines.push(`**${opt.label}** · ${detail}`)
+          }
+        }
         checkContent = finalizeFeishuCardMarkdown(checkContent)
         formElements.push({
           tag: 'checker',
@@ -242,6 +258,15 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
           ...opt.checked === true ? { checked: true } : {},
         })
       })
+      if (detailsPanelTitle !== '' && detailLines.length > 0) {
+        const panel = renderElement({
+          kind: 'collapsiblePanel',
+          title: detailsPanelTitle,
+          expanded: false,
+          elements: [{ kind: 'markdown', content: detailLines.join('\n') }],
+        }, sessionKey)
+        if (panel !== undefined) formElements.push(panel)
+      }
       const valMap: Record<string, string> = { action: elem.action ?? '' }
       if (sessionKey !== '') valMap.session_key = sessionKey
       for (const [k, v] of Object.entries(elem.extra ?? {})) valMap[k] = v
