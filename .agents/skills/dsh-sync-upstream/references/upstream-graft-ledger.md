@@ -59,6 +59,26 @@
 | compaction 逐字保留已批准计划（summarizer 指令 + 双参数措辞） | 797294d9d1 / 4379cb7e06 | 待提上游（纯提示词实现，落盘无包含性校验） |
 | lefthook secrets job + 配对 glob 扩展、生成器 fork 注册 | — | 保留（fork 政策落地，加严非跳过） |
 
+## 提案批次计划（2026-09-18 排定）
+
+把上表 25 行「待提上游」按主题与依赖分批，先提语义稳定、上游已有消费方的，小件批量并行，大件单独立项。每批：从 dev 切分支整理成独立提交（剥离 fork 专属上下文）→ 带测试 → 推到 `origin`（上游仓 public 且本账号无写权限，走 fork PR）→ 跟进审阅 → 合入上游后删本表对应行 + fork 侧 revert；被拒收的行改标「保留（上游拒收 <日期>）」。推送与开 PR 前须用户确认（外部可见操作）。
+
+| 批 | 内容 | 理由 / 依赖 |
+| --- | --- | --- |
+| 1a | user-approval：结果形状（outcome + note）与 answerer notes | 最成型；2026-09-18 上游 `boot/plugin-manager` 已把 `ctx.approval` 当通用接缝消费 |
+| 1b | user-approval：allowed-always + toolInput（含 core/tools、sandbox、editor 联动） | 同上，依赖 1a 的返回形状 |
+| 2a | user-questions：recommended 旗标 + tool-ask-user schema 收紧 | 小、独立；桥的追问卡已在消费 |
+| 2b | plan 两层评审（`exit_plan_mode` 的 `details` + `intent.layers`）+ 内嵌实施细节段拒绝门 | 大：36 份 snapshot 需重录；形态先与上游对齐 |
+| 2c | compaction 逐字保留已批准计划（summarizer 指令） | 纯提示词，与 2b 同主题可并列 |
+| 3a | subagent：delegation cwd override + list-agents 状态图例 | 小；趁上游本批正在改 subagent（#4304 延续激活上限） |
+| 3b | subagent：settlementNotice 'external' + jobs 常驻 ownsLiveJobs + SubagentRunEndInfo.diagnostic | 含真 bug 修复，价值高；落在 continuation.ts 的既有 graft 面 |
+| 3c | subagent：registerContinuableSetup seam（~250 行）+ mcp-workspace 包本体 | 通用扩展点，最大件；先对上游确认形态再动 |
+| 3d | subagent：reportFrom / CoordinatorMessageSource 安全上报链 | 需 Activation 表鉴权、无法外置——先问上游是否接受该权威模型 |
+| 4a | agent-instructions：@path 导入 + candidateSelection first-existing | 中件，独立 |
+| 4b | agent-instructions suppression 服务 | 本表已标 fork-local 合理；提上游前先评估是否真有通用性 |
+| 5 | 零散小件（各自独立，可一次多提）：todo activeForm、bash-local envFile、mcp-client startupTimeoutMs、skill SkillRestriction + scopedSkillDirs、llm-pi-ai tagStrictSampling、core/tools normalizeKeyStyleVariants、SessionOrigin oneshot、session-snapshot stripNodeWarningLines、fs-search 搜索根锚定、str-replace-editor 逐调用沙箱升级、两个 projection 单元导出（agent-loop inbox / subagent catalog）、subagent-codex/claude-code SDK 二进制 optionalDependencies、acp armTopologyNotifications | 多为一行级导出或单文件 Feature；批量提以摊薄 PR 成本 |
+| 6 | lsp workspaceSymbol 第五操作；plan 引导散文 | lsp 为唯一解（拒收则接受现状）；plan 散文随 2b 走 |
+
 ## 定位备注
 
 - **dsh-memory**：上游 2026-07-31 note 明确「不做」memory（仅 MCP overlay 示例）——不提上游。fork-only 定位已拍板（2026-09-06）并写入包 README 与原则 note；durable kind 'dsh-memory' 不可回收，若上游将来自己做 memory → 采纳上游表面 + 重放 fork 增量。
