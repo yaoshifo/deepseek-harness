@@ -156,6 +156,18 @@ describe('bridge bundle patch', () => {
     expect(findRow(entries, 'tool-str-replace-editor')).toBeUndefined()
   })
 
+  it('suppresses the base hmr row: the reload-only deployment arms no configuration watcher', () => {
+    const { entries, warnings } = composeEntries()
+    // dsh-base owns configuration watching through this single row, so the
+    // disabled row below is the whole freeze. An upstream id rename would make
+    // this patch entry warn-and-skip and silently re-arm configuration HMR.
+    const hmr = findRow(entries, 'hmr')
+    expect(hmr, 'dsh-base must define the hmr row').toBeDefined()
+    expect(hmr?.name).toBe('@deepseek-ai/dsh-hmr')
+    expect(hmr?.disabled).toBe(true)
+    expect(warnings.filter(message => message.includes('hmr'))).toEqual([])
+  })
+
   it('suppresses harness identity and pins the CLAUDE.md instruction candidates', () => {
     const { entries } = composeEntries()
     const systemPrompt = findRow(entries, 'system-prompt')

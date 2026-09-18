@@ -53,7 +53,6 @@
 | 载荷 | 引入 | 状态 |
 | --- | --- | --- |
 | acp armTopologyNotifications 创建窗口竞态修复（带回归测试） | f8d269b596 | 现成 PR 素材，pilot 首选 |
-| apps/cli DSH_CONFIG_HMR_DISABLED | — | 待提上游（S） |
 | plan 引导散文（feishu-bridge/cordis.patch.yml 的 plan-mode section 单点 + tests/bundle-patch.spec.ts lockstep 防线） | eef9cb0327 | 单点收敛于 1a847c57c6（2026-09-07）；patch 现带四个 fork 引导 delta（并行探索 / 分组标记 / 拒绝讨论轮 / 两参数退出），lockstep 防线 pin 全部四个；并行探索段评估提上游 |
 | plan 两层评审：exit_plan_mode 的 `details` 参数 + plan-review intent.layers（bridge 折叠渲染消费） | de2def5b0e | 待提上游（消费者仅 fork bridge；`layers` 字段已在共享类型 AskUserQuestionIntent 内） |
 | 内嵌实施细节段拒绝门（标题集逐行扫描：层级 2–6、英文大小写不敏感、围栏代码块内不识别） | 6cbbfd489b（6815345769 重写收窄） | 待提上游（随上行同批） |

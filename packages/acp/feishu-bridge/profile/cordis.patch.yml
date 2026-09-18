@@ -1,7 +1,8 @@
 # feishu-bridge profile patch layer (the daemon's live-edited config).
-# With DSH_CONFIG_HMR_DISABLED set (the deploy template's default), edits
-# apply at the next /reload restart — reload.sh validates this file before
-# restarting; unset the switch to restore transactional Cordis HMR instead.
+# Edits apply at the next /reload restart — reload.sh validates this file
+# before restarting. The freeze itself is owned by the bridge bundle's
+# disabled `hmr` row (dsh-base's only configuration watcher): dropping that
+# row would restore transactional Cordis HMR instead.
 #
 # This profile hosts the dsh-feishu-bridge daemon: the plugin that replaces
 # the retired cc-connect Go binary (see packages/acp/feishu-bridge/docs/
