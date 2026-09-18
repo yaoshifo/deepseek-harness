@@ -368,6 +368,30 @@ function createPreviewRecorderPlatform(): StubPlatform & { messages: string[] } 
   })
 }
 
+/**
+ * Preview recorder that also captures the card's background-hint line: a
+ * running card renders it beside the stop button, outside `content.text`, so
+ * the plain recorder cannot see a hint that never reaches a terminal card.
+ * @returns Stub platform with the recorded card texts and hint lines.
+ */
+function createHintRecorderPlatform(): StubPlatform & { messages: string[]; hints: string[] } {
+  const messages: string[] = []
+  const hints: string[] = []
+  return Object.assign(createStubPlatform(), {
+    messages,
+    hints,
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+      messages.push(`start:${previewText(content)}`)
+      hints.push(content.bgTaskHint ?? '')
+      return 'preview-handle'
+    },
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+      messages.push(`update:${previewText(content)}`)
+      hints.push(content.bgTaskHint ?? '')
+    },
+  })
+}
+
 /** Poll a predicate until it holds or the deadline passes. */
 async function waitFor(pred: () => boolean, ms = 3000): Promise<void> {
   const deadline = Date.now() + ms
@@ -463,6 +487,118 @@ describe('background task hint closed loop', () => {
     expect(state?.backgroundTasksPending).toBe(0)
     // The settle path found nothing left to clear; the final card carries no hint.
     expect(p.messages[p.messages.length - 1]).not.toContain('background task')
+  })
+
+  it('renders the registry\'s live count when a notice drops a slot', async () => {
+    const p = createHintRecorderPlatform()
+    const agentSession = newControllableSession('s1')
+    // The slot this notice consumes belongs to a job whose suppressed notice
+    // (job_output(wait) already delivered it) left the slot behind: the pending
+    // count reaches 0 while the registry still holds two running jobs. The
+    // hint line must name what is running, not what the count tracks.
+    let liveJobs = 1
+    agentSession.pendingBackgroundJobs = () => liveJobs
+    agentSession.send = async () => {
+      agentSession.sendCalls.push('sent')
+      agentSession.channel.push({
+        type: 'tool_use', toolName: 'bash', toolInput: '{}', toolID: 'c1', content: '', done: false,
+        toolBackground: true,
+      })
+      agentSession.channel.push({ type: 'tool_result', toolResult: 'job started', toolID: 'c1', content: '', done: false })
+      liveJobs = 2
+      agentSession.channel.push({ type: 'bg_task_notice', content: '', done: false, bgNoticeIDs: ['n1'] })
+      agentSession.channel.push({ type: 'text', content: 'still running', done: false })
+    }
+    const e = new Engine('test', createControllableAgent(agentSession), [p], '', 'en')
+    e.setDisplayConfig({ toolProgress: true })
+    const msg = {
+      sessionKey: KEY, platform: 'test', messageID: '', userID: '', userName: '',
+      chatName: '', chatType: '', content: 'deploy', originalContent: '', images: [], files: [],
+      extraContent: '', replyCtx: 'ctx', fromVoice: false, isSpawnedGroup: false,
+      isPermissionAction: false, isAskqCardAction: false, isCardAction: false,
+      parentMessageID: '', quotedText: '',
+    }
+    e.receiveMessage(p, msg)
+
+    await waitFor(() => p.hints.some(h => h.includes('2 background task')))
+    expect(e.interactiveStates.get(KEY)?.backgroundTasksPending).toBe(0)
+  })
+
+  it('names the started job only once its call has registered it', async () => {
+    const p = createHintRecorderPlatform()
+    const agentSession = newControllableSession('s1')
+    // Two jobs from an earlier turn are still running; this turn starts a
+    // third. The bridge sees tool/call before the tool body registers the job,
+    // so the hint this call earns must wait for the call's result: the pending
+    // count (1) would misname the three running jobs as one.
+    let liveJobs = 2
+    agentSession.pendingBackgroundJobs = () => liveJobs
+    agentSession.send = async () => {
+      agentSession.sendCalls.push('sent')
+      agentSession.channel.push({
+        type: 'tool_use', toolName: 'bash', toolInput: '{}', toolID: 'c1', content: '', done: false,
+        toolBackground: true,
+      })
+      liveJobs = 3
+      agentSession.channel.push({ type: 'tool_result', toolResult: 'job started', toolID: 'c1', content: '', done: false })
+      agentSession.channel.push({ type: 'text', content: 'still running', done: false })
+    }
+    const e = new Engine('test', createControllableAgent(agentSession), [p], '', 'en')
+    e.setDisplayConfig({ toolProgress: true })
+    const msg = {
+      sessionKey: KEY, platform: 'test', messageID: '', userID: '', userName: '',
+      chatName: '', chatType: '', content: 'deploy', originalContent: '', images: [], files: [],
+      extraContent: '', replyCtx: 'ctx', fromVoice: false, isSpawnedGroup: false,
+      isPermissionAction: false, isAskqCardAction: false, isCardAction: false,
+      parentMessageID: '', quotedText: '',
+    }
+    e.receiveMessage(p, msg)
+
+    await waitFor(() => p.hints.some(h => h.includes('3 background task')))
+    expect(p.hints.some(h => h.includes('1 background task'))).toBe(false)
+  })
+
+  it('drops the hint on a woken completion turn whose job has already finished', async () => {
+    const p = createHintRecorderPlatform()
+    const agentSession = newControllableSession('s1')
+    // One call, one running job: the count and the registry agree, so the
+    // foreground turn renders an honest 💡 1. The job then finishes while the
+    // owner is idle — the notice that wakes the completion turn finds a slot
+    // the registry no longer backs, and the woken turn must not repeat it.
+    let liveJobs = 1
+    agentSession.pendingBackgroundJobs = () => liveJobs
+    agentSession.send = async () => {
+      agentSession.sendCalls.push('sent')
+      agentSession.channel.push({
+        type: 'tool_use', toolName: 'bash', toolInput: '{}', toolID: 'c1', content: '', done: false,
+        toolBackground: true,
+      })
+      agentSession.channel.push({ type: 'tool_result', toolResult: 'job started', toolID: 'c1', content: '', done: false })
+      agentSession.channel.push({ type: 'result', content: 'deploy started', done: true })
+    }
+    const e = new Engine('test', createControllableAgent(agentSession), [p], '', 'en')
+    e.setDisplayConfig({ toolProgress: true })
+    const msg = {
+      sessionKey: KEY, platform: 'test', messageID: '', userID: '', userName: '',
+      chatName: '', chatType: '', content: 'deploy', originalContent: '', images: [], files: [],
+      extraContent: '', replyCtx: 'ctx', fromVoice: false, isSpawnedGroup: false,
+      isPermissionAction: false, isAskqCardAction: false, isCardAction: false,
+      parentMessageID: '', quotedText: '',
+    }
+    const session = e.sessions.getOrCreateActive(KEY)
+
+    e.receiveMessage(p, msg)
+    await waitFor(() => session.lastResult === 'deploy started')
+    expect(p.hints.some(h => h.includes('1 background task'))).toBe(true)
+
+    const mark = p.hints.length
+    liveJobs = 0
+    agentSession.channel.push({ type: 'result', content: 'deploy finished', done: true })
+    await waitFor(() => (e.interactiveStates.get(KEY)?.backgroundTasksPending ?? -1) === 0)
+
+    // The woken turn renders its placeholder and then its settled card: neither
+    // may name a job the registry no longer holds.
+    expect(p.hints.slice(mark).some(h => h.includes('background task'))).toBe(false)
   })
 
   it('consumes a late re-projection of the same notice exactly once', async () => {

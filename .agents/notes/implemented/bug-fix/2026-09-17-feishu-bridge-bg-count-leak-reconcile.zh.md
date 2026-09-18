@@ -19,7 +19,7 @@ Status: implemented
 
 两个独立修复：
 
-- **凡消费计数之处都对账注册表**（`engine.ts`）：`backgroundTasksPending > 0` 时，任何时钟或渲染决策前先问注册表——unsolicited reader 的 idle 分支一处，回合结算路径在终态渲染前再问一处，于是注册表无法佐证的计数根本到不了定稿卡（`engine: settled card background count reconciled away`；见[重复卡 note](2026-09-17-feishu-bridge-duplicate-completion-card.zh.md)）。三态：活 job（`pendingBackgroundJobs()`，running/stopping）继续等（49f177d17c 语义，不变）；已结算未回报的 job（`settledUnreportedBackgroundJobs(since)`，同一注册表切面上的探针：终态 + `reported === false` + 结算晚于调用方的等待锚点）仍欠一份通知——现有宽限计时继续为它们等（投递不翻转 `reported`，所以是否仍欠由锚点而非单靠标志判定；该精化归 [finishedAt 锚定 note](2026-09-17-feishu-bridge-bg-reconcile-finished-at-anchor.zh.md) 所有）；活 == 0 且在途 == 0 意味着被计数的 job 全部已结算**且**已被同回合领取——泄漏，就地清掉，日志行独立措辞（"reconciled away" 与 "grace exhausted" 区分）。结算路径写提示时渲染的是注册表的活 job 数，而不是这个计数本身：`💡 N 个后台任务` 指的是仍在跑的 job，没有活 job 就不出这一行（`engine: settled card background hint cleared`）。被在途通知续命的计数只是给 reader 宽限计时用的记账；定稿卡不再接受任何后渲染——注册表无法佐证的提示会永久冻在卡上（2026-09-18 oc_5677：定稿卡上挂着 💡 6 个后台任务，而注册表里没有任何在跑的 job）。
+- **凡消费计数之处都对账注册表**（`engine.ts`）：`backgroundTasksPending > 0` 时，任何时钟或渲染决策前先问注册表——unsolicited reader 的 idle 分支一处，回合结算路径在终态渲染前再问一处，于是注册表无法佐证的计数根本到不了定稿卡（`engine: settled card background count reconciled away`；见[重复卡 note](2026-09-17-feishu-bridge-duplicate-completion-card.zh.md)）。三态：活 job（`pendingBackgroundJobs()`，running/stopping）继续等（49f177d17c 语义，不变）；已结算未回报的 job（`settledUnreportedBackgroundJobs(since)`，同一注册表切面上的探针：终态 + `reported === false` + 结算晚于调用方的等待锚点）仍欠一份通知——现有宽限计时继续为它们等（投递不翻转 `reported`，所以是否仍欠由锚点而非单靠标志判定；该精化归 [finishedAt 锚定 note](2026-09-17-feishu-bridge-bg-reconcile-finished-at-anchor.zh.md) 所有）；活 == 0 且在途 == 0 意味着被计数的 job 全部已结算**且**已被同回合领取——泄漏，就地清掉，日志行独立措辞（"reconciled away" 与 "grace exhausted" 区分）。每一次提示写入渲染的都是注册表的活 job 数，而不是这个计数本身（`refreshBackgroundHint`）：`💡 N 个后台任务` 指的是仍在跑的 job，没有活 job 就不出这一行——运行中的卡与定稿卡一并适用（结算处另打 `engine: settled card background hint cleared`）。一次 `run_in_background` 调用要在它自己的工具结果到达时才写提示，因为 job 是在工具体内注册的——晚于 `tool/call` 抵达 bridge 的时刻——在启动处探测会漏掉它必须点名的那份工作。被在途通知续命的计数只是给 reader 宽限计时用的记账；定稿卡不再接受任何后渲染——注册表无法佐证的提示会永久冻在卡上（2026-09-18 oc_5677：定稿卡上挂着 💡 6 个后台任务，而注册表里没有任何在跑的 job）。
 - **冻结终态标题时钟**（`streaming.ts`）：首次终态渲染（completed/truncated/failed 加已结算的挂起提问态）把标题时间戳定格在定稿时刻；后续渲染——存活卡上的 PATCH、位移自愈重发、挂起卡的结果渲染——复用定格值。非终态时钟照常前进。
 
 为什么不改 tool-jobs：wait/read 交付终态后抑制通知是有意设计（不能对模型讲两遍）；计数归 bridge 所有，就该由 bridge 对账。
@@ -32,7 +32,7 @@ Status: implemented
 
 ## 后果
 
-- 「后台启动 + 同回合领取」模式定稿的卡上根本不再有后台提示：结算前对账在终态渲染之前丢掉泄漏计数，提示只渲染注册表的活 job，reader 的 idle 对账则继续清掉它再也无法佐证的计数，让 reader 在一个 idle tick（约 60 秒）内解除武装，而不是拖满 30 分钟宽限。中途结算的 job 仍会保留计数（其 `finishedAt` 晚于结算锚点），但已不可能再作为「在跑任务」渲染到定稿卡上。
+- 「后台启动 + 同回合领取」模式定稿的卡上根本不再有后台提示：结算前对账在终态渲染之前丢掉泄漏计数，凡渲染卡面处提示都以注册表的活 job 为准（含运行中的卡），reader 的 idle 对账则继续清掉它再也无法佐证的计数，让 reader 在一个 idle tick（约 60 秒）内解除武装，而不是拖满 30 分钟宽限。中途结算的 job 仍会保留计数（其 `finishedAt` 晚于结算锚点），但已不可能再作为「在跑任务」渲染到定稿卡上。
 - 终态卡在任何一次渲染里都显示真实定稿时刻；加上重复卡守卫后它根本不会再在群里出现一次，迟到的卡无法再冒充刚发生的完成。
 - 慢任务与在途通知保留全部现有保护（2026-09-16 oc_3c16b 语义不变）。
 - 代价：计数挂起期间每个 idle tick 一次注册表 `list`（内存过滤）。
@@ -41,7 +41,7 @@ Status: implemented
 
 ## 测试
 
-- `tests/engine/engine-unsolicited.spec.ts`：泄漏计数在首个 idle tick 对账清零；重定向后的在途通知宽限边界；活 job 宽限测试不变。
+- `tests/engine/engine-unsolicited.spec.ts`：泄漏计数在首个 idle tick 对账清零；重定向后的在途通知宽限边界；活 job 宽限测试不变。提示在每次写入都跟注册表走：通知吃掉槽位时渲染活 job 数；启动的 job 要等它自己的结果登记后才被点名；被唤醒的完成回合不会留下它已结束的 job 支撑不了的提示。
 - `tests/engine/engine-events.spec.ts`：结算前对账——泄漏计数不渲染到定稿卡上，仍活着的 job 保留计数与提示。提示以注册表的活 job 切面为准：在途通知保留计数但不出提示行；活 job 的行显示活 job 数而非挂起计数；计数已不再跟踪的活 job 依旧有它的一行。
 - `tests/agent-dsh/adapter-projection.spec.ts`：`settledUnreportedBackgroundJobs` 的 owner/status/reported 过滤；注册表缺席 → 0。
 - `tests/streaming.spec.ts`：终态标题时间戳冻结——completed 卡后渲染保持定稿时刻、已结算挂起卡不再接受任何后渲染并保持结果时钟、非终态渲染时钟照常前进。

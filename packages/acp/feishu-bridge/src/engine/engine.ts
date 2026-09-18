@@ -455,6 +455,14 @@ export class InteractiveState {
    * same inbox splice must not drop a second pending slot. In-memory only.
    */
   consumedNoticeIDs: Set<string> = new Set()
+  /**
+   * Call id of a `run_in_background` call whose hint write waits for its own
+   * result. The bridge sees `tool/call` before the tool body registers the
+   * job, so a probe at start would miss the job it must name; the result is
+   * emitted after registration, when the jobs registry can answer. Empty
+   * string = armed without a usable id, satisfied by the next result.
+   */
+  bgHintAwaitingCallID: string | undefined = undefined
 
   // ── turn surfaces shared with the ask delegate (B2) ──
   // The event loop owns these per turn, but an askUser running from the
@@ -2949,7 +2957,7 @@ export class Engine {
           // next-step inbox: consume the slot without opening a turn (the
           // task is settled either way; the orphan-pump and spillover paths
           // below never see this kind).
-          await this.consumeBackgroundNotices(state, state.preview, event.bgNoticeIDs ?? [])
+          await this.consumeBackgroundNotices(state, state.preview, interactiveKey, event.bgNoticeIDs ?? [])
           continue
         }
         if (!isSubstantiveUnsolicitedEvent(event)) continue
@@ -3078,7 +3086,7 @@ export class Engine {
         // The relay's own pulls bypass the reader's pre-substantive
         // consume: a notice landing mid-relay still settles its slot (id
         // dedup makes a double sighting harmless).
-          await this.consumeBackgroundNotices(state, state.preview, event.bgNoticeIDs ?? [])
+          await this.consumeBackgroundNotices(state, state.preview, interactiveKey, event.bgNoticeIDs ?? [])
           break
         }
         case 'text_delta':
@@ -3378,6 +3386,29 @@ export class Engine {
   // ── event loop ──────────────────────────────────────────────────────────
 
   /**
+   * Render the card's hint line from the jobs registry's live count. The
+   * pending count cannot feed the hint: tool-jobs suppresses a completion
+   * notice whose terminal state a `job_output` wait already delivered, and the
+   * suppressed notice leaves its slot behind — that count names work that is
+   * not running. Live jobs first, then the still-running native subtasks, then
+   * no line.
+   * @param state - State whose session owns the counted jobs.
+   * @param sp - The turn's preview, when one is live; no card means no hint.
+   * @param sessionKey - Key native children are counted under.
+   * @returns The registry's live-job count, for callers that log or gate on it.
+   */
+  private async refreshBackgroundHint(state: InteractiveState, sp: StreamPreview | undefined, sessionKey: string): Promise<number> {
+    const live = state.agentSession?.pendingBackgroundJobs() ?? 0
+    if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
+      const children = this.pendingNativeChildrenOf(sessionKey)
+      if (live > 0) await sp.setBackgroundHint(this.i18n.tf(Msg.BgTaskRunning, live))
+      else if (children > 0) await sp.setBackgroundHint(this.i18n.tf(Msg.SubtasksRunningHint, children))
+      else await sp.setBackgroundHint('')
+    }
+    return live
+  }
+
+  /**
    * Consume tool-jobs completion notices delivered into a running turn's
    * next-step inbox: no engine-woken turn will settle for them, so their
    * delivery itself consumes one pending run_in_background slot each. The
@@ -3385,11 +3416,13 @@ export class Engine {
    * never goes below zero.
    * @param state - Interactive state holding the pending count.
    * @param sp - The turn's streaming preview, when one is live.
+   * @param sessionKey - Key native children are counted under.
    * @param ids - Notice message ids from the splice event.
    */
   private async consumeBackgroundNotices(
     state: InteractiveState,
     sp: StreamPreview | undefined,
+    sessionKey: string,
     ids: readonly string[],
   ): Promise<void> {
     const fresh = ids.filter(id => !state.consumedNoticeIDs.has(id))
@@ -3397,11 +3430,7 @@ export class Engine {
     if (fresh.length === 0 || state.backgroundTasksPending <= 0) return
     state.backgroundTasksPending = Math.max(0, state.backgroundTasksPending - fresh.length)
     if (state.backgroundTasksPending === 0) state.bgWaitStartedAt = 0
-    if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
-      await sp.setBackgroundHint(state.backgroundTasksPending > 0
-        ? this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending)
-        : '')
-    }
+    await this.refreshBackgroundHint(state, sp, sessionKey)
   }
 
   /**
@@ -3468,9 +3497,7 @@ export class Engine {
     if (this.display.toolProgress && sp.canPreview()) {
       void sp.showPlaceholder(this.i18n.t(
         background && state.backgroundTasksPending > 0 ? Msg.BgTaskProcessing : Msg.Processing))
-      if (background && state.backgroundTasksPending > 0) {
-        void sp.setBackgroundHint(this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending))
-      }
+      void this.refreshBackgroundHint(state, sp, sessionKey)
     }
     let thinkingStreamed = false
     let thinkingAccum = ''
@@ -3795,13 +3822,12 @@ export class Engine {
             if (event.toolBackground === true) {
               // A run_in_background call returns immediately; its completion
               // arrives as a later engine-woken turn. Count it so the reader
-              // stays alive for that turn and the card shows the running count
-              // (Go EventToolUse ToolBackground).
+              // stays alive for that turn (Go EventToolUse ToolBackground),
+              // and let the call's own result write the hint: registration
+              // happens inside the tool body, after this event.
               state.backgroundTasksPending++
               turnStartedBg = true
-              if (this.display.toolProgress && sp.canPreview()) {
-                await sp.setBackgroundHint(this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending))
-              }
+              state.bgHintAwaitingCallID = event.toolID ?? ''
             }
             // Clear streaming-thinking state when a tool starts — the agent is
             // no longer thinking once it invokes a tool (Go safety net for
@@ -3858,10 +3884,17 @@ export class Engine {
           }
 
           case 'tool_result': {
-          // Promote the plan file path once its write call settles (Go): on
-          // denial the agent must still be able to revise the same file. The
-          // result event carries no tool name, so the match rides the call
-          // id captured on the pending write.
+            // A run_in_background call's hint waits for this result: the job
+            // registered while the call ran, so the registry can now name it.
+            if (state.bgHintAwaitingCallID !== undefined
+              && (state.bgHintAwaitingCallID === '' || state.bgHintAwaitingCallID === (event.toolID ?? ''))) {
+              state.bgHintAwaitingCallID = undefined
+              await this.refreshBackgroundHint(state, sp, sessionKey)
+            }
+            // Promote the plan file path once its write call settles (Go): on
+            // denial the agent must still be able to revise the same file. The
+            // result event carries no tool name, so the match rides the call
+            // id captured on the pending write.
             if (state.pendingPlanFilePath !== '' && event.toolID !== undefined
               && event.toolID !== '' && event.toolID === state.pendingPlanToolID) {
               state.planFilePath = state.pendingPlanFilePath
@@ -4006,7 +4039,7 @@ export class Engine {
           // (busy-owner delivery, no woken turn): its arrival consumes the
           // slot now — the settle-path decrement only covers idle-owner
           // notices that woke a turn (2026-09-15 oc_1b7e).
-            await this.consumeBackgroundNotices(state, sp, event.bgNoticeIDs ?? [])
+            await this.consumeBackgroundNotices(state, sp, sessionKey, event.bgNoticeIDs ?? [])
             break
           }
 
@@ -4219,11 +4252,7 @@ export class Engine {
     if (background && !turnStartedBg && state.backgroundTasksPending > 0) {
       state.backgroundTasksPending--
       state.bgWaitStartedAt = 0
-      if (this.display.toolProgress && sp.canPreview()) {
-        await sp.setBackgroundHint(state.backgroundTasksPending > 0
-          ? this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending)
-          : '')
-      }
+      await this.refreshBackgroundHint(state, sp, sessionKey)
     }
     // A leaked count must not reach the settled card: ask the registry before
     // the terminal render. The reader's idle reconcile runs a minute later,
@@ -4266,13 +4295,11 @@ export class Engine {
     if (this.display.toolProgress && sp.canPreview()) {
       if (pendingChildren > 0) {
         await sp.setBackgroundHint(this.i18n.tf(Msg.SubtasksRunningHint, pendingChildren))
-      } else if (liveJobs > 0) {
-        await sp.setBackgroundHint(this.i18n.tf(Msg.BgTaskRunning, liveJobs))
       } else {
-        if (state.backgroundTasksPending > 0) {
+        const live = await this.refreshBackgroundHint(state, sp, sessionKey)
+        if (live === 0 && state.backgroundTasksPending > 0) {
           console.info(`engine: settled card background hint cleared (${sessionKey}: ${state.backgroundTasksPending} pending, no live job)`)
         }
-        await sp.setBackgroundHint('')
       }
       await sp.setPendingSubtasks(pendingChildren)
     }
