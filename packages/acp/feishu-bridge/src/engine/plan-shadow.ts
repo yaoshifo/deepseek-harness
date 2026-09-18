@@ -3,13 +3,26 @@
  * sibling group whose session forks the origin transcript, pinned to plan
  * mode, and receives one review prompt — an independent second pass can offer
  * a better plan while the origin card stays approvable. The two sides are
- * linked through their sessions' featureState and settle each other: approving
- * either plan voids the other side's parked card and closes its group the /done
- * way. A group the platform does not track (a main group, a p2p chat), one
- * already closed, or one with other work in flight is left open and only told.
- * Neither settlement touches that group's own child groups or worktree, and a
- * shadow never spawns a shadow of its own; a session spawns at most one, so the
- * review cannot recurse or fan out.
+ * linked through their sessions' featureState, and whichever side the user
+ * engages with settles the other: a user action there — text, an attachment, a
+ * card button — closes the peer the /done way (grey avatar, session stopped)
+ * and voids the peer's parked plan card, so the pair never stays half-alive
+ * waiting for a verdict that no longer decides anything. An approval is the one
+ * action the parked card's own settlement owns, and its notice names the
+ * approval rather than "the other side moved".
+ *
+ * Housekeeping does not settle a pair — slash commands and query buttons are
+ * how the user checks on a chat, not how they act on it — and neither do the
+ * engine's synthetic injections (a spawn's first message, machine wakes): only
+ * what a platform delivered for a human reaches the settlement. A pair settles
+ * once; later messages, and a group woken after its close, settle nothing and
+ * repeat nothing.
+ *
+ * A group the platform does not track (a main group, a p2p chat) owns no avatar
+ * axis: it loses its parked card with its turn and is told without any close
+ * claimed. Neither settlement touches a group's own child groups or worktree,
+ * and a shadow never spawns a shadow of its own; a session spawns at most one,
+ * so the review cannot recurse or fan out.
  *
  * @module dsh-feishu-bridge/plan-shadow
  */
@@ -25,7 +38,8 @@ import {
   type Message,
   type Platform,
 } from '../core/types.ts'
-import { Msg } from '../i18n/index.ts'
+import { Msg, type MsgKey } from '../i18n/index.ts'
+import { parsePermissionVerdict } from './ask.ts'
 import { newCard } from '../card.ts'
 import { spawnGroupCommon } from './commands.ts'
 import { cronSenderUserID } from './cron.ts'
@@ -45,6 +59,12 @@ export interface PlanShadowSection {
   shadowSessionKey?: string
   /** Session key of the origin chat; set on the SHADOW record. */
   shadowOf?: string
+  /**
+   * Set on BOTH records by the first settlement: one pair settles once. A chat
+   * the user keeps talking in afterwards — or wakes again — never re-closes its
+   * peer and never repeats the explanation.
+   */
+  settled?: boolean
 }
 
 /** The review prompt a shadow group receives when the config leaves it unset. */
@@ -231,82 +251,194 @@ async function runLaunch(e: Engine, p: Platform, req: PlanShadowRequest): Promis
   }
   markShadow(e.sessions, req.sessionKey, { shadowSessionKey: child.sessionKey })
   markShadow(e.sessions, child.sessionKey, { shadowOf: req.sessionKey })
+  // Creating the group takes a moment, and the origin's card can be answered in
+  // that window — while the link above did not exist yet, so that settlement
+  // found no peer to close. A group born after the decision would review a plan
+  // nobody is waiting for, so it is settled on arrival.
+  if (e.interactiveStates.get(req.sessionKey)?.pendingAsk?.request.kind !== 'plan-review') {
+    settlePlanShadowPeer(e, p, { sessionKey: req.sessionKey, trigger: 'input' })
+  }
+}
+
+/** The side of a pair a chat is on, and the peer that side settles. */
+interface ClaimedPeer {
+  /** Session key of the chat to settle. */
+  peerKey: string
+  /** `origin` when the claiming chat is the origin chat, `shadow` when it is the review group. */
+  side: 'origin' | 'shadow'
 }
 
 /**
- * Abort the shadow a session launched, because the origin plan card settled
- * as approved: the shadow's work is moot. The group is closed the /done way
- * ({@link closeChat}), then the void notice lands in it.
+ * Claim the peer of the pair `sessionKey` belongs to, or undefined when the
+ * chat is in no pair or the pair already settled. The claim commits on BOTH
+ * records before returning, so two settlements landing in the same tick cannot
+ * both pass the guard: "one settlement per pair" has a single decision point.
  *
- * @param e - The engine owning both sessions.
- * @param p - The platform carrying the request.
- * @param req - The origin chat's key and reply context.
+ * @param e - The engine owning session records.
+ * @param sessionKey - The chat that acted (or whose card was approved).
+ * @returns The peer to settle, when this claim owns the settlement.
  */
-export function abortPlanShadow(e: Engine, p: Platform, req: PlanShadowRequest): void {
-  fireAndForget('abort failed', req.sessionKey, () => runAbort(e, p, req))
+function claimPeer(e: Engine, sessionKey: string): ClaimedPeer | undefined {
+  const section = sectionOf(e.sessions.findActive(sessionKey))
+  if (section.settled === true) return undefined
+  const shadowKey = section.shadowSessionKey
+  const originKey = section.shadowOf
+  const peerKey = shadowKey ?? originKey
+  if (peerKey === undefined) return undefined
+  markShadow(e.sessions, sessionKey, { settled: true })
+  markShadow(e.sessions, peerKey, { settled: true })
+  return { peerKey, side: shadowKey !== undefined ? 'origin' : 'shadow' }
 }
 
-/** The abort body behind {@link abortPlanShadow}. */
-async function runAbort(e: Engine, p: Platform, req: PlanShadowRequest): Promise<void> {
-  const shadowKey = sectionOf(e.sessions.findActive(req.sessionKey)).shadowSessionKey
-  if (shadowKey === undefined) return
+/**
+ * Close the review group of a pair and tell it why: the /done way
+ * ({@link closeChat}), then a notice card. A group already carrying its
+ * terminal mark is left completely alone — an earlier settlement, or a `/done`
+ * by hand, closed it, and the user may have woken it since: greying it again
+ * and repeating the notice is exactly what the mark's freeze exists to prevent.
+ *
+ * @param e - The engine owning both sessions.
+ * @param p - The platform carrying the group.
+ * @param shadowKey - Session key of the review group.
+ * @param noticeKey - Message key of the notice explaining the close.
+ */
+async function closeShadowPeer(e: Engine, p: Platform, shadowKey: string, noticeKey: MsgKey): Promise<void> {
+  if (asSpawnedChatActiveChecker(p)?.isSpawnedChatDone(shadowKey) === true) return
+  // Addressed before the close: closing drops the chat's interactive state, and
+  // the platform's reconstruction is the only remaining source.
   const replyCtx = await replyCtxFor(e, p, shadowKey)
   await closeChat(e, p, shadowKey)
-  if (replyCtx !== undefined) await e.reply(p, replyCtx, e.i18n.t(Msg.PlanShadowAborted))
+  if (replyCtx !== undefined) await e.reply(p, replyCtx, e.i18n.t(noticeKey))
 }
 
 /**
- * Void the origin chat's parked plan card and close its group, because the
- * shadow's plan was approved instead. The origin turn is stopped with the ask,
- * not merely un-parked: a cancelled `exit_plan_mode` would otherwise let the
- * origin agent plan again and park a competing card. The group's own child
- * groups and worktree are left alone — only the origin settles.
+ * Close the origin chat of a pair and void its parked plan card, because the
+ * review group acted. The origin turn is stopped with the ask, not merely
+ * un-parked: a cancelled `exit_plan_mode` would otherwise let the origin agent
+ * plan again and park a competing card. Only a live spawned group is greyed
+ * ({@link closeChat}); a main group or a p2p chat owns no avatar axis, so it
+ * loses the card with its turn and is told without any close claimed. An origin
+ * already carrying its terminal mark voids its card silently — a later
+ * settlement in the review group would otherwise leave a card clickable that
+ * can never be honoured, and the user has been told once already. Either way
+ * the close reaches no further than the origin: its own child groups and its
+ * worktree are untouched, and `/done`'s pre-done broadcast never fires.
  *
  * @param e - The engine owning both sessions.
  * @param p - The platform carrying the request.
- * @param req - The SHADOW chat's key and reply context.
+ * @param originKey - Session key of the origin chat.
+ * @param survivorKey - Session key of the review group the notice points at.
+ * @param supersededKey - Message key of the void notice.
  */
-export function invalidateOriginPlan(e: Engine, p: Platform, req: PlanShadowRequest): void {
-  fireAndForget('invalidate failed', req.sessionKey, () => runInvalidate(e, p, req))
-}
-
-/** The invalidate body behind {@link invalidateOriginPlan}. */
-async function runInvalidate(e: Engine, p: Platform, req: PlanShadowRequest): Promise<void> {
-  const originKey = sectionOf(e.sessions.findActive(req.sessionKey)).shadowOf
-  if (originKey === undefined) return
-  const originState = e.interactiveStates.get(originKey)
-  const parkedPlan = originState?.pendingAsk?.request.kind === 'plan-review'
-  // Closing stops the chat's turn, so only a chat with nothing else in flight
-  // closes: the parked plan being voided, or an idle chat. A live unrelated
-  // turn (or a parked ask of another kind) keeps running and only hears the
-  // notice — it is work the user is still in the middle of.
-  const busy = originState !== undefined && !parkedPlan
-    && (originState.activeTurns > 0 || originState.pendingAsk !== undefined)
-  // Only a spawned group can be closed: it owns the avatar axis and the done
-  // mark (a main group or a p2p chat keeps its avatar, so claiming a close
-  // there would be a lie), and an already-done group must not be greyed again
-  // — the user may have woken it since.
+async function closeOriginPeer(
+  e: Engine, p: Platform, originKey: string, survivorKey: string, supersededKey: MsgKey,
+): Promise<void> {
+  // Read before the close: closing flips both signals.
   const checker = asSpawnedChatActiveChecker(p)
-  const spawned = checker?.isSpawnedChatActive(originKey) === true
-  const closed = spawned && !busy
-  // An origin already carrying the mark was closed by an earlier settlement and
-  // has been told; a second notice would only repeat it in a group the user may
-  // have woken since. Its card still voids, silently.
+  const tracked = checker?.isSpawnedChatActive(originKey) === true
   const announced = checker?.isSpawnedChatDone(originKey) !== true
-  // Addressed before the close: closing the origin drops its interactive
-  // state, and the platform's reconstruction is the only remaining source.
+  // Addressed before the close: closing the origin drops its interactive state,
+  // and the platform's reconstruction is the only remaining source.
   const replyCtx = announced ? await replyCtxFor(e, p, originKey) : undefined
-  if (closed) await closeChat(e, p, originKey)
-  else if (parkedPlan) e.stopInteractiveSession(originKey)
+  if (tracked) await closeChat(e, p, originKey)
+  else e.stopInteractiveSession(originKey)
   if (replyCtx === undefined) return
-  const url = e.chatJumpURL(p, extractChannelID(req.sessionKey))
-  const superseded = e.i18n.t(Msg.PlanShadowOriginSuperseded)
-  const text = closed ? `${superseded}\n${e.i18n.t(Msg.PlanShadowOriginClosed)}` : superseded
+  const url = e.chatJumpURL(p, extractChannelID(survivorKey))
+  const superseded = e.i18n.t(supersededKey)
+  const text = tracked ? `${superseded}\n${e.i18n.t(Msg.PlanShadowOriginClosed)}` : superseded
   const card = newCard().markdown(text)
   if (url !== '') {
     card.buttons({ text: e.i18n.t(Msg.SpawnJumpBtn), type: 'primary', value: '', url })
   }
   await e.replyWithCard(p, replyCtx, card.build())
+}
+
+/**
+ * Why a pair is being settled, which picks the words the peer is told: an
+ * approval names the approval; every other action only says the other side
+ * moved.
+ */
+export type PlanShadowTrigger = 'approved' | 'input'
+
+/** The action that settles a pair, and the chat it happened in. */
+export interface PlanShadowSettlement {
+  /** Session key of the chat that acted (or whose card was approved). */
+  sessionKey: string
+  /** What that chat did. */
+  trigger: PlanShadowTrigger
+}
+
+/** The notice the settled peer gets, by its own side and by trigger. */
+const settlementNoticeKeys: Record<PlanShadowTrigger, { shadow: MsgKey; origin: MsgKey }> = {
+  approved: { shadow: Msg.PlanShadowAborted, origin: Msg.PlanShadowOriginSuperseded },
+  input: { shadow: Msg.PlanShadowAbortedOnInput, origin: Msg.PlanShadowOriginSupersededOnInput },
+}
+
+/**
+ * Settle the OTHER side of the pair `sessionKey` acted in: whichever group the
+ * user engages with wins, so the peer is closed on the spot instead of waiting
+ * for a plan verdict that no longer decides anything. One entry for both
+ * triggers — the acting chat's own record says which side it is — so a
+ * settlement has exactly one claim site and one place to pick its notice.
+ *
+ * @param e - The engine owning both sessions.
+ * @param p - The platform carrying the request.
+ * @param req - The acting chat and what it did.
+ */
+export function settlePlanShadowPeer(e: Engine, p: Platform, req: PlanShadowSettlement): void {
+  const claimed = claimPeer(e, req.sessionKey)
+  if (claimed === undefined) return
+  const notices = settlementNoticeKeys[req.trigger]
+  fireAndForget(`${req.trigger} settlement failed`, req.sessionKey, () => claimed.side === 'origin'
+    ? closeShadowPeer(e, p, claimed.peerKey, notices.shadow)
+    : closeOriginPeer(e, p, claimed.peerKey, req.sessionKey, notices.origin))
+}
+
+/**
+ * Whether this message is the user acting in the chat — the only surface pair
+ * settlement reads. Query buttons (`/list` pagination, a `/status` refresh) and
+ * slash commands are housekeeping: checking on a chat must not spend the other
+ * side's work. Everything that pushes the conversation counts — text,
+ * attachments, permission/ask/follow-ups buttons, command-shortcut buttons.
+ *
+ * @param msg - The inbound message.
+ * @returns True when the message acts on the pair.
+ */
+function isUserAction(msg: Message): boolean {
+  if (msg.isCardAction) return false
+  if (msg.images.length === 0 && msg.files.length === 0 && msg.content.trim().startsWith('/')) return false
+  return true
+}
+
+/**
+ * Whether this input IS the approval its own parked plan card is waiting for.
+ * That settlement owns the pair for this action: its notice names the approval
+ * rather than "the origin acted", and it also covers approvals that never
+ * arrive as a platform message — so exactly one of the two paths may run.
+ *
+ * @param e - The engine owning the parked ask.
+ * @param msg - The message the platform delivered for this chat.
+ * @returns True when the parked plan-card settlement handles this input.
+ */
+function isPlanCardApproval(e: Engine, msg: Message): boolean {
+  if (e.interactiveStates.get(msg.sessionKey)?.pendingAsk?.request.kind !== 'plan-review') return false
+  const verdict = parsePermissionVerdict(msg.content)
+  return verdict?.verdict === 'allow' || verdict?.verdict === 'allow-all'
+}
+
+/**
+ * Settle the peer of the pair, because the user acted in this chat. Called for
+ * every message a platform delivered ({@link Engine.handleInbound}); a chat in
+ * no pair, a pair that already settled, and everything {@link isUserAction} or
+ * {@link isPlanCardApproval} excludes returns silently.
+ *
+ * @param e - The engine owning both sessions.
+ * @param p - The platform carrying the request.
+ * @param msg - The message the platform delivered for this chat.
+ */
+export function settlePlanShadowPeerOnInput(e: Engine, p: Platform, msg: Message): void {
+  if (!isUserAction(msg) || isPlanCardApproval(e, msg)) return
+  settlePlanShadowPeer(e, p, { sessionKey: msg.sessionKey, trigger: 'input' })
 }
 
 /**

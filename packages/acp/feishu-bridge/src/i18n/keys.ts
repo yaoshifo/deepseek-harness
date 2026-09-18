@@ -466,7 +466,9 @@ export const ALL_MSG_KEYS = [
   'plan_shadow_name_suffix',
   'plan_shadow_origin_notice',
   'plan_shadow_aborted',
+  'plan_shadow_aborted_on_input',
   'plan_shadow_origin_superseded',
+  'plan_shadow_origin_superseded_on_input',
   'plan_shadow_origin_closed',
 ] as const
 
@@ -908,6 +910,8 @@ export const Msg = {
   PlanShadowNameSuffix: 'plan_shadow_name_suffix',
   PlanShadowOriginNotice: 'plan_shadow_origin_notice',
   PlanShadowAborted: 'plan_shadow_aborted',
+  PlanShadowAbortedOnInput: 'plan_shadow_aborted_on_input',
   PlanShadowOriginSuperseded: 'plan_shadow_origin_superseded',
+  PlanShadowOriginSupersededOnInput: 'plan_shadow_origin_superseded_on_input',
   PlanShadowOriginClosed: 'plan_shadow_origin_closed',
 } as const

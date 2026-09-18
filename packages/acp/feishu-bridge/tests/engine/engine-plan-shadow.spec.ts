@@ -4,6 +4,11 @@
  * prompt, with both directions linked through the sessions' featureState. A
  * shadow group never spawns its own, and a session spawns at most one.
  *
+ * Either side settles the other — approving its plan, or acting in it at all:
+ * the cases below drive the platform ingress (`handleInbound`) for a user action
+ * and the parked card's own settlement for an approval, then observe the peer's
+ * terminal mark, avatar phase, stopped session, and the notice it was told.
+ *
  * @module dsh-feishu-bridge/tests-engine-plan-shadow
  */
 
@@ -544,7 +549,7 @@ describe('PlanShadowOriginInvalidation', () => {
     expect(jumpButtonURLs(p)).toContain('https://applink.feishu.cn/client/chat/open?openChatId=role-1')
   })
 
-  it('an origin busy with other work is told, not closed', async () => {
+  it('closes a busy origin too: whichever side acts wins outright', async () => {
     const { e, p } = newShadowEngine()
     const originKey = 'feishu:oc_parent:ou_u'
     const teardown = withCloseRecorder(p)
@@ -552,7 +557,7 @@ describe('PlanShadowOriginInvalidation', () => {
     await settleLaunch()
 
     // The origin went back to work on something else: a live turn, no plan
-    // card parked. Killing it to close the group would destroy that work.
+    // card parked. The settlement owns the pair, so that turn dies with it.
     const originState = armState(e, p, originKey)
     originState.activeTurns = 1
 
@@ -564,22 +569,22 @@ describe('PlanShadowOriginInvalidation', () => {
     await expect(shadowDecision).resolves.toEqual({ outcome: 'allowed-once' })
     await settleLaunch()
 
-    expect(teardown.calls).not.toContain(`done:${originKey}`)
-    expect(teardown.calls).not.toContain(`phase:${originKey}:done`)
-    expect(originState.userStopped).toBe(false)
+    expect(teardown.calls).toContain(`done:${originKey}`)
+    expect(teardown.calls).toContain(`phase:${originKey}:done`)
+    expect(originState.userStopped).toBe(true)
     expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginSuperseded))
-    expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
+    expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
   })
 
-  it('an origin parked on another ask is told, not closed', async () => {
+  it('closes an origin parked on another ask, voiding that ask with its turn', async () => {
     const { e, p } = newShadowEngine()
     const originKey = 'feishu:oc_parent:ou_u'
     const teardown = withCloseRecorder(p)
     await deny(e, p, originKey, parkPlan(e, p, originKey))
     await settleLaunch()
 
-    // The origin is idle but for a question of its own: a parked ask is work
-    // in flight, and its turn is parked on it.
+    // The origin is idle but for a question of its own: parked work is still
+    // work, and the whole session goes with the close.
     const originState = armState(e, p, originKey)
     void e.askUser(originKey, {
       kind: 'questions',
@@ -594,11 +599,11 @@ describe('PlanShadowOriginInvalidation', () => {
     await expect(shadowDecision).resolves.toEqual({ outcome: 'allowed-once' })
     await settleLaunch()
 
-    expect(teardown.calls).not.toContain(`done:${originKey}`)
-    expect(originState.userStopped).toBe(false)
-    expect(originState.pendingAsk).toBeDefined()
+    expect(teardown.calls).toContain(`done:${originKey}`)
+    expect(originState.userStopped).toBe(true)
+    expect(originState.pendingAsk).toBeUndefined()
     expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginSuperseded))
-    expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
+    expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
   })
 
   it('an origin the platform does not track is voided without a close', async () => {
@@ -720,6 +725,210 @@ describe('PlanShadowOriginInvalidation', () => {
     expect(originState.userStopped).toBe(true)
   })
 })
+
+describe('PlanShadowPeerInput', () => {
+  it('a message in the origin closes the shadow group on the spot', async () => {
+    const { e, p } = newShadowEngine()
+    const teardown = withTeardownRecorder(p)
+    const key = 'feishu:oc_parent:ou_u'
+    const decision = parkPlan(e, p, key)
+    await settleLaunch()
+    expect(p.count).toBe(1)
+
+    // The shadow group, busy on its own review turn.
+    const shadowKey = 'test:role-1'
+    const shadowSession = newControllableSession('shadow-live')
+    let cancelled = 0
+    shadowSession.cancelTurn = () => { cancelled++ }
+    const shadowState = armState(e, p, shadowKey)
+    shadowState.agentSession = shadowSession
+    shadowState.replyCtx = 'shadow-ctx'
+
+    e.handleInbound(p, msg({ sessionKey: key, content: '先别推了，我改主意了' }))
+    await settleLaunch()
+
+    // Closing the review group the /done way: the grey mark commits before the
+    // stop, and the review turn running in there dies with it.
+    expect(teardown.calls.filter(c => c.includes(shadowKey)))
+      .toEqual([`done:${shadowKey}`, `phase:${shadowKey}:done`])
+    expect(cancelled).toBe(1)
+    expect(shadowState.userStopped).toBe(true)
+    expect(p.sent.join('\n')).toContain(e.i18n.t(Msg.PlanShadowAbortedOnInput))
+    // The side the user typed in keeps its own parked plan card.
+    expect(e.interactiveStates.get(key)?.pendingAsk).toBeDefined()
+
+    await deny(e, p, key, decision)
+  })
+
+  it('a message in the review group voids the origin card and closes the origin', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const teardown = withCloseRecorder(p)
+    await deny(e, p, originKey, parkPlan(e, p, originKey))
+    await settleLaunch()
+
+    // A second origin card stays parked while the review group is talked to.
+    const originState = armState(e, p, originKey)
+    const originSecond = e.askUser(originKey, { kind: 'plan-review', heading: '# P2', plan: '# P2\norigin second' })
+    await parked(e, originKey)
+
+    e.handleInbound(p, msg({ sessionKey: 'test:role-1', content: '改成方案 B 吧' }))
+    await settleLaunch()
+
+    // The parked card voids with its turn — a cancelled exit_plan_mode alone
+    // would let the origin plan again — and the group is greyed the /done way.
+    await expect(originSecond).resolves.toEqual({ outcome: 'cancelled' })
+    expect(originState.userStopped).toBe(true)
+    expect(teardown.calls).toContain(`done:${originKey}`)
+    expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginSupersededOnInput))
+    expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
+    expect(jumpButtonURLs(p)).toContain('https://applink.feishu.cn/client/chat/open?openChatId=role-1')
+  })
+
+  it('a slash command or a query button is housekeeping, not an action on the pair', async () => {
+    // Checking on a chat must not spend the other side's work.
+    const { e, p } = newShadowEngine()
+    const key = 'feishu:oc_parent:ou_u'
+    const teardown = withTeardownRecorder(p)
+    const decision = parkPlan(e, p, key)
+    await settleLaunch()
+
+    e.handleInbound(p, msg({ sessionKey: key, content: '/status' }))
+    e.handleInbound(p, msg({ sessionKey: key, content: '', isCardAction: true, extraContent: 'act:list:2' }))
+    await settleLaunch()
+
+    expect(reviewGroupCalls(teardown)).toEqual([])
+    expect(p.sent.join('\n')).not.toContain(e.i18n.t(Msg.PlanShadowAbortedOnInput))
+    await deny(e, p, key, decision)
+  })
+
+  it('the review prompt\'s own injected first message never settles the pair', async () => {
+    // The spawn feeds the prompt through receiveMessage, not the platform
+    // surface: reading it as user input would close the origin the moment the
+    // review group is born.
+    const { e, p } = newShadowEngine()
+    const key = 'feishu:oc_parent:ou_u'
+    const teardown = withTeardownRecorder(p)
+    const decision = parkPlan(e, p, key)
+    await settleLaunch()
+    expect(p.count).toBe(1)
+
+    e.receiveMessage(p, msg({ sessionKey: 'test:role-1', content: e.planShadowPrompt, isSpawnedGroup: true }))
+    await settleLaunch()
+
+    expect(reviewGroupCalls(teardown)).toEqual([])
+    await deny(e, p, key, decision)
+  })
+
+  it('a machine wake is not the user acting', async () => {
+    const { e, p } = newShadowEngine()
+    const key = 'feishu:oc_parent:ou_u'
+    const teardown = withTeardownRecorder(p)
+    const decision = parkPlan(e, p, key)
+    await settleLaunch()
+
+    // A subtask report or a gather wake arrives as a synthetic injection. It
+    // replaces the parked ask's whole interactive state on its way in (a wake
+    // into a plan-parked group orphans that card — unrelated to this pair), so
+    // the case pins the settlement only: no close, and no notice either way.
+    e.deliverMachineMessage(p, msg({ sessionKey: key, content: '子任务完成', machine: true }))
+    await settleLaunch()
+
+    expect(reviewGroupCalls(teardown)).toEqual([])
+    expect(p.sent.join('\n')).not.toContain(e.i18n.t(Msg.PlanShadowAbortedOnInput))
+    void decision
+  })
+
+  it('settles once per pair: later messages never re-close or re-tell', async () => {
+    const { e, p } = newShadowEngine()
+    const key = 'feishu:oc_parent:ou_u'
+    const teardown = withTeardownRecorder(p)
+    const decision = parkPlan(e, p, key)
+    await settleLaunch()
+
+    e.handleInbound(p, msg({ sessionKey: key, content: '先别推了' }))
+    await settleLaunch()
+    const notice = e.i18n.t(Msg.PlanShadowAbortedOnInput)
+    const shadowCalls = (): string[] => teardown.calls.filter(c => c.includes('test:role-1'))
+    expect(shadowCalls()).toHaveLength(2)
+    expect(countOf(p.sent.join('\n'), notice)).toBe(1)
+
+    // Talking on in the origin, and waking the review group, change nothing.
+    e.handleInbound(p, msg({ sessionKey: key, content: '再说一句' }))
+    e.handleInbound(p, msg({ sessionKey: 'test:role-1', content: '你好' }))
+    await settleLaunch()
+
+    expect(shadowCalls()).toHaveLength(2)
+    expect(countOf(p.sent.join('\n'), notice)).toBe(1)
+    await deny(e, p, key, decision)
+  })
+
+  it('a review group born after the origin settled is closed on arrival', async () => {
+    // Group creation takes a moment; the user can answer the plan card in that
+    // window, and the pair settlement then finds no peer to close yet — which
+    // would leave the review group alive for a decision already made.
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => { release = r })
+    const base = createStubChatroomSpawner('feishu')
+    const slowSpawn = base.spawnGroup
+    const p = Object.assign(base, {
+      spawnGroup: async (m: Message, name: string, first: string) => {
+        await gate
+        return slowSpawn(m, name, first)
+      },
+    })
+    const teardown = withTeardownRecorder(p)
+    const e = new Engine('test', recordingAgent(), [p], '', 'en')
+    e.setPlanShadow(true, reviewPrompt)
+    const key = 'feishu:oc_parent:ou_u'
+    const decision = parkPlan(e, p, key)
+    await parked(e, key)
+
+    e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+    await settleLaunch()
+    // No link was written yet, so the approval settled nothing.
+    expect(section(e, key)['shadowSessionKey']).toBeUndefined()
+
+    release()
+    await settleLaunch()
+
+    expect(reviewGroupCalls(teardown)).toEqual(['done:test:role-1', 'phase:test:role-1:done'])
+    expect(p.sent.join('\n')).toContain(e.i18n.t(Msg.PlanShadowAbortedOnInput))
+  })
+
+  it('a review group already closed is left alone when the origin acts', async () => {
+    const { e, p } = newShadowEngine()
+    const key = 'feishu:oc_parent:ou_u'
+    const teardown = withTeardownRecorder(p)
+    const decision = parkPlan(e, p, key)
+    await settleLaunch()
+
+    // The review group already carries its terminal mark — a `/done` by hand,
+    // or an earlier settlement — and may have been woken since.
+    Object.assign(p, {
+      isSpawnedChatDone: (sessionKey: string) => sessionKey === 'test:role-1',
+      isSpawnedChatActive: () => false,
+    })
+
+    e.handleInbound(p, msg({ sessionKey: key, content: '先别推了' }))
+    await settleLaunch()
+
+    expect(reviewGroupCalls(teardown)).toEqual([])
+    expect(p.sent.join('\n')).not.toContain(e.i18n.t(Msg.PlanShadowAbortedOnInput))
+    await deny(e, p, key, decision)
+  })
+})
+
+/** The teardown calls that landed on the review group (the origin paints its own plan-review phase). */
+function reviewGroupCalls(rec: { calls: string[] }): string[] {
+  return rec.calls.filter(c => c.includes('test:role-1'))
+}
+
+/** How many times `needle` occurs in `haystack` (notice-repetition checks). */
+function countOf(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1
+}
 
 /** Every card content string recorded by the platform, joined. */
 function cardTexts(p: SpawnerPlatform): string {

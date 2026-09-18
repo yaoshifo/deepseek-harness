@@ -472,6 +472,8 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   plan_shadow_name_suffix: { en: ' · Review', zh: '· 推敲' },
   plan_shadow_origin_notice: { en: '🤔 A shadow group is now reviewing this plan for a better option; this plan card stays valid — tap to open it', zh: '🤔 已自动开影子群并行推敲更优方案；本群这张计划卡仍然有效，点按钮查看子群' },
   plan_shadow_aborted: { en: '⏹ The origin plan was approved; this review is void. The group has stopped — ignore or delete it.', zh: '⏹ 原群已批准原计划，本次推敲作废。本群已停止，可以忽略或直接删掉。' },
+  plan_shadow_aborted_on_input: { en: '⏹ The origin chat acted first; this review is void. The group has stopped — ignore or delete it.', zh: '⏹ 原群已有新动作，本次推敲作废。本群已停止，可以忽略或直接删掉。' },
   plan_shadow_origin_superseded: { en: '⚠️ A better plan was approved in the shadow group; this plan card is void (further clicks do nothing). Tap to open the shadow group.', zh: '⚠️ 影子群已采纳更优方案，本群这张计划卡自动作废（再点无效）。点按钮跳到影子群。' },
+  plan_shadow_origin_superseded_on_input: { en: '⚠️ The review group acted first; this plan card is void (further clicks do nothing). Tap to open the review group.', zh: '⚠️ 影子群已有新动作，本群这张计划卡自动作废（再点无效）。点按钮跳到影子群。' },
   plan_shadow_origin_closed: { en: 'This group is closed too (avatar greyed, session ended) — send any message to pick it up again.', zh: '本群已一并关闭（头像置灰、会话已结束）；再发一条消息即可继续。' },
 }

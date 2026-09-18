@@ -169,7 +169,7 @@ import { executeDeleteModeAction, renderDeleteModeCard, renderListCardSafe, rend
 import { runBangShell } from './shell-commands.ts'
 import { renderDirCardSafe } from './dir-card.ts'
 import { executeCardAction } from './cron-commands.ts'
-import { abortPlanShadow, defaultPlanShadowPrompt, invalidateOriginPlan, launchPlanShadow } from './plan-shadow.ts'
+import { defaultPlanShadowPrompt, launchPlanShadow, settlePlanShadowPeer, settlePlanShadowPeerOnInput } from './plan-shadow.ts'
 import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from './recall.ts'
 import { renderSubtaskPanelCard } from './subtask-panel.ts'
 import { maybeAutoResetSessionOnIdle } from './session-misc.ts'
@@ -1633,7 +1633,7 @@ export class Engine {
     const startErrs: unknown[] = []
     for (const p of this.platforms) {
       try {
-        await p.start((platform, msg) => { void this.handleMessage(platform, msg) })
+        await p.start((platform, msg) => { this.handleInbound(platform, msg) })
       } catch (error) {
         console.warn(`platform start failed: ${p.name()}: ${String(error)}`)
         startErrs.push(error)
@@ -2138,6 +2138,20 @@ export class Engine {
   }
 
   // ── inbound routing ─────────────────────────────────────────────────────
+
+  /**
+   * Route one message a PLATFORM delivered: every human action in a chat —
+   * text, attachments, any card button — reaches the engine through here.
+   * Synthetic injections (`receiveMessage`: a spawn's first message, machine
+   * wakes) enter {@link handleMessage} directly instead, so anything keyed on
+   * "the user acted in this chat" reads this surface and only this surface.
+   * @param p - Platform the message arrived on.
+   * @param msg - The inbound message.
+   */
+  handleInbound(p: Platform, msg: Message): void {
+    settlePlanShadowPeerOnInput(this, p, msg)
+    void this.handleMessage(p, msg)
+  }
 
   /**
    * Route one inbound message (Go handleMessage, M1 subset).
@@ -6049,11 +6063,9 @@ export class Engine {
       const approved = decided.outcome === 'allowed-once' || decided.outcome === 'allowed-always'
       await this.applyChatPhase(p, sessionKey, approved ? 'approved' : 'discussing')
       if (approved) {
-        // Either side settles the other, and each call self-guards: a session
-        // with a shadow voids it, while a session that IS the shadow voids
-        // the origin's parked card. A session is never both.
-        abortPlanShadow(this, p, { sessionKey, replyCtx })
-        invalidateOriginPlan(this, p, { sessionKey, replyCtx })
+        // Either side settles the other: the acting chat's own record says
+        // which side of the pair it is, so one call covers both directions.
+        settlePlanShadowPeer(this, p, { sessionKey, trigger: 'approved' })
       }
     } else {
       await this.applyChatPhase(p, sessionKey, this.chatBasePhase(p, sessionKey))
