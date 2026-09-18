@@ -286,12 +286,15 @@ export interface CardActionCallbackResponse {
 }
 
 /**
- * Extract one question prompt card's question from the core card model: a
- * single-select card carries `askq:{q}:{n}` button values, a multi-select
- * card one `askq_multi:{q}` action, an optionless card its text form — the
- * question index names the card's place in its ask.
+ * Reconstruct one question prompt card's question from the core card model —
+ * the fallback for cards built without a source question
+ * ({@link Card.askQuestion} wins when present), and the classifier that names
+ * the card's ask position: a single-select card carries `askq:{q}:{n}` button
+ * values, a multi-select card one `askq_multi:{q}` action, an optionless card
+ * its text form — the question index names the card's place in its ask.
  * @param card - The question card being sent.
- * @returns The extracted question, or undefined when the card is not a question prompt.
+ * @returns The reconstructed question and its ask position, or undefined when
+ *   the card is not a question prompt.
  */
 function askCardMeta(card: Card): AskCardMeta | undefined {
   const questions = new Map<number, UserQuestion>()
@@ -1980,13 +1983,18 @@ export class FeishuPlatform implements Platform {
   /**
    * Cache the open question of a question prompt card at send time: a
    * callback cannot carry the card, so it is read back to freeze the card
-   * with its settled snapshot. Only question cards are cached.
+   * with its settled snapshot. Only question cards are cached. The card's
+   * own source question ({@link Card.askQuestion}) wins over the card-face
+   * reconstruction: the reconstruction only sees what the face renders and
+   * silently drops every other field.
    * @param sessionKey - Session the card was sent to.
    * @param card - The card being sent.
    */
   private cacheAskqMeta(sessionKey: string, card: Card): boolean {
     const meta = askCardMeta(card)
     if (meta === undefined) return false
+    const source = card.askQuestion()
+    if (source !== undefined) meta.question = source
     this.askqMetaCache.set(sessionKey, meta)
     // The cache key holds one card's meta: mirror the single-slot semantics
     // onto the persisted store. Followups cards outlive the turn (and

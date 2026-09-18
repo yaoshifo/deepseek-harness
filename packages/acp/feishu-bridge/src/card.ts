@@ -10,6 +10,7 @@
  */
 
 import { sprintf } from './sprintf.ts'
+import type { UserQuestion } from './core/types.ts'
 
 /**
  * Optional colored title bar of a card. Color: blue, green, red, orange,
@@ -311,6 +312,33 @@ export class Card {
   elements: CardElement[] = []
   /** Metadata cached by platforms for callback card replacement. */
   permBody?: string
+  /**
+   * The question this card was built from, when its builder still holds it.
+   * Platforms cache it at send time so the callback rebuild reads the source
+   * data instead of reconstructing it from the rendered face — a
+   * reconstruction silently drops every field the face cannot render.
+   * Deliberately a private field: never rendered, and neither
+   * `JSON.stringify` nor a spread can leak it.
+   */
+  #askQuestion?: UserQuestion
+
+  /**
+   * Attach the source question for the platform's send-time cache.
+   * @param q - The question this card renders.
+   * @returns This card, for chaining.
+   */
+  setAskQuestion(q: UserQuestion): this {
+    this.#askQuestion = q
+    return this
+  }
+
+  /**
+   * The attached source question, when the builder had one.
+   * @returns The source question, or undefined for cards built without one.
+   */
+  askQuestion(): UserQuestion | undefined {
+    return this.#askQuestion
+  }
 
   /**
    * Convert the card to plain text for platforms without rich-card support.

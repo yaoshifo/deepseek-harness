@@ -335,7 +335,7 @@ export function buildAskQuestionCard(
   const title = `‼️ ${q.header !== '' ? q.header : i18n.t(Msg.AskQuestionTitle)}${progressSuffix(qIdx, total)}`
   const cb = newCard().title(title, 'blue')
   cb.raw(...questionElements(q, qIdx, i18n))
-  return cb.build()
+  return cb.build().setAskQuestion(q)
 }
 
 /**
@@ -367,7 +367,7 @@ export function buildFollowupsCard(q: UserQuestion, i18n: AskCardI18n = zhAskCar
     textInput: { name: 'fw_text_0', placeholder: i18n.t(Msg.AskqMultiTextPlaceholder) },
     submitLabel: i18n.t(Msg.FollowupsCardSubmit),
   })
-  return cb.build()
+  return cb.build().setAskQuestion(q)
 }
 
 /** Render face of the frozen option marks: the card shows the factual detail

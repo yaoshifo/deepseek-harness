@@ -1111,6 +1111,61 @@ describe('onCardAction fw_multi submit (followups suggestion card)', () => {
     expect(messages[0]!.content).toContain('🔎 涉及 src/a.ts:1 的判空分支')
   })
 
+  it('caches the sent question itself rather than a card-face reconstruction', async () => {
+    const api: FeishuApiClient = {
+      async create() { return { messageId: 'om_fw_card' } },
+      async reply() { return { messageId: 'om_fw_card' } },
+      async patch() {},
+      async delete() {},
+    }
+    const p = newPlatform({ allowChat: '*', apiClient: api })
+    const { buildFollowupsCard } = await import('../../src/engine/ask.ts')
+    const { buildAskQuestionCard } = await import('../../src/engine/ask.ts')
+    const followups = {
+      question: 'fix?',
+      header: '后续处理',
+      multiSelect: true,
+      options: [
+        { label: 'Fix A', description: '空指针崩溃', details: '涉及 src/a.ts:1', recommended: true },
+        { label: 'Skip', description: '' },
+      ],
+    }
+    await p.sendCard({ messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, buildFollowupsCard(followups))
+    // The cached question is the one the card was BUILT FROM, not one read
+    // back off the rendered face: a reconstruction silently drops every field
+    // the face cannot render (the option locator before, `recommended` here).
+    expect(p.askqMetaCache.get('feishu:oc_1:ou_9')?.question).toEqual(followups)
+
+    const ask = {
+      question: 'Pick tools', header: '', multiSelect: true,
+      options: [
+        { label: 'Bash', description: 'run commands', recommended: true },
+        { label: 'Read', description: 'read files' },
+      ],
+    }
+    await p.sendCard({ messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, buildAskQuestionCard(ask, 0, 1))
+    expect(p.askqMetaCache.get('feishu:oc_1:ou_9')?.question).toEqual(ask)
+  })
+
+  it('caches the source question when the card leaves through the threaded-reply egress too', async () => {
+    const api: FeishuApiClient = {
+      async create() { return { messageId: 'om_fw_card' } },
+      async reply() { return { messageId: 'om_fw_card' } },
+      async patch() {},
+      async delete() {},
+    }
+    const p = newPlatform({ allowChat: '*', apiClient: api })
+    const { buildFollowupsCard } = await import('../../src/engine/ask.ts')
+    const question = {
+      question: 'fix?',
+      header: '后续处理',
+      multiSelect: true,
+      options: [{ label: 'Fix A', description: '空指针崩溃', details: '涉及 src/a.ts:1', recommended: true }],
+    }
+    await p.replyCard({ messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, buildFollowupsCard(question))
+    expect(p.askqMetaCache.get('feishu:oc_1:ou_9')?.question).toEqual(question)
+  })
+
   it('leaves a cached askq meta untouched on an fw submit', async () => {
     const p = newPlatform({ allowChat: '*' })
     // Seed the cache with an askq (non-followups) meta, as a later live

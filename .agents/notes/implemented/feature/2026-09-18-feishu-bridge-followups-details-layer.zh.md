@@ -19,7 +19,7 @@ Status: implemented
 - `UserQuestionOption.details`（接替 `locator`）承载事实侧——涉及文件、机制、依据；是否写出精确位置（`path:line`）由调用方判断。
 - 两个卡面都把它渲染成白话说明下方独立的一行灰色文字（`<font color='grey'>🔎 …</font>`，在飞书卡片 markdown 白名单内）：活卡拼进 checker 文本（`src/feishu/card.ts`），冻结卡拼进冻结 marks（`settledOptionMarks`，`src/engine/ask.ts`，面 `card`）。
 - 派发的选择消息携带同一份细节的纯文本（面 `dispatch`）：模型输入不得收到渲染标签。
-- 发卡回读从卡元素上映射 `details`（`askCardMeta`），两条出口都会记录它、sidecar 也跨重启保留——保住派发完整的是这段映射，而不是额外的缓存参数。
+- 发卡缓存记录卡片自身的源问题（`Card.askQuestion`），因此两条出口都会保留全部选项字段、sidecar 也跨重启保留——[源问题改动](../bug-fix/2026-09-18-feishu-bridge-ask-meta-source-question.zh.md)取代了当初丢掉定位的卡面反推。
 
 ## Alternatives considered
 

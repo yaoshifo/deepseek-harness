@@ -19,7 +19,7 @@ One field replaces two: the option carries a factual `details` string, and the s
 - `UserQuestionOption.details` (replacing `locator`) holds the factual side — files, mechanism, evidence; whether it names an exact location (`path:line`) is the caller's call.
 - Both card faces render it as its own grey line (`<font color='grey'>🔎 …</font>`, whitelisted for Feishu card markdown) under the plain-language description: the live card composes it into the checker text (`src/feishu/card.ts`), the settled card into the frozen marks (`settledOptionMarks`, `src/engine/ask.ts`, face `card`).
 - The dispatched selection message carries the same detail as plain text (face `dispatch`): a model input must not receive rendering tags.
-- The send-time read-back maps `details` off the card element (`askCardMeta`), so both egresses record it and the sidecar survives restarts — the mapping, not an extra cache argument, is what keeps the dispatch complete.
+- The send-time cache records the card's own source question (`Card.askQuestion`), so both egresses keep every option field and the sidecar survives restarts — the [source-question change](../bug-fix/2026-09-18-feishu-bridge-ask-meta-source-question.md) replaced the card-face reconstruction that had dropped the locator in the first place.
 
 ## Alternatives considered
 
