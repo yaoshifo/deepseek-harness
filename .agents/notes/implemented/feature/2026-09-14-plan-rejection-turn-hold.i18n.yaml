@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-14-plan-rejection-turn-hold.md
-2026-09-14-plan-rejection-turn-hold.md: 641bb15d0ffb709b645b0885f349468d1009f938
-2026-09-14-plan-rejection-turn-hold.zh.md: 4b9b7a8215b5d7a9a8ceb41fcd1a10a242783184
+2026-09-14-plan-rejection-turn-hold.md: e87c409a55fd52a9ac8e019095ee35337158a30f
+2026-09-14-plan-rejection-turn-hold.zh.md: 194430e9f3df3d38df74b23a562c9242f5c47159

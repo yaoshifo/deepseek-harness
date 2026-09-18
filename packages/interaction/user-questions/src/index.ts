@@ -8,7 +8,7 @@
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-agent'
+import { emitAgentEvent } from '@deepseek-ai/dsh-agent'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 
@@ -132,7 +132,7 @@ export class UserQuestionService extends Service {
       'NO_PROVIDER',
     ))
     try {
-      return await (agent === undefined
+      const answer = await (agent === undefined
         ? this.ctx.waterfall('user-questions/request', request, noAnswerer)
         : this.ctx.waterfall(
           scopeTarget(agent, agent),
@@ -140,6 +140,11 @@ export class UserQuestionService extends Service {
           { ...request, agent },
           noAnswerer,
         ))
+      // Announce the human's answer before handing it back: observers treat it
+      // as the user speaking, and one that ran after this method returned would
+      // race the asker's own continuation.
+      if (agent !== undefined) emitAgentEvent(this.ctx, agent, 'user-questions/answered', { answer })
+      return answer
     } catch (error) {
       const restored = restoreUserQuestionError(error)
       if (restored instanceof UserQuestionError) throw restored

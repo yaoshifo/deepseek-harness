@@ -27,6 +27,7 @@ kind: "package-reference"
 ### 公开 API
 
 - `ctx.userQuestions.ask(request): Promise<AskUserQuestionAnswer>` 派发回答者 waterfall，并等待首个被接受的回答。
+- `user-questions/answered`（`@mode emit`）——在回答者 waterfall 返回之后、`ask()` resolve 之前，以作答 agent 的 scope 派发，观察者因此能在回答交还提问方的那一刻看到用户的输入。未指名 agent 的请求不公告任何事件：其回答不属于任何会话。`dsh-plan-mode` 订阅它以把「请求被作答」视为用户亲自开口，从而解除拒绝后的回合锁。
 
 ### 关键类型
 

@@ -351,4 +351,62 @@ describe('UserQuestionService', () => {
     ])
     expect(p.seen[0]?.questions[1]?.intent).toEqual(intent)
   })
+
+  it('announces an answered agent-attributed request to scoped listeners', async () => {
+    const ctx = new Context()
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(UserQuestionService)
+    const p = provider('yes')
+    registerAnswerer(ctx, p)
+    const agent = stubAgent('attributed')
+    ctx.agents.enter(agent, undefined)
+    const announced: { agent: Agent; answer: AskUserQuestionAnswer }[] = []
+    ctx.on('user-questions/answered', (payload) => { announced.push(payload) })
+
+    const result = await ctx.userQuestions.ask({
+      questions: [{ id: 'confirm', question: 'Proceed?', options: [{ label: 'yes' }] }],
+      agent,
+    })
+
+    expect(result).toEqual({ answers: [{ id: 'confirm', selected: ['yes'] }] })
+    expect(announced).toEqual([
+      { agent, answer: { answers: [{ id: 'confirm', selected: ['yes'] }] } },
+    ])
+  })
+
+  it('announces nothing for a request naming no agent', async () => {
+    const ctx = new Context()
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(UserQuestionService)
+    const p = provider('yes')
+    registerAnswerer(ctx, p)
+    const announced: unknown[] = []
+    ctx.on('user-questions/answered', (payload) => { announced.push(payload) })
+
+    await ctx.userQuestions.ask({
+      questions: [{ id: 'confirm', question: 'Proceed?', options: [{ label: 'yes' }] }],
+    })
+
+    expect(announced).toEqual([])
+  })
+
+  it('announces nothing when the request never produced an answer', async () => {
+    const ctx = new Context()
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(UserQuestionService)
+    registerAnswerer(ctx, {
+      ask: () => Promise.reject(new UserQuestionError('the user cancelled ask_user_question', 'ASK_CANCELLED')),
+    })
+    const agent = stubAgent('cancelled')
+    ctx.agents.enter(agent, undefined)
+    const announced: unknown[] = []
+    ctx.on('user-questions/answered', (payload) => { announced.push(payload) })
+
+    await expect(ctx.userQuestions.ask({
+      questions: [{ id: 'confirm', question: 'Proceed?' }],
+      agent,
+    })).rejects.toMatchObject({ code: 'ASK_CANCELLED' })
+
+    expect(announced).toEqual([])
+  })
 })

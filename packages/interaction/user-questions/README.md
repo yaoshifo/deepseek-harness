@@ -27,6 +27,7 @@ User-interaction Service Definition. It owns `ctx.userQuestions`, the service a 
 ### Public API
 
 - `ctx.userQuestions.ask(request): Promise<AskUserQuestionAnswer>` Dispatch the answerer waterfall and wait for the first accepted answer.
+- `user-questions/answered` (`@mode emit`) — dispatched with the answering agent's scope after the answerer waterfall returns and before `ask()` resolves, so observers see the human's input as it is handed back to the asker. A request naming no agent announces nothing: its answer belongs to no session. `dsh-plan-mode` subscribes to treat an answered request as the human speaking — it lifts the post-rejection hold.
 
 ### Key Types
 

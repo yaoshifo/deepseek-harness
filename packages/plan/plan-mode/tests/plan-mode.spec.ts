@@ -4,7 +4,7 @@ import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { RUN_CODE_NAME, defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { Session, SessionId, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
-import AgentRegistry, { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { agentEvents, emitAgentEvent, type Agent } from '@deepseek-ai/dsh-agent'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import UserQuestionService, {
   UserQuestionError, type AskUserQuestionAnswer, type AskUserQuestionRequest,
@@ -1472,7 +1472,7 @@ describe('exit_plan_mode', () => {
 
   describe('rejection hold', () => {
     const HOLD_CONFIG = { section: TEST_PLAN_SECTION, rejectionHold: true } satisfies PlanModeConfig
-    const HOLD_DIRECTIVE = 'exit_plan_mode is held for the rest of this turn — respond to the feedback in your reply text and end your turn. Present the updated plan after the user asks for it.'
+    const HOLD_DIRECTIVE = 'exit_plan_mode is held for the rest of this turn — respond to the feedback in your reply text and end your turn. Present the updated plan after the user asks for it; a typed message or an answered question card lifts the hold.'
 
     async function setupHeld(answer?: { selected: string[]; custom?: string }) {
       const ctx = await setup(HOLD_CONFIG)
@@ -1483,7 +1483,13 @@ describe('exit_plan_mode', () => {
         registerQuestionAnswerer(ctx, {
           ask: (request) => {
             asked.push(request)
-            return Promise.resolve({ answers: [{ id: 'plan-review', ...answer }] })
+            // The review question carries the configured verdict; any other
+            // question stands for a separate card the user answered mid-turn.
+            return Promise.resolve({
+              answers: request.questions.map(question => question.id === 'plan-review'
+                ? { id: 'plan-review', ...answer }
+                : { id: question.id, selected: ['scope'] }),
+            })
           },
         })
       }
@@ -1512,7 +1518,7 @@ describe('exit_plan_mode', () => {
       const { ctx, agent } = await setupHeld({ selected: ['Keep planning'] })
       const result = await callExit(ctx, agent)
       expect(result.isError).toBe(true)
-      expect(result.content).toEqual([{ type: 'text', text: 'Error: The user chose to keep planning without further feedback.\nexit_plan_mode is held for the rest of this turn — ask what to change and end your turn. Present the updated plan after the user asks for it.' }])
+      expect(result.content).toEqual([{ type: 'text', text: 'Error: The user chose to keep planning without further feedback.\nexit_plan_mode is held for the rest of this turn — ask what to change and end your turn. Present the updated plan after the user asks for it; a typed message or an answered question card lifts the hold.' }])
     })
 
     it('a same-turn re-presentation bounces with the hold error', async () => {
@@ -1522,7 +1528,7 @@ describe('exit_plan_mode', () => {
       expect(rejected.isError).toBe(true)
       const retry = await callExit(ctx, agent)
       expect(retry.isError).toBe(true)
-      expect(retry.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is held for the rest of this turn: the user kept planning earlier in this turn. Finish replying in text and end your turn; their next message lifts the hold.' }])
+      expect(retry.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is held for the rest of this turn: the user kept planning earlier in this turn. Finish replying in text and end your turn; their next message lifts the hold — typed, or their answer to a question card.' }])
       // The bounce happens before the review: no second question was asked.
       expect(asked).toHaveLength(1)
     })
@@ -1541,6 +1547,39 @@ describe('exit_plan_mode', () => {
       expect(result.content).toEqual([{ type: 'text', text: `Error: The user chose to keep planning; their feedback: rework the storage layer\n${HOLD_DIRECTIVE}` }])
     })
 
+    it('an answered question lifts the hold without a typed message', async () => {
+      const { ctx, agent, asked } = await setupHeld({ selected: ['Keep planning'], custom: 'rework the storage layer' })
+      openTurn(agent.session)
+      await callExit(ctx, agent)
+      // The user answered a question card the model asked after the rejection:
+      // that is the human speaking, so the revised plan may come back now.
+      await ctx.userQuestions.ask({
+        questions: [{ id: 'scope', question: 'Which scope?' }],
+        agent,
+      })
+      const result = await callExit(ctx, agent)
+      // The re-presentation reached a second review instead of bouncing.
+      expect(asked.filter(request => request.questions.some(question => question.id === 'plan-review'))).toHaveLength(2)
+      expect(result.isError).toBe(true)
+      expect(result.content).toEqual([{ type: 'text', text: `Error: The user chose to keep planning; their feedback: rework the storage layer\n${HOLD_DIRECTIVE}` }])
+    })
+
+    it('the plan review\'s own settle never lifts the hold', async () => {
+      const { ctx, agent, asked } = await setupHeld({ selected: ['Keep planning'], custom: 'rework the storage layer' })
+      openTurn(agent.session)
+      await callExit(ctx, agent)
+      // Pin the invariant even where it cannot arise by construction: the
+      // plugin's own review carries the review question id, so its settle is
+      // not new user input and must not clear a hold.
+      emitAgentEvent(ctx, agent, 'user-questions/answered', {
+        answer: { answers: [{ id: 'plan-review', selected: ['Keep planning'] }] },
+      })
+      const retry = await callExit(ctx, agent)
+      expect(retry.isError).toBe(true)
+      expect(retry.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is held for the rest of this turn: the user kept planning earlier in this turn. Finish replying in text and end your turn; their next message lifts the hold — typed, or their answer to a question card.' }])
+      expect(asked.filter(request => request.questions.some(question => question.id === 'plan-review'))).toHaveLength(1)
+    })
+
     it('an agent-message claimed by a pre-step does not lift the hold', async () => {
       const { ctx, agent } = await setupHeld({ selected: ['Keep planning'], custom: 'rework the storage layer' })
       openTurn(agent.session)
@@ -1552,7 +1591,7 @@ describe('exit_plan_mode', () => {
       await preStep(ctx, agent, [report])
       const retry = await callExit(ctx, agent)
       expect(retry.isError).toBe(true)
-      expect(retry.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is held for the rest of this turn: the user kept planning earlier in this turn. Finish replying in text and end your turn; their next message lifts the hold.' }])
+      expect(retry.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is held for the rest of this turn: the user kept planning earlier in this turn. Finish replying in text and end your turn; their next message lifts the hold — typed, or their answer to a question card.' }])
     })
 
     it('a later turn lifts the hold even without an intervening user message', async () => {

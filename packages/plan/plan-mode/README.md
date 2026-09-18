@@ -46,7 +46,7 @@ The only required configuration is the guidance text the agent follows while pla
 | Field | Default | Meaning |
 |---|---|---|
 | `section` | required | Guidance rendered as the `plan:policy` prompt section while plan mode is active |
-| `rejectionHold` | `false` | After a rejected review, `exit_plan_mode` fails for the rest of the turn; the user's next message lifts the hold. Off keeps the classic revise-and-present-again rhythm. |
+| `rejectionHold` | `false` | After a rejected review, `exit_plan_mode` fails for the rest of the turn; the user speaking again lifts the hold — their next message, or their answer to a question card. Off keeps the classic revise-and-present-again rhythm. |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-plan-mode) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -61,7 +61,7 @@ You can attach images and generic files to a `/plan` message, and they are inclu
 
 When the agent has a finished plan, it calls `exit_plan_mode` with the plan written as markdown and starting with a heading. You review that exact plan and choose `Approve` to leave plan mode, or `Keep planning` to send the agent back with feedback.
 
-Choosing `Keep planning` (optionally with free-text feedback) sends the agent back to revise the plan; closing the review to type a message instead tells the agent to wait for your next message. With `rejectionHold: true` the rejection also fails further `exit_plan_mode` calls for the rest of the turn, so the agent answers the feedback in text and presents the revised plan only after you ask for it; your next message — a new turn or a mid-turn interjection — lifts the hold. If no interactive review is available, `exit_plan_mode` cannot run and you can still leave plan mode with `/plan off`.
+Choosing `Keep planning` (optionally with free-text feedback) sends the agent back to revise the plan; closing the review to type a message instead tells the agent to wait for your next message. With `rejectionHold: true` the rejection also fails further `exit_plan_mode` calls for the rest of the turn, so the agent answers the feedback in text and presents the revised plan only after you ask for it; you speaking again — a new turn, a mid-turn interjection, or an answer to a question card — lifts the hold. If no interactive review is available, `exit_plan_mode` cannot run and you can still leave plan mode with `/plan off`.
 
 ### Observing plan state
 
@@ -97,7 +97,7 @@ The tool takes `plan` (the plain-language layer, markdown that must start with a
 
 #### The rejection hold
 
-With `rejectionHold: true`, a rejected review records the open turn's start seq; any later `exit_plan_mode` in that same turn fails with the hold error before a new review is presented. The hold lifts two ways: a step claiming a user message (the turn-opening prompt or a mid-turn steer) clears it in the pre-step listener, and a call in a later turn clears it on entry. The rejection error itself carries the directive — respond to the feedback in reply text and end the turn; the empty-feedback variant asks what to change. The hold state is process-local: a service reload drops it, and the next rejection re-arms it.
+With `rejectionHold: true`, a rejected review records the open turn's start seq; any later `exit_plan_mode` in that same turn fails with the hold error before a new review is presented. The hold lifts three ways: a step claiming a user message (the turn-opening prompt or a mid-turn steer) clears it in the pre-step listener, the user answering a question clears it on the `user-questions/answered` event, and a call in a later turn clears it on entry. The plugin's own review settle never counts as that answer — the hold is armed only after the review returns — so the hold cannot clear itself. The rejection error itself carries the directive — respond to the feedback in reply text and end the turn; the empty-feedback variant asks what to change. The hold state is process-local: a service reload drops it, and the next rejection re-arms it.
 
 ### Session projection unit
 

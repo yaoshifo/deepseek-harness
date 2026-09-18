@@ -66,8 +66,9 @@ export interface PlanModeConfig {
   section: string
   /**
    * Hold `exit_plan_mode` for the rest of the turn after a rejected review:
-   * same-turn re-presentations bounce, and the next user message lifts the
-   * hold. Off (default) keeps the classic revise-and-present-again rhythm.
+   * same-turn re-presentations bounce, and the user speaking again lifts the
+   * hold — their next message, or their answer to a question card. Off
+   * (default) keeps the classic revise-and-present-again rhythm.
    */
   rejectionHold?: boolean
 }
@@ -242,8 +243,9 @@ export class PlanModeController extends Service {
 
   /**
    * Open turn's start seq per session whose review was rejected, while
-   * `rejectionHold` is enabled: `exit_plan_mode` bounces until the next user
-   * message (a new turn or a mid-turn steer both lift it) or a later turn.
+   * `rejectionHold` is enabled: `exit_plan_mode` bounces until the user speaks
+   * again — their next message (a new turn or a mid-turn steer) or their answer
+   * to a question card both lift it — or until a later turn.
    */
   private readonly heldTurns = new WeakMap<Session, number>()
 
@@ -281,6 +283,19 @@ export class PlanModeController extends Service {
         : { ...decision, messages: [...decision.messages, narration] }
     })
     ctx.effect(() => () => { disposed = true }, 'dsh-plan-mode: close service lifetime')
+
+    if (this.rejectionHold) {
+      // A human answer to any question is the user speaking, exactly like a
+      // typed message, so it lifts the hold. The plugin's own review settle is
+      // not new input — the hold is armed only after the review returns — and
+      // excluding it keeps the hold intact even if the announcement ever moves
+      // past the asker's continuation.
+      ctx.on('user-questions/answered', ({ agent, answer }) => {
+        if (!this.heldTurns.has(agent.session)) return
+        if (answer.answers.some(item => item.id === REVIEW_ID)) return
+        this.heldTurns.delete(agent.session)
+      })
+    }
 
     ctx.systemPrompt.section({
       name: 'plan:policy',
@@ -387,7 +402,7 @@ export class PlanModeController extends Service {
             const open = this.openTurnStartSeq(agent.session)
             if (open !== null && open === held) {
               throw new Error(`${EXIT_PLAN_MODE} is held for the rest of this turn: the user kept planning earlier in this turn. `
-                + 'Finish replying in text and end your turn; their next message lifts the hold.')
+                + 'Finish replying in text and end your turn; their next message lifts the hold — typed, or their answer to a question card.')
             }
             this.heldTurns.delete(agent.session)
           }
@@ -459,10 +474,10 @@ export class PlanModeController extends Service {
             throw new Error(feedback === ''
               ? 'The user chose to keep planning without further feedback.\n'
                 + `${EXIT_PLAN_MODE} is held for the rest of this turn — ask what to change and end your turn. `
-                + 'Present the updated plan after the user asks for it.'
+                + 'Present the updated plan after the user asks for it; a typed message or an answered question card lifts the hold.'
               : `The user chose to keep planning; their feedback: ${feedback}\n`
                 + `${EXIT_PLAN_MODE} is held for the rest of this turn — respond to the feedback in your reply text and end your turn. `
-                + 'Present the updated plan after the user asks for it.')
+                + 'Present the updated plan after the user asks for it; a typed message or an answered question card lifts the hold.')
           }
           throw new Error(feedback === ''
             ? 'The user chose to keep planning; revise the plan and present it again.'
