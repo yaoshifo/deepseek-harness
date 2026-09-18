@@ -1,6 +1,6 @@
 ---
 name: feishu-bridge-model-switch
-description: "切换 feishu-bridge live bot（运维虾）的 LLM 模型：网关实测 → switch-model.mjs 双落点联动 → 手动 reload → 验收。触发例句：「换模型」「切换模型」「switch model」「运维虾用 glm/deepseek」「切到 deepseek-v4-flash」「还是 glm 模型」。"
+description: "切换 feishu-bridge live bot（运维虾/开发虾等项目）的 LLM 模型：网关实测 → switch-model.mjs 双落点联动 → 手动 reload → 验收；换项目默认路由（agent.provider + state.json 的 active_provider 覆盖）也走本 skill。触发例句：「换模型」「切换模型」「switch model」「运维虾用 glm/deepseek」「切到 deepseek-v4-flash」「还是 glm 模型」「把开发虾的默认模型换成 X」。"
 ---
 
 # feishu-bridge 模型切换
@@ -19,8 +19,9 @@ description: "切换 feishu-bridge live bot（运维虾）的 LLM 模型：网�
 「换模型」通常指主模型，但 spawn 群默认路由（`spawnProvider`）是独立配置项。问清三件事：
 ① 仅主模型还是连 spawn 群默认一起切（后者加 `--also-spawn`）？
 ② 存量钉旧路由的群（state.json `provider_overrides`）要不要逐群处理？
+③ 换的是「路由指向哪个模型」还是「项目默认走哪条路由」？后者（改 `agent.provider` 的路由名，如 `mify-dsh` → `deepseek-flash`）第 2、3 步的脚本管不到，且**必须同步处置该项目 state.json 的 `active_provider`**——它由运行时 `/provider` 持久化、重启后赢过配置默认，漏掉即「看着改了、实际仍跑旧路由」（2026-09-18 开发虾实例）。该键本代只读不写，安全处置是删掉（跟随配置）；per-chat 的 `provider_overrides` 另算，按 ② 处理。
 
-**成功标准**：范围明确，用户答复覆盖①②。
+**成功标准**：范围明确，用户答复覆盖①②；③ 判为换路由时，该项目 state.json 的 `active_provider` 已核对处置。
 
 ### 2. 模型检查
 
