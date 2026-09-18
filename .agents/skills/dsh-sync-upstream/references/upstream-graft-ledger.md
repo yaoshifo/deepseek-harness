@@ -65,8 +65,8 @@
 
 | 批 | 内容 | 理由 / 依赖 |
 | --- | --- | --- |
-| 1a | user-approval：结果形状（outcome + note）与 answerer notes | 最成型；2026-09-18 上游 `boot/plugin-manager` 已把 `ctx.approval` 当通用接缝消费 |
-| 1b | user-approval：allowed-always + toolInput（含 core/tools、sandbox、editor 联动） | 同上，依赖 1a 的返回形状 |
+| 1a | user-approval：结果形状（outcome + note）+ answerer notes + toolInput 预览（含 core/tools、sandbox、shell 联动） | **已备分支** `proposal/approval-answerer-notes`（基线 upstream/master，1 提交 36 文件；typecheck + 6 项生成物门禁 + 配对 1008 对 + 受影响套件全绿；含上游要求的持久化变更记录 `2026-09-18-approval-decided-note`）→ 待用户确认后推 fork 并开 PR |
+| 1b | user-approval：allowed-always 常驻授权 | 单列：它改动**已持久化**的 `approval/decided` 结果联合类型，上游 `verify-persistence-changes` 实测判定「union variants changed (version-bump required)」——须走会话格式版本升级，不能作同版本字段新增，因此与上游排期协调再提。fork 侧现状：dev 已带该语义而格式版本与上游同为 0.1.6 的格式版本，属**已知分叉**（本机自洽；上游构建读 fork 日志的 `outcome` 值面存在互操作风险，留观） |
 | 2a | user-questions：recommended 旗标 + tool-ask-user schema 收紧 | 小、独立；桥的追问卡已在消费 |
 | 2b | plan 两层评审（`exit_plan_mode` 的 `details` + `intent.layers`）+ 内嵌实施细节段拒绝门 | 大：36 份 snapshot 需重录；形态先与上游对齐 |
 | 2c | compaction 逐字保留已批准计划（summarizer 指令） | 纯提示词，与 2b 同主题可并列 |
