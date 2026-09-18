@@ -88,6 +88,10 @@ function spawnFakeClient(): FeishuApiClient & {
   createdChats: Array<{ name: string; userIdList: string[]; groupMessageType?: string; avatar?: string }>
   createdTags: string[]
   tagCalls: Array<{ chatId: string; tagIds: string[] }>
+  /** Keys returned per avatar upload. An array, not a counter: the platform
+   * wraps this client, so only reference-shaped state survives the wrap. */
+  uploads: string[]
+  updates: Array<{ chatId: string; name?: string; avatar?: string }>
 } {
   let chatNum = 0
   const bound = new Map<string, string[]>()
@@ -96,6 +100,8 @@ function spawnFakeClient(): FeishuApiClient & {
     createdChats: [],
     createdTags: [],
     tagCalls: [],
+    uploads: [],
+    updates: [],
     async reply() {
       return { messageId: 'om_reply' }
     },
@@ -107,6 +113,15 @@ function spawnFakeClient(): FeishuApiClient & {
       this.createdChats.push(params)
       chatNum += 1
       return { chatId: `oc_spawned_${chatNum}` }
+    },
+    async uploadAvatar() {
+      const key = `img_rendered_${this.uploads.length + 1}`
+      this.uploads.push(key)
+      return key
+    },
+    async updateChat(params: { chatId: string; name?: string; avatar?: string }) {
+      this.updates.push(params)
+      return { code: 0 }
     },
     async createTag({ name }) {
       this.createdTags.push(name)
@@ -208,5 +223,105 @@ describe('spawnGroup', () => {
   it('rejects when the caller user id is missing', async () => {
     const p = spawnPlatform(spawnFakeClient())
     await expect(p.spawnGroup({ ...callerMsg, userID: '' }, 'g', '')).rejects.toThrow('could not determine caller user ID')
+  })
+})
+
+describe('avatarFrom', () => {
+  it('gives the new group the source chat\'s icon, keys, and birth avatar', async () => {
+    const api = spawnFakeClient()
+    const p = spawnPlatform(api)
+    p.spawnStore.set('oc_origin', {
+      active: true,
+      iconName: 'message-circle-reply',
+      phase: 'plan-review',
+      basePhase: 'discussing',
+      lastAvatarKey: 'k_plan',
+      avatarKeys: { discussing: 'k_discuss', done: 'k_done', 'plan-review': 'k_plan' },
+    })
+
+    await p.spawnGroupWithOptions(callerMsg, '推敲群', 'hi', {
+      topicGroup: false,
+      workDir: '',
+      avatarFrom: 'feishu:oc_origin',
+    })
+
+    // Born wearing the source's yellow variant: no bot-avatar flash, and no
+    // avatar update of its own (which would post a chat system message).
+    expect(api.createdChats[0]?.avatar).toBe('k_discuss')
+    expect(api.uploads).toEqual([])
+    expect(api.updates).toEqual([])
+    const meta = p.spawnStore.get('oc_spawned_1')
+    expect(meta).toMatchObject({
+      active: true,
+      iconName: 'message-circle-reply',
+      phase: 'discussing',
+      basePhase: 'discussing',
+      lastAvatarKey: 'k_discuss',
+    })
+    // The phase keys are copied, not shared: a lazy render on either chat must
+    // not write through to the other's record.
+    expect(meta?.avatarKeys).toEqual({ discussing: 'k_discuss', done: 'k_done', 'plan-review': 'k_plan' })
+    expect(meta?.avatarKeys).not.toBe(p.spawnStore.get('oc_origin')?.avatarKeys)
+
+    // Its own later phases reuse the source's rendered keys.
+    await p.setChatPhase('feishu:oc_spawned_1', 'plan-review')
+    expect(api.updates).toEqual([{ chatId: 'oc_spawned_1', avatar: 'k_plan' }])
+    expect(api.uploads).toEqual([])
+  })
+
+  it('keeps the bot avatar when the source chat is unknown to the store', async () => {
+    const api = spawnFakeClient()
+    const p = spawnPlatform(api)
+
+    await p.spawnGroupWithOptions(callerMsg, '推敲群', 'hi', {
+      topicGroup: false,
+      workDir: '',
+      avatarFrom: 'feishu:oc_never_seen',
+    })
+
+    expect(api.createdChats[0]?.avatar).toBe('img_bot_color')
+    expect(p.spawnStore.get('oc_spawned_1')).toEqual({ active: true })
+  })
+
+  it('keeps the bot avatar when the source chat carries no rendered icon', async () => {
+    const api = spawnFakeClient()
+    const p = spawnPlatform(api)
+    // Registered (main groups excepted, every chat is) but never named.
+    p.spawnStore.set('oc_origin', { active: true })
+
+    await p.spawnGroupWithOptions(callerMsg, '推敲群', 'hi', {
+      topicGroup: false,
+      workDir: '',
+      avatarFrom: 'feishu:oc_origin',
+    })
+
+    expect(api.createdChats[0]?.avatar).toBe('img_bot_color')
+    expect(p.spawnStore.get('oc_spawned_1')).toEqual({ active: true })
+  })
+
+  it('inherits an icon with no cached key, rendering its first phase from it', async () => {
+    const api = spawnFakeClient()
+    const p = spawnPlatform(api)
+    p.spawnStore.set('oc_origin', { active: true, iconName: 'bug' })
+
+    await p.spawnGroupWithOptions(callerMsg, '推敲群', 'hi', {
+      topicGroup: false,
+      workDir: '',
+      avatarFrom: 'feishu:oc_origin',
+    })
+
+    // Nothing to apply at creation, but the icon identity survives into the
+    // new record — so the first phase paints the inherited icon, not the bot
+    // pair.
+    expect(api.createdChats[0]?.avatar).toBe('img_bot_color')
+    expect(p.spawnStore.get('oc_spawned_1')).toEqual({
+      active: true,
+      iconName: 'bug',
+      phase: 'discussing',
+      basePhase: 'discussing',
+    })
+    await p.setChatPhase('feishu:oc_spawned_1', 'discussing')
+    expect(api.updates).toEqual([{ chatId: 'oc_spawned_1', avatar: 'img_rendered_1' }])
+    expect(api.uploads).toEqual(['img_rendered_1'])
   })
 })

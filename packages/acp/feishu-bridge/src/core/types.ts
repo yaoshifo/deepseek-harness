@@ -1347,6 +1347,14 @@ export interface GroupSpawnOptions {
   topicGroup: boolean
   /** Effective working directory at spawn time. */
   workDir: string
+  /**
+   * Session key of the chat whose avatar the new group adopts: the source's
+   * icon name and its cached per-phase image keys move into the new chat's
+   * record, and the source's `discussing` variant is applied at creation so the
+   * group is born wearing that face. Absent — or a source the platform holds no
+   * rendered icon for — keeps the bot avatar.
+   */
+  avatarFrom?: string
 }
 
 /** Platform that can create a new group chat and inject a first message (Go GroupSpawner). */

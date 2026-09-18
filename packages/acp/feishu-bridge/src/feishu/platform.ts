@@ -3067,13 +3067,20 @@ export class FeishuPlatform implements Platform {
       throw new Error('feishu: spawn: could not determine caller user ID')
     }
     const chatType = opts.topicGroup ? 'thread' : 'chat'
+    const inherited = opts.avatarFrom !== undefined && opts.avatarFrom !== ''
+      ? this.inheritedAvatar(opts.avatarFrom)
+      : undefined
+    // An inherited key already exists as an upload of this app's own, so the
+    // group is born wearing it: no bot-avatar flash, and no avatar update of
+    // its own (which every avatar change posts as a chat system message).
+    const birthAvatar = inherited !== undefined && inherited.key !== '' ? inherited.key : this.botAvatarKey
     const resp = await this.withRetry('spawn create chat', () => this.request('spawn create chat', async (client) => {
       if (client.createChat === undefined) throw new ErrNotSupported('feishu client without chat create support')
       const r = await client.createChat({
         name: groupName,
         userIdList: [userID],
         groupMessageType: chatType,
-        ...(this.botAvatarKey !== '' ? { avatar: this.botAvatarKey } : {}),
+        ...(birthAvatar !== '' ? { avatar: birthAvatar } : {}),
       })
       this.ensureOk(r, 'spawn: create chat')
       return r
@@ -3081,11 +3088,14 @@ export class FeishuPlatform implements Platform {
     const chatID = resp.chatId ?? ''
     if (chatID === '') throw new Error('feishu: spawn: create chat: no chat_id in response')
 
-    this.spawnStore.set(chatID, { active: true })
+    this.spawnStore.set(chatID, inherited !== undefined ? { ...inherited.meta, active: true } : { active: true })
     await this.spawnStore.save()
 
     const sessionKey = `${this.tag()}:${chatID}`
     console.info(`${this.tag()}: spawned group chat (chat_id ${chatID}, user_id ${userID}, group_name ${groupName}, mode ${opts.topicGroup ? 'topic_group' : 'group'})`)
+    if (inherited !== undefined) {
+      console.info(`${this.tag()}: spawned group inherits avatar (chat_id ${chatID}, from ${String(opts.avatarFrom)}, icon ${inherited.meta.iconName ?? ''}, key ${inherited.key})`)
+    }
 
     // Apply the dir tag off the critical path; no active (❤️) tag on spawn —
     // the group is "active" by its color avatar alone.
@@ -3134,6 +3144,38 @@ export class FeishuPlatform implements Platform {
     }
     synthetic.content = firstMsg
     return synthetic
+  }
+
+  /**
+   * The avatar a new group inherits from another chat: the source's rendered
+   * icon name, a copy of its cached per-phase keys, and the key to apply at
+   * creation (its `discussing` variant — the one key every icon-bearing record
+   * carries, since that is the pair the icon setter uploads eagerly).
+   *
+   * Undefined when no record exists for the source or it never rendered an
+   * icon — a main group, a p2p chat, or a spawned group whose naming never
+   * stamped one — which leaves the new group on the bot avatar.
+   *
+   * @param from - Session key of the chat the new group takes its face from.
+   * @returns The key to apply now plus the meta to seed, or undefined.
+   */
+  private inheritedAvatar(from: string): { key: string; meta: SpawnedChatMeta } | undefined {
+    const origin = this.spawnStore.get(extractFeishuChatID(from))
+    const iconName = origin?.iconName ?? ''
+    if (origin === undefined || iconName === '') return undefined
+    const key = origin.avatarKeys?.discussing ?? ''
+    return {
+      key,
+      meta: {
+        iconName,
+        phase: 'discussing',
+        basePhase: 'discussing',
+        // Copied, not shared: a later lazy render on either chat writes back a
+        // fresh map, and neither record should alias the other's.
+        ...(origin.avatarKeys !== undefined ? { avatarKeys: { ...origin.avatarKeys } } : {}),
+        ...(key !== '' ? { lastAvatarKey: key } : {}),
+      },
+    }
   }
 
   /**

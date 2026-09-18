@@ -19,7 +19,7 @@ import {
   createWorkDirAgent,
   newControllableSession,
 } from '../stubs/engine-stubs.ts'
-import { ForkSessionPrefix, type Agent, type AskDecision, type Message } from '../../src/core/types.ts'
+import { ForkSessionPrefix, type Agent, type AskDecision, type GroupSpawnOptions, type Message } from '../../src/core/types.ts'
 
 /** The review prompt these cases pin; the production default is asserted separately. */
 const reviewPrompt = 'review this plan for a better one'
@@ -73,6 +73,23 @@ function newShadowEngine(): { e: Engine; p: SpawnerPlatform; agent: RecordingAge
   const e = new Engine('test', agent, [p], '', 'en')
   e.setPlanShadow(true, reviewPrompt)
   return { e, p, agent }
+}
+
+/**
+ * Put an already-built stub spawner on the Ex path (the one carrying spawn
+ * options to the platform) and record what each spawn asked for.
+ * @param p - The stub spawner to extend in place.
+ * @returns Options per spawn request, in call order.
+ */
+function recordSpawnOptions(p: SpawnerPlatform): GroupSpawnOptions[] {
+  const calls: GroupSpawnOptions[] = []
+  Object.assign(p, {
+    spawnGroupWithOptions: async (msg: Message, groupName: string, firstMsg: string, opts: GroupSpawnOptions) => {
+      calls.push(opts)
+      return p.spawnGroup(msg, groupName, firstMsg)
+    },
+  })
+  return calls
 }
 
 /** Replace the chat's interactive state with a pristine one (as a restart would). */
@@ -143,6 +160,23 @@ describe('PlanShadowSpawn', () => {
     // that card already saying what it is.
     expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginNotice))
     expect(p.sent).toEqual([])
+
+    await deny(e, p, key, decision)
+  })
+
+  it('names the origin chat as the spawn\'s avatar source', async () => {
+    // The shadow is born named, so no naming pass ever stamps its icon: the
+    // only face it can wear is the origin chat's.
+    const { e, p } = newShadowEngine()
+    const spawns = recordSpawnOptions(p)
+    const key = 'feishu:oc_parent:ou_u'
+    e.sessions.getOrCreateActive(key).setName('parent chat')
+
+    const decision = parkPlan(e, p, key)
+    await settleLaunch()
+
+    expect(spawns).toHaveLength(1)
+    expect(spawns[0]?.avatarFrom).toBe(key)
 
     await deny(e, p, key, decision)
   })

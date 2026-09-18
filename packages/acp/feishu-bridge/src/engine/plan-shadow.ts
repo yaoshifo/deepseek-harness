@@ -211,7 +211,9 @@ async function runLaunch(e: Engine, p: Platform, req: PlanShadowRequest): Promis
     {
       dirArg: '',
       flagWT: false,
-      spawnOpts: { topicGroup: false, workDir: '' },
+      // Born named, so no naming pass will ever stamp this group's own icon:
+      // its face comes from the origin chat instead.
+      spawnOpts: { topicGroup: false, workDir: '', avatarFrom: req.sessionKey },
       threadFlag: false,
       forkSentinelID: `${ForkSessionPrefix}${nativeID}`,
       // The shadow reviews a plan; it must not start executing one.
