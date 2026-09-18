@@ -871,7 +871,7 @@ describe('PlanShadowPeerInput', () => {
     let release: () => void = () => {}
     const gate = new Promise<void>((r) => { release = r })
     const base = createStubChatroomSpawner('feishu')
-    const slowSpawn = base.spawnGroup
+    const slowSpawn = base.spawnGroup.bind(base)
     const p = Object.assign(base, {
       spawnGroup: async (m: Message, name: string, first: string) => {
         await gate
