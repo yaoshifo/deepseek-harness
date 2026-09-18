@@ -141,16 +141,22 @@ fi
 # booting, so no second process ever connects to Feishu). A broken
 # cordis.patch.yml aborts while the old daemon still runs — it keeps its
 # last-good tree, the group gets the /reload failure reply, and no systemd
-# crash-loop starts. Limit: dump mode evaluates no !!js and checks no plugin
-# schemas; those errors still surface only after the restart. The cordis.yml
-# root rewrite inside --dump-config is inert because this bundle disables the
-# hmr row (no module watcher on the profile dir) and the preflight never
-# touches the patch ymls the launcher's config watchers track.
+# crash-loop starts. Limit: dump mode evaluates no !!js and runs no plugin
+# schema; plugin-level errors still surface only after the restart — except
+# the chatroom project-key mismatch, which the key-set check below catches off
+# this same dump. The cordis.yml root rewrite inside --dump-config is inert
+# because this bundle disables the hmr row (no module watcher on the profile
+# dir) and the preflight never touches the patch ymls the launcher's config
+# watchers track.
 echo "==> validating profile config ($PROFILE)"
 CHECK_ERR="$LOG_DIR/feishu-bridge-config-check.err"
-if ! node "$FORK_DIR/apps/cli/lib/bin.js" --profile "$PROFILE" --dump-config >/dev/null 2>"$CHECK_ERR"; then
+# The composed dump is kept (not discarded) for the chatroom key-set check
+# below; mktemp keeps it owner-only, and every path past this point removes it.
+DUMP_OUT=$(mktemp "${TMPDIR:-/tmp}/fb-reload-dump.XXXXXX")
+if ! node "$FORK_DIR/apps/cli/lib/bin.js" --profile "$PROFILE" --dump-config >"$DUMP_OUT" 2>"$CHECK_ERR"; then
   echo "error: profile config failed validation; daemon left running on the current config:" >&2
   tail -5 "$CHECK_ERR" >&2 2>/dev/null || true
+  rm -f "$DUMP_OUT"
   exit 1
 fi
 # A non-empty err file on a passing dump means the loader skipped patch rows
@@ -160,6 +166,37 @@ if [ -s "$CHECK_ERR" ]; then
   echo "warning: profile config composed with warnings (patch rows may be silently skipped):" >&2
   cat "$CHECK_ERR" >&2
 fi
+# The chatroom bundle throws on apply when a `projects` key names a project the
+# bridge does not define, and the whole plugin stays inactive (`1 entry did not
+# activate` on stderr) — yet dump mode runs no plugin schema, so the mismatch
+# only surfaced after the restart (2026-09-17: this host's chatroom stayed
+# inactive for a day once a project block was dropped). Compare both key sets
+# off the dump just composed, while the old daemon still runs. The awk exits 7
+# with the missing names on a mismatch; input it cannot resolve exits 0, so a
+# dump-format change skips the check instead of blocking deploys.
+missing=$(awk '
+  /^- id: / {
+    sec = ($0 == "- id: feishu-bridge") ? "bridge" : ($0 == "- id: feishu-bridge-chatroom") ? "chatroom" : ""
+    inproj = 0
+    next
+  }
+  sec != "" && /^    projects:$/ { inproj = 1; next }
+  inproj && /^    [^ ]/ { inproj = 0 }
+  inproj && sec == "bridge" && /^      - name: / { n = $0; sub(/^      - name: /, "", n); bridge[n] = 1; nb++; next }
+  inproj && sec == "chatroom" && /^      [^ ]/ { k = $0; sub(/^      /, "", k); sub(/:.*$/, "", k); chat[k] = 1; nc++; next }
+  END {
+    if (nb == 0 || nc == 0) exit 0
+    bad = 0
+    for (k in chat) if (!(k in bridge)) { miss = miss (miss == "" ? "" : " ") k; bad = 1 }
+    if (bad) { print miss; exit 7 }
+  }
+' "$DUMP_OUT") || {
+  echo "error: chatroom config names project(s) the bridge does not define: $missing" >&2
+  echo "error: the chatroom plugin would stay inactive; add the project to feishu-bridge's projects or drop its key under feishu-bridge-chatroom, then retry." >&2
+  rm -f "$DUMP_OUT"
+  exit 1
+}
+rm -f "$DUMP_OUT"
 
 if [ "$OS" = Darwin ]; then
   echo "==> restarting daemon $LABEL"

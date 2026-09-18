@@ -61,8 +61,14 @@ async function stage(pgrepStuck: boolean, psDaemon: boolean, sessionStore = 'fei
   // The config preflight runs `node <fork>/apps/cli/lib/bin.js --dump-config`
   // against the staged DSH_HOME (which has no profile) — stub it so the suite
   // stays hermetic instead of depending on the real repo build and profile
-  // (broken since the preflight landed in dbb609d417).
-  await writeFile(join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  // (broken since the preflight landed in dbb609d417). FB_SPEC_DUMP serves a
+  // composed-dump fixture to the chatroom project-key check; absent, the stub
+  // prints nothing and that check skips itself.
+  await writeFile(join(bin, 'node'), [
+    '#!/bin/sh',
+    'if [ -n "${FB_SPEC_DUMP:-}" ]; then cat "$FB_SPEC_DUMP"; fi',
+    'exit 0',
+  ].join('\n'), { mode: 0o755 })
   await writeFile(join(bin, 'pgrep'), [
     '#!/bin/sh',
     `exit ${pgrepStuck ? 0 : 1}`,
@@ -213,6 +219,59 @@ describe.skipIf(process.platform !== 'darwin')('reload.sh', () => {
   it('completes the happy path from a plain terminal', async () => {
     const s = await stage(false, false, 'none')
     const result = await runScript(s.env)
+    expect(result.code).toBe(0)
+    expect((await s.kinds()).filter(k => k !== 'list')).toEqual(['unload', 'load'])
+  }, 10000)
+
+  // The chatroom bundle refuses to activate when a `projects` key names a
+  // project the bridge does not define, yet --dump-config checks no plugin
+  // schemas — the mismatch only surfaces after the restart (2026-09-17: this
+  // host's chatroom stayed inactive for a day after the 开发虾 project block
+  // was dropped). The preflight compares both key sets off the composed dump.
+  it('aborts before the supervisor when a chatroom key names an unknown project', async () => {
+    const s = await stage(false, false, 'none')
+    const dump = join(s.root, 'composed.yml')
+    await writeFile(dump, [
+      '- id: feishu-bridge',
+      '  config:',
+      '    projects:',
+      '      - name: 运维虾',
+      '- id: feishu-bridge-chatroom',
+      '  config:',
+      '    defaults:',
+      '      rolesDir: /tmp/roles',
+      '    projects:',
+      '      开发虾:',
+      '        enabled: false',
+      '- id: mcp-web-search-prime',
+      '  config: {}',
+      '',
+    ].join('\n'))
+    const result = await runScript({ ...s.env, FB_SPEC_DUMP: dump })
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('开发虾')
+    expect(result.stderr).toContain('chatroom')
+    expect(await s.kinds()).toEqual([])
+  }, 10000)
+
+  it('proceeds when every chatroom key resolves to a bridge project', async () => {
+    const s = await stage(false, false, 'none')
+    const dump = join(s.root, 'composed.yml')
+    await writeFile(dump, [
+      '- id: feishu-bridge',
+      '  config:',
+      '    projects:',
+      '      - name: 开发虾',
+      '        workdir: /tmp/dev',
+      '      - name: 运维虾',
+      '- id: feishu-bridge-chatroom',
+      '  config:',
+      '    projects:',
+      '      开发虾:',
+      '        enabled: false',
+      '',
+    ].join('\n'))
+    const result = await runScript({ ...s.env, FB_SPEC_DUMP: dump })
     expect(result.code).toBe(0)
     expect((await s.kinds()).filter(k => k !== 'list')).toEqual(['unload', 'load'])
   }, 10000)
