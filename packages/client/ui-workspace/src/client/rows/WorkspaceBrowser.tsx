@@ -23,7 +23,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { GroupNode, SessionNode, SessionOrderBy } from '../tree.ts'
 import {
-  cwdGroupKey, deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
+  cwdGroupKey, deriveFlat, deriveGroups, deriveSearchResults, isCwdGroupKey, orderByRecency, owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, UNGROUPED_KEY, visibleSessionIds,
 } from '../tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
@@ -258,7 +258,11 @@ function SessionTree({
   }, [currentGroup, parents])
   const expandedGroups = useMemo(() => {
     const ancestorKeys = new Set<string | undefined>(parents.values())
-    return [...workspaces.map(workspace => workspace.workspaceId), UNGROUPED_KEY]
+    // Directory groups carry cwd-derived keys the enumerated candidates below
+    // do not cover; a stored expansion is the only record that one is open.
+    const storedDirectoryKeys = Object.keys(groupExpansion)
+      .filter(key => isCwdGroupKey(key) && groupExpansion[key])
+    return [...workspaces.map(workspace => workspace.workspaceId), UNGROUPED_KEY, ...storedDirectoryKeys]
       .filter(key => groupExpansion[key] ?? ancestorKeys.has(key))
   }, [groupExpansion, parents, workspaces])
   const groups = useMemo(

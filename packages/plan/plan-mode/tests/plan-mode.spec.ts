@@ -1312,7 +1312,7 @@ describe('exit_plan_mode', () => {
     await callExit(ctx, agent, plan, details)
     const question = asked[0]?.questions[0]
     expect(question?.detail).toBe(`${plan}\n\n${details}`)
-    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve', layers: { plain: plan, details } })
+    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve', callId: `call-exit-${callCounter}`, layers: { plain: plan, details } })
   })
 
   it('keeps the plan alone and no layers key when no details annex is supplied', async () => {
@@ -1321,7 +1321,7 @@ describe('exit_plan_mode', () => {
     await callExit(ctx, agent, plan)
     const question = asked[0]?.questions[0]
     expect(question?.detail).toBe(plan)
-    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve' })
+    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve', callId: `call-exit-${callCounter}` })
     expect(Object.hasOwn(question?.intent ?? {}, 'layers')).toBe(false)
   })
 
@@ -1331,7 +1331,7 @@ describe('exit_plan_mode', () => {
     await callExit(ctx, agent, plan, '   ')
     const question = asked[0]?.questions[0]
     expect(question?.detail).toBe(plan)
-    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve' })
+    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve', callId: `call-exit-${callCounter}` })
   })
 
   it('keeps a non-blank details annex untrimmed end to end', async () => {
@@ -1341,7 +1341,7 @@ describe('exit_plan_mode', () => {
     await callExit(ctx, agent, plan, annex)
     const question = asked[0]?.questions[0]
     expect(question?.detail).toBe(`${plan}\n\n${annex}`)
-    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve', layers: { plain: plan, details: annex } })
+    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve', callId: `call-exit-${callCounter}`, layers: { plain: plan, details: annex } })
   })
 
   it('reads a dismissed review as the user taking the turn back, not as a failure', async () => {

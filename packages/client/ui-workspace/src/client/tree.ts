@@ -38,6 +38,11 @@ export function cwdGroupKey(cwd: string | undefined): string {
   return cwd === undefined || cwd === '' ? UNGROUPED_KEY : CWD_GROUP_PREFIX + cwd
 }
 
+/** Whether a group key denotes a cwd-derived directory group. */
+export function isCwdGroupKey(key: string): boolean {
+  return key.startsWith(CWD_GROUP_PREFIX)
+}
+
 /**
  * Resolve the Workspace browser group that owns one Session.
  * @param workspaces - authoritative Workspace membership.
