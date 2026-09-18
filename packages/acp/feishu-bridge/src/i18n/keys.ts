@@ -467,6 +467,7 @@ export const ALL_MSG_KEYS = [
   'plan_shadow_origin_notice',
   'plan_shadow_aborted',
   'plan_shadow_origin_superseded',
+  'plan_shadow_origin_closed',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -908,4 +909,5 @@ export const Msg = {
   PlanShadowOriginNotice: 'plan_shadow_origin_notice',
   PlanShadowAborted: 'plan_shadow_aborted',
   PlanShadowOriginSuperseded: 'plan_shadow_origin_superseded',
+  PlanShadowOriginClosed: 'plan_shadow_origin_closed',
 } as const

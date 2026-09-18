@@ -3,10 +3,13 @@
  * sibling group whose session forks the origin transcript, pinned to plan
  * mode, and receives one review prompt — an independent second pass can offer
  * a better plan while the origin card stays approvable. The two sides are
- * linked through their sessions' featureState and settle each other:
- * approving the origin aborts the shadow; approving the shadow's plan voids
- * the origin's parked card. A shadow never spawns a shadow of its own and a
- * session spawns at most one, so the review cannot recurse or fan out.
+ * linked through their sessions' featureState and settle each other: approving
+ * either plan voids the other side's parked card and closes its group the /done
+ * way. A group the platform does not track (a main group, a p2p chat), one
+ * already closed, or one with other work in flight is left open and only told.
+ * Neither settlement touches that group's own child groups or worktree, and a
+ * shadow never spawns a shadow of its own; a session spawns at most one, so the
+ * review cannot recurse or fan out.
  *
  * @module dsh-feishu-bridge/plan-shadow
  */
@@ -15,6 +18,7 @@ import {
   asChatPhasePainter,
   asGroupSpawner,
   asReplyContextReconstructor,
+  asSpawnedChatActiveChecker,
   ContinueSession,
   ForkAtSessionPrefix,
   ForkSessionPrefix,
@@ -215,9 +219,8 @@ async function runLaunch(e: Engine, p: Platform, req: PlanShadowRequest): Promis
 
 /**
  * Abort the shadow a session launched, because the origin plan card settled
- * as approved: the shadow's work is moot. Mirrors the /done teardown order —
- * commit the terminal state before stopping, so late repaints observe the
- * done mark — then posts the void notice in the shadow chat.
+ * as approved: the shadow's work is moot. The group is closed the /done way
+ * ({@link closeChat}), then the void notice lands in it.
  *
  * @param e - The engine owning both sessions.
  * @param p - The platform carrying the request.
@@ -234,21 +237,16 @@ async function runAbort(e: Engine, p: Platform, req: PlanShadowRequest): Promise
   const shadowKey = sectionOf(e.sessions.findActive(req.sessionKey)).shadowSessionKey
   if (shadowKey === undefined) return
   const replyCtx = await replyCtxFor(e, p, shadowKey)
-  try {
-    await e.markSpawnedChatDone(p, shadowKey)
-    await asChatPhasePainter(p)?.setChatPhase(shadowKey, 'done')
-  } catch (error) {
-    console.warn(`plan-shadow: dim shadow chat failed (${shadowKey}): ${String(error)}`)
-  }
-  e.stopInteractiveSession(shadowKey)
+  await closeChat(e, p, shadowKey)
   if (replyCtx !== undefined) await e.reply(p, replyCtx, e.i18n.t(Msg.PlanShadowAborted))
 }
 
 /**
- * Void the origin chat's parked plan card, because the shadow's plan was
- * approved instead. The origin turn is stopped with the ask, not merely
- * un-parked: a cancelled `exit_plan_mode` would otherwise let the origin
- * agent plan again and park a competing card.
+ * Void the origin chat's parked plan card and close its group, because the
+ * shadow's plan was approved instead. The origin turn is stopped with the ask,
+ * not merely un-parked: a cancelled `exit_plan_mode` would otherwise let the
+ * origin agent plan again and park a competing card. The group's own child
+ * groups and worktree are left alone — only the origin settles.
  *
  * @param e - The engine owning both sessions.
  * @param p - The platform carrying the request.
@@ -266,15 +264,57 @@ async function runInvalidate(e: Engine, p: Platform, req: PlanShadowRequest): Pr
   if (originKey === undefined) return
   const originState = e.interactiveStates.get(originKey)
   const parkedPlan = originState?.pendingAsk?.request.kind === 'plan-review'
+  // Closing stops the chat's turn, so only a chat with nothing else in flight
+  // closes: the parked plan being voided, or an idle chat. A live unrelated
+  // turn (or a parked ask of another kind) keeps running and only hears the
+  // notice — it is work the user is still in the middle of.
+  const busy = originState !== undefined && !parkedPlan
+    && (originState.activeTurns > 0 || originState.pendingAsk !== undefined)
+  // Addressed before the close: closing the origin drops its interactive
+  // state, and the platform's reconstruction is the only remaining source.
   const replyCtx = await replyCtxFor(e, p, originKey)
-  if (parkedPlan) e.stopInteractiveSession(originKey)
+  // Only a spawned group can be closed: it owns the avatar axis and the done
+  // mark (a main group or a p2p chat keeps its avatar, so claiming a close
+  // there would be a lie), and an already-done group must not be greyed again
+  // — the user may have woken it since.
+  const spawned = asSpawnedChatActiveChecker(p)?.isSpawnedChatActive(originKey) === true
+  const closed = spawned && !busy
+  if (closed) await closeChat(e, p, originKey)
+  else if (parkedPlan) e.stopInteractiveSession(originKey)
   if (replyCtx === undefined) return
   const url = e.chatJumpURL(p, extractChannelID(req.sessionKey))
-  const card = newCard().markdown(e.i18n.t(Msg.PlanShadowOriginSuperseded))
+  const superseded = e.i18n.t(Msg.PlanShadowOriginSuperseded)
+  const text = closed ? `${superseded}\n${e.i18n.t(Msg.PlanShadowOriginClosed)}` : superseded
+  const card = newCard().markdown(text)
   if (url !== '') {
     card.buttons({ text: e.i18n.t(Msg.SpawnJumpBtn), type: 'primary', value: '', url })
   }
   await e.replyWithCard(p, replyCtx, card.build())
+}
+
+/**
+ * Close a chat the way /done closes one, and nothing more: commit the terminal
+ * mark, grey the avatar, then stop the session. Deliberately NOT the /done call
+ * path (`cmdDone`/`cleanupOneChat`), which also tears down every descendant
+ * subtask group and acts on the chat's worktree; a superseded plan has no
+ * business destroying either.
+ *
+ * The order is load-bearing: the done mark commits before the stop, so the
+ * chat's own stopped ask repaints nothing (applyChatPhase's
+ * `isSpawnedChatDone` freeze) and late repaints observe the grey.
+ *
+ * @param e - The engine owning the chat's session and interactive state.
+ * @param p - The platform owning the chat's avatar axis.
+ * @param sessionKey - Session key of the chat to close.
+ */
+async function closeChat(e: Engine, p: Platform, sessionKey: string): Promise<void> {
+  try {
+    await e.markSpawnedChatDone(p, sessionKey)
+    await asChatPhasePainter(p)?.setChatPhase(sessionKey, 'done')
+  } catch (error) {
+    console.warn(`plan-shadow: close chat failed (${sessionKey}): ${String(error)}`)
+  }
+  e.stopInteractiveSession(sessionKey)
 }
 
 /**

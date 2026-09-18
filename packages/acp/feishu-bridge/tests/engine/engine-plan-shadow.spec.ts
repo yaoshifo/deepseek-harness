@@ -398,9 +398,10 @@ describe('PlanShadowAbort', () => {
 })
 
 describe('PlanShadowOriginInvalidation', () => {
-  it('approving the shadow plan voids the origin parked card and tells the origin chat', async () => {
+  it('approving the shadow plan closes the origin group and voids its parked card', async () => {
     const { e, p } = newShadowEngine()
     const originKey = 'feishu:oc_parent:ou_u'
+    const teardown = withCloseRecorder(p)
     await deny(e, p, originKey, parkPlan(e, p, originKey))
     await settleLaunch()
 
@@ -421,8 +422,136 @@ describe('PlanShadowOriginInvalidation', () => {
     await expect(originSecond).resolves.toEqual({ outcome: 'cancelled' })
     expect(originState.userStopped).toBe(true)
     expect(originState.pendingAsk).toBeUndefined()
+
+    // The superseded origin group is closed the way /done closes one: the grey
+    // mark commits before the stop, so the origin's own stopped ask cannot
+    // repaint the avatar back to a baseline phase afterwards.
+    expect(teardown.calls).toContain(`done:${originKey}`)
+    expect(teardown.calls.indexOf(`done:${originKey}`))
+      .toBeLessThan(teardown.calls.indexOf(`phase:${originKey}:done`))
+    const afterClose = teardown.calls.slice(teardown.calls.indexOf(`phase:${originKey}:done`) + 1)
+    expect(afterClose.filter(c => c.startsWith(`phase:${originKey}:`))).toEqual([])
+
     expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginSuperseded))
+    expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
     expect(jumpButtonURLs(p)).toContain('https://applink.feishu.cn/client/chat/open?openChatId=role-1')
+  })
+
+  it('an origin busy with other work is told, not closed', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const teardown = withCloseRecorder(p)
+    await deny(e, p, originKey, parkPlan(e, p, originKey))
+    await settleLaunch()
+
+    // The origin went back to work on something else: a live turn, no plan
+    // card parked. Killing it to close the group would destroy that work.
+    const originState = armState(e, p, originKey)
+    originState.activeTurns = 1
+
+    const shadowKey = 'test:role-1'
+    const shadowDecision = parkPlan(e, p, shadowKey, 'shadow-native')
+    await parked(e, shadowKey)
+
+    e.routeAskResponse(p, msg({ sessionKey: shadowKey, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(shadowDecision).resolves.toEqual({ outcome: 'allowed-once' })
+    await settleLaunch()
+
+    expect(teardown.calls).not.toContain(`done:${originKey}`)
+    expect(teardown.calls).not.toContain(`phase:${originKey}:done`)
+    expect(originState.userStopped).toBe(false)
+    expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginSuperseded))
+    expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
+  })
+
+  it('an origin the platform does not track is voided without a close', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const teardown = withCloseRecorder(p, 'untracked')
+    await deny(e, p, originKey, parkPlan(e, p, originKey))
+    await settleLaunch()
+
+    const originState = armState(e, p, originKey)
+    const originSecond = e.askUser(originKey, { kind: 'plan-review', heading: '# P2', plan: '# P2\norigin second' })
+    await parked(e, originKey)
+    const shadowKey = 'test:role-1'
+    const shadowDecision = parkPlan(e, p, shadowKey, 'shadow-native')
+    await parked(e, shadowKey)
+
+    e.routeAskResponse(p, msg({ sessionKey: shadowKey, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(shadowDecision).resolves.toEqual({ outcome: 'allowed-once' })
+    await settleLaunch()
+
+    // A main group or a p2p chat has no avatar axis to grey: its parked card
+    // still voids with its turn, and the notice claims nothing beyond that.
+    await expect(originSecond).resolves.toEqual({ outcome: 'cancelled' })
+    expect(originState.userStopped).toBe(true)
+    expect(teardown.calls).not.toContain(`done:${originKey}`)
+    expect(teardown.calls).not.toContain(`phase:${originKey}:done`)
+    expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginSuperseded))
+    expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
+  })
+
+  it('an origin already closed is not closed again', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const teardown = withCloseRecorder(p, 'closed')
+    await deny(e, p, originKey, parkPlan(e, p, originKey))
+    await settleLaunch()
+
+    const originState = armState(e, p, originKey)
+    const originSecond = e.askUser(originKey, { kind: 'plan-review', heading: '# P2', plan: '# P2\norigin second' })
+    await parked(e, originKey)
+    const shadowKey = 'test:role-1'
+    const shadowDecision = parkPlan(e, p, shadowKey, 'shadow-native')
+    await parked(e, shadowKey)
+
+    e.routeAskResponse(p, msg({ sessionKey: shadowKey, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(shadowDecision).resolves.toEqual({ outcome: 'allowed-once' })
+    await settleLaunch()
+
+    // The group already carries its done mark: re-closing would grey a group
+    // the user may have woken since, so the settlement only voids the card.
+    await expect(originSecond).resolves.toEqual({ outcome: 'cancelled' })
+    expect(originState.userStopped).toBe(true)
+    expect(teardown.calls).not.toContain(`done:${originKey}`)
+    expect(teardown.calls).not.toContain(`phase:${originKey}:done`)
+    expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
+  })
+
+  it('closing the origin leaves its own child groups alone', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const teardown = withCloseRecorder(p)
+    await deny(e, p, originKey, parkPlan(e, p, originKey))
+    await settleLaunch()
+
+    // A child subtask group of the origin, with live state and a worktree: the
+    // close is /done-shaped but owns no subtree, so neither may be touched.
+    const childKey = 'feishu:oc_child:ou_u'
+    const childSession = e.sessions.getOrCreateActive(childKey)
+    childSession.setParentSessionKey(originKey)
+    childSession.setWorktreeInfo('/w/child', 'cc/child', 'dev', '/w/repo', 'dev')
+    const childState = armState(e, p, childKey)
+
+    const originState = armState(e, p, originKey)
+    const originSecond = e.askUser(originKey, { kind: 'plan-review', heading: '# P2', plan: '# P2\norigin second' })
+    await parked(e, originKey)
+    const shadowKey = 'test:role-1'
+    const shadowDecision = parkPlan(e, p, shadowKey, 'shadow-native')
+    await parked(e, shadowKey)
+
+    e.routeAskResponse(p, msg({ sessionKey: shadowKey, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(shadowDecision).resolves.toEqual({ outcome: 'allowed-once' })
+    await settleLaunch()
+
+    expect(teardown.calls).toContain(`done:${originKey}`)
+    expect(teardown.calls.filter(c => c.includes(childKey))).toEqual([])
+    expect(childState.userStopped).toBe(false)
+    expect(childSession.getWorktreeInfo()[0]).toBe('/w/child')
+    // The origin itself is the one that settles.
+    await expect(originSecond).resolves.toEqual({ outcome: 'cancelled' })
+    expect(originState.userStopped).toBe(true)
   })
 })
 
@@ -442,6 +571,25 @@ function withTeardownRecorder(p: SpawnerPlatform): SpawnerPlatform & { calls: st
     calls,
     markSpawnedChatDone: async (sessionKey: string) => { calls.push(`done:${sessionKey}`) },
     setChatPhase: async (sessionKey: string, phase: string) => { calls.push(`phase:${sessionKey}:${phase}`) },
+  })
+}
+
+/**
+ * Teardown recorder plus the spawned-chat signals a close reads, modelling the
+ * platform store: a chat stays active until a done mark lands on it, and the
+ * marks are per chat. `untracked` is a chat the platform does not track (a main
+ * group, a p2p chat); `closed` is one already carrying its done mark.
+ */
+function withCloseRecorder(
+  p: SpawnerPlatform,
+  state: 'live' | 'closed' | 'untracked' = 'live',
+): SpawnerPlatform & { calls: string[] } {
+  const rec = withTeardownRecorder(p)
+  const isDone = (sessionKey: string): boolean => state === 'closed' || rec.calls.includes(`done:${sessionKey}`)
+  return Object.assign(rec, {
+    chatBasePhase: () => 'discussing',
+    isSpawnedChatActive: (sessionKey: string) => state === 'live' && !isDone(sessionKey),
+    isSpawnedChatDone: isDone,
   })
 }
 
