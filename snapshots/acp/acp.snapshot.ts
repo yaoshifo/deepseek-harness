@@ -37,6 +37,7 @@ const controllerCases: readonly {
   { name: 'escalation-approved', hasModelTurn: true },
   { name: 'escalation-rejected', hasModelTurn: true },
   { name: 'fs-escalation-approved', hasModelTurn: true },
+  { name: 'fs-same-mode', hasModelTurn: true },
   {
     name: 'image-compaction',
     hasModelTurn: true,

@@ -99,6 +99,7 @@ export function applyWriteTool(ctx: Context, sandbox: FsSandboxController, caps:
       },
       render: (_args, value) => [{ type: 'text', text: formatWriteOutput(value.path, value) }],
       presentationMeta: (args, value) => ({
+        operation: value.operation,
         diffs: value.before === null
           ? []
           : computeHunkDiffs(args.file_path, value.before, value.after)

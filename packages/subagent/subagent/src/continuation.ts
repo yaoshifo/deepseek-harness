@@ -133,11 +133,13 @@ export class SubagentContinuationManager {
     private readonly ctx: Context,
     private readonly host: ContinuationHost,
     private readonly setupRegistry: SubagentActivationSetupRegistry,
+    maxActiveSubagents: () => number,
     private readonly settlementDelivery: SubagentSettlementDelivery = 'inbox',
   ) {
     this.activations = new ContinuableActivationRegistry(
       ctx,
       (provider, childId, parent) => host.observeActivation(provider, childId, parent),
+      maxActiveSubagents,
       {
         setupContributions: (childCtx, child) => this.setupRegistry.apply(childCtx, child),
         settlementDelivery: this.settlementDelivery,

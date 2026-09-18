@@ -2,6 +2,7 @@
 
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { Agent } from '@deepseek-ai/dsh-agent/types'
+import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand'
 
 /** One selectable answer offered to the user. */
 export interface AskUserQuestionOption {
@@ -39,6 +40,8 @@ export type AskUserQuestionIntent = {
    * the asker submitted no annex; `detail` then equals `plain` alone.
    */
   layers?: { plain: string; details: string }
+  /** Logged tool invocation whose arguments contain the reviewed plan. */
+  callId?: ToolCallId
 }
 
 /** One question in a user-questions request. */

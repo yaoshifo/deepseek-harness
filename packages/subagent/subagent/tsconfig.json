@@ -12,6 +12,9 @@
       "path": "../../../vendor/cordis"
     },
     {
+      "path": "../../../vendor/schemastery"
+    },
+    {
       "path": "../../attachment/attachment"
     },
     {
@@ -76,6 +79,9 @@
     },
     {
       "path": "../../util/chunked-list"
+    },
+    {
+      "path": "../../settings/settings"
     }
   ]
 }

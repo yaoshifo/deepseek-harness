@@ -440,6 +440,7 @@ export class PlanModeController extends Service {
             intent: {
               kind: 'plan-review',
               approve: APPROVE_LABEL,
+              callId: exec.callId,
               ...details === undefined ? {} : { layers: { plain: args.plan, details } },
             },
           }],

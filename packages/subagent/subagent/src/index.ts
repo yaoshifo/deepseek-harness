@@ -32,6 +32,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { isAbsolute } from 'node:path'
 import z from '@deepseek-ai/schemastery'
+import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-attachment'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
@@ -193,20 +194,6 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/**
- * Loader-level configuration for the subagent runtime. Direct
- * `ctx.plugin(SubagentRuntime, options)` callers may pass the same optional
- * fields; unresolved fields keep their defaults.
- */
-export interface SubagentRuntimeConfig {
-  /**
-   * Who delivers continuable settlement notices to the durable parent: the
-   * runtime's own inbox wake (`'inbox'`, default), or the deployment's
-   * `subagent/end` listener (`'external'`).
-   */
-  settlementNotice?: SubagentSettlementDelivery
-}
-
 /** Durable attribution of one browser-authored follow-up. The Session
  * Controller declares this `user-rpc` message source and depends on this
  * package, so the fields are spelled here: `MessageSource`'s `user` member
@@ -219,12 +206,28 @@ interface BrowserPromptSource {
   readonly clientTimeZone?: string
 }
 
+/** Host configuration for continuable subagent capacity. */
+export interface Config {
+  /** Maximum live children sharing uninterrupted continuable parent links; defaults to 8. */
+  maxActiveSubagents?: number
+  /** Default delegation depth for tools without an explicit limit; defaults to 1. */
+  maxDepth?: number
+  /**
+   * Who delivers continuable settlement notices to the durable parent: the
+   * runtime's own inbox wake (`'inbox'`, default), or the deployment's
+   * `subagent/end` listener (`'external'`).
+   */
+  settlementNotice?: SubagentSettlementDelivery
+}
+
 /** Named provider registry with one-shot runs, durable discovery, and continuable-child operations. */
 export class SubagentRuntime extends TypertRemoteService {
-  static Config: z<SubagentRuntimeConfig> = z.object({
+  static Config: z<Config> = z.object({
+    maxDepth: z.number().step(1).min(0).max(Number.MAX_SAFE_INTEGER).default(1),
+    maxActiveSubagents: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(8),
     settlementNotice: z.union(['inbox', 'external'] as const).default('inbox'),
   })
-
+  private settingsSource: () => Config
   private providers = new Map<string, SubagentProvider>()
   private continuations: SubagentContinuationManager | undefined
   /** Deployment contributions composed into unpublished continuable children. */
@@ -235,19 +238,28 @@ export class SubagentRuntime extends TypertRemoteService {
    * composes into the carrier.
    */
   private readonly emitLifecycle: LifecycleEmitter
-  /** Resolved settlement delivery mode; see {@link SubagentRuntimeConfig.settlementNotice}. */
+  /** Resolved settlement delivery mode; see {@link Config.settlementNotice}. */
   private readonly settlementNotice: SubagentSettlementDelivery
 
-  constructor(ctx: Context, config: SubagentRuntimeConfig = {}) {
+  constructor(ctx: Context, config: Config) {
     super(ctx, 'subagents')
+    assertSubagentMaxDepth(config.maxDepth)
     this.settlementNotice = config.settlementNotice ?? 'inbox'
+    this.settingsSource = () => config
+    ctx.inject(['settings'], (settingsCtx) => {
+      settingsCtx.settings.installSection(ctx, 'subagent', SubagentRuntime.Config, config, {
+        validate: (value) => { assertSubagentMaxDepth(value.maxDepth) },
+        setSource: (source) => { this.settingsSource = source },
+        onChange: () => {},
+      })
+    })
     this.emitLifecycle = createLifecycleEmitter(this.ctx, parent => scopeTarget(this, parent))
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {
         assertStartCapabilities: (name, request) => { this.assertCapabilities(this.expectProvider(name), request) },
         prepareContinuable: (name, request) => this.prepareContinuable(name, request),
         observeActivation: (provider, childId, parent) => this.observeActivation(provider, childId, parent),
-      }, this.setupRegistry, this.settlementNotice)
+      }, this.setupRegistry, () => (this.settingsSource() as Required<Config>).maxActiveSubagents, this.settlementNotice)
       this.continuations = manager
       childCtx.effect(() => () => {
         /* v8 ignore else -- one injected binding owns the slot until its fiber disposes. */
@@ -259,6 +271,16 @@ export class SubagentRuntime extends TypertRemoteService {
       projectionCtx.sessionProjections.register(subagentTimingProjectionDefinition)
       projectionCtx.sessionProjections.register(subagentIdentityProjectionDefinition)
     })
+  }
+
+  /**
+   * Resolve a delegation tool's depth policy against the current user setting.
+   * @param configured - Explicit tool limit, or provider-managed for external delegation.
+   * @returns The numeric limit, or undefined when the provider owns depth enforcement.
+   */
+  resolveMaxDepth(configured?: number | 'provider-managed'): number | undefined {
+    if (configured === 'provider-managed') return undefined
+    return configured ?? (this.settingsSource() as Required<Config>).maxDepth
   }
 
   /**
@@ -482,6 +504,7 @@ export class SubagentRuntime extends TypertRemoteService {
    * nearest step and retains the Agent loop's best-effort fallback semantics.
    * Image parts are admitted and persisted through the attachment store
    * before delivery, and the child's model must accept image input.
+   * Cold resume at capacity rejects with `subagent/delivery-unavailable`.
    * @param request - durable address, delivery, minted identity, content, and optional browser zone.
    * @param signal - carrier cancellation, owning the call until inbox acceptance.
    * @returns the accepted message's inbox identity.
