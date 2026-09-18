@@ -25,6 +25,16 @@ dev 工作区干净、与 origin/dev 同步后 `git fetch upstream`，量三个�
 
 同步窗口 = merge-base 提交日期 → upstream/master tip 日期。报规模用三件套：rev-list 总数 + `--first-parent` PR 合并数 + merge-base 日期。上游高velocity（约 18 个 PR 合并/天）且用合并队列/集成分支批量推进 master，隔几天同步出 700~1100 提交是正常水位——先按此校准，再谈异常。报数字前确认三处一致：本地 dev 的 merge-base、`git fetch origin` 后的 origin/dev、`ssh dev` 查 dev 服务器（并行会话/双机可能已同步而本地不知）。
 
+**profile 链接预检**：上游会在两次同步之间重组包目录（2026-09-18 实例：present 工具从 `packages/fs/` 搬到 `packages/deliverables/`），而两台机器的 live profile 用字面路径 `link:` 上游包——搬一次断一次，且只在 reload 的 `--dump-config` 预检时才炸。合并前跑（仓内模板 + 本机 + dev 服务器）：
+
+```sh
+pnpm run verify-profile-links                                            # 仓内模板
+pnpm run verify-profile-links --profile ~/.dsh/profiles/feishu-bridge/package.json
+ssh dev 'cd ~/workspace/deepseek-harness && pnpm run verify-profile-links --profile ~/.dsh/profiles/feishu-bridge/package.json'
+```
+
+断链在预演阶段就暴露：要么合并前修 profile，要么把路径改动列进本次合并的收尾待办（别留给 reload）。
+
 **成功标准**：三个量都已知，明确本次要合多少提交，且同步窗口的起止日期向用户如实报告。
 
 ### 2. 零副作用预演
