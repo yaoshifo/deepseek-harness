@@ -270,15 +270,20 @@ async function runInvalidate(e: Engine, p: Platform, req: PlanShadowRequest): Pr
   // notice — it is work the user is still in the middle of.
   const busy = originState !== undefined && !parkedPlan
     && (originState.activeTurns > 0 || originState.pendingAsk !== undefined)
-  // Addressed before the close: closing the origin drops its interactive
-  // state, and the platform's reconstruction is the only remaining source.
-  const replyCtx = await replyCtxFor(e, p, originKey)
   // Only a spawned group can be closed: it owns the avatar axis and the done
   // mark (a main group or a p2p chat keeps its avatar, so claiming a close
   // there would be a lie), and an already-done group must not be greyed again
   // — the user may have woken it since.
-  const spawned = asSpawnedChatActiveChecker(p)?.isSpawnedChatActive(originKey) === true
+  const checker = asSpawnedChatActiveChecker(p)
+  const spawned = checker?.isSpawnedChatActive(originKey) === true
   const closed = spawned && !busy
+  // An origin already carrying the mark was closed by an earlier settlement and
+  // has been told; a second notice would only repeat it in a group the user may
+  // have woken since. Its card still voids, silently.
+  const announced = checker?.isSpawnedChatDone(originKey) !== true
+  // Addressed before the close: closing the origin drops its interactive
+  // state, and the platform's reconstruction is the only remaining source.
+  const replyCtx = announced ? await replyCtxFor(e, p, originKey) : undefined
   if (closed) await closeChat(e, p, originKey)
   else if (parkedPlan) e.stopInteractiveSession(originKey)
   if (replyCtx === undefined) return

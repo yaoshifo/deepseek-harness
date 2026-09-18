@@ -511,11 +511,13 @@ describe('PlanShadowOriginInvalidation', () => {
     await settleLaunch()
 
     // The group already carries its done mark: re-closing would grey a group
-    // the user may have woken since, so the settlement only voids the card.
+    // the user may have woken since, and a second notice would only repeat
+    // what the first settlement said, so the card voids on its own.
     await expect(originSecond).resolves.toEqual({ outcome: 'cancelled' })
     expect(originState.userStopped).toBe(true)
     expect(teardown.calls).not.toContain(`done:${originKey}`)
     expect(teardown.calls).not.toContain(`phase:${originKey}:done`)
+    expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginSuperseded))
     expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
   })
 
