@@ -26,9 +26,10 @@
  */
 
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { gzipSync } from 'node:zlib'
 import { Msg } from '../i18n/index.ts'
 import { mcpToolCounts } from '../core/mcp-health.ts'
 import type { Message, Platform } from '../core/types.ts'
@@ -145,6 +146,36 @@ async function sendMcpSurfaceReminder(
 
 function pendingPath(): string {
   return join(reloadLogDir(), 'feishu-bridge-reload-pending.json')
+}
+
+/** Cap on one reload log before it rotates into a single gzipped generation. */
+const RELOAD_LOG_MAX_BYTES = 5 * 1024 * 1024
+
+/**
+ * Rotate the reload log into `<log>.1.gz` once it outgrows the cap, leaving an
+ * empty log for this run's output. One generation is enough: the log exists to
+ * be read right after a failure, and unbounded growth already cost a 25MB
+ * append-only file on the dev server (73 reloads of full build output).
+ * Synchronous by design — it runs once per threshold on the reload path, and
+ * must finish before the spawn below appends its header.
+ * @param logPath - The reload log path.
+ * @param maxBytes - Rotation threshold in bytes.
+ * @returns Whether the log was rotated.
+ */
+export function rotateReloadLog(logPath: string, maxBytes = RELOAD_LOG_MAX_BYTES): boolean {
+  try {
+    if (statSync(logPath).size <= maxBytes) return false
+    writeFileSync(`${logPath}.1.gz`, gzipSync(readFileSync(logPath)))
+    writeFileSync(logPath, '')
+    return true
+  } catch (error: unknown) {
+    // A log that cannot rotate must not fail the reload it records; a missing
+    // file is the ordinary first-run case and stays silent.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`/reload: leaving ${logPath} unrotated: ${String(error)}`)
+    }
+    return false
+  }
 }
 
 /**
@@ -292,13 +323,13 @@ function readReloadOutput(logPath: string, offset: number): string {
  * @param e - The engine (replies and i18n only; the script self-locates).
  * @param p - The platform that delivered the command.
  * @param msg - The triggering chat message.
- * @param args - Optional --skip-build, passed through to the script.
+ * @param args - Optional --skip-build or --force-build, passed through to the script.
  */
 async function cmdReload(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const scriptPath = resolveReloadScript()
   const scriptArgs: string[] = []
   for (const a of args) {
-    if (a === '--skip-build') {
+    if (a === '--skip-build' || a === '--force-build') {
       scriptArgs.push(a)
       continue
     }
@@ -335,6 +366,7 @@ async function cmdReload(e: Engine, p: Platform, msg: Message, args: string[]): 
   // -1 when the log could not be opened, so the failure reply skips the tail.
   let outputStart = -1
   try {
+    rotateReloadLog(logPath)
     logFd = openSync(logPath, 'a')
     const who = msg.userName !== '' ? msg.userName : msg.userID
     writeSync(logFd, `\n==> /reload by ${who} at ${new Date().toISOString()}\n`)

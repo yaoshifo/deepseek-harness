@@ -18,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Engine } from '../../src/engine/engine.ts'
 import { registerSessionCommands } from '../../src/engine/commands.ts'
-import { completePendingReload, reloadSpawnArgv, registerReloadCommands, resolveReloadScript } from '../../src/engine/reload-commands.ts'
+import { completePendingReload, reloadSpawnArgv, registerReloadCommands, resolveReloadScript, rotateReloadLog } from '../../src/engine/reload-commands.ts'
 import { setBuildInfoForTest, setBuildProbeForTest } from '../../src/engine/build-info.ts'
 import type { GlobalToolView } from '../../src/engine/reload-commands.ts'
 import { Msg } from '../../src/i18n/index.ts'
@@ -220,6 +220,16 @@ describe('cmdReload', () => {
     expect(e.dispatchCommand(p, reloadMsg('/reload --skip-build'), '/reload --skip-build')).toBe(true)
     await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(1) })
     const spec = reloadSpawnArgv(process.platform, scriptPath, ['--skip-build'])
+    expect(mockSpawn.mock.calls[0]?.[0]).toBe(spec.cmd)
+    expect(mockSpawn.mock.calls[0]?.[1]).toEqual(spec.args)
+  })
+
+  it('passes --force-build through to the script', async () => {
+    const { e, p } = newEngine()
+    currentPlatform = p
+    expect(e.dispatchCommand(p, reloadMsg('/reload --force-build'), '/reload --force-build')).toBe(true)
+    await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(1) })
+    const spec = reloadSpawnArgv(process.platform, scriptPath, ['--force-build'])
     expect(mockSpawn.mock.calls[0]?.[0]).toBe(spec.cmd)
     expect(mockSpawn.mock.calls[0]?.[1]).toEqual(spec.args)
   })
@@ -490,5 +500,31 @@ describe('resolveReloadScript', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('reload log rotation', () => {
+  let dir: string
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'reload-log-')) })
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+
+  it('keeps one gzipped generation and truncates the log past the cap', () => {
+    const log = join(dir, 'feishu-bridge-reload.log')
+    writeFileSync(log, 'x'.repeat(4096))
+    expect(rotateReloadLog(log, 1024)).toBe(true)
+    expect([...readFileSync(`${log}.1.gz`).subarray(0, 2)]).toEqual([0x1f, 0x8b])
+    expect(readFileSync(log, 'utf8')).toBe('')
+  })
+
+  it('leaves a log below the cap untouched', () => {
+    const log = join(dir, 'feishu-bridge-reload.log')
+    writeFileSync(log, 'small\n')
+    expect(rotateReloadLog(log, 1024)).toBe(false)
+    expect(readFileSync(log, 'utf8')).toBe('small\n')
+    expect(existsSync(`${log}.1.gz`)).toBe(false)
+  })
+
+  it('does nothing when the log does not exist yet', () => {
+    expect(rotateReloadLog(join(dir, 'absent.log'), 1024)).toBe(false)
   })
 })
