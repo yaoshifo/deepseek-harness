@@ -461,6 +461,16 @@ describe('agent conventions prompt (followups contract)', () => {
     expect(prompt).toContain('不要等待')
     expect(prompt).toContain('[后续处理]')
   })
+
+  it('requires a recommended option on every card question', async () => {
+    const { agentConventionsPrompt } = await import('../../src/engine/agent-conventions.ts')
+    const prompt = agentConventionsPrompt()
+    // Every card question carrying options must name the recommended pick
+    // first: an ask with no recommended option renders bare, leaving the
+    // user to guess which choice the agent favors.
+    expect(prompt).toContain('推荐的选项')
+    expect(prompt).toContain('首位')
+  })
 })
 
 describe('followups locator separation (plain-language card, locating dispatch)', () => {
