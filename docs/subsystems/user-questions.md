@@ -155,6 +155,31 @@ Source: [`packages/interaction/user-questions/src/index.ts`](../../packages/inte
 
 ### `user-questions/*` events
 
+<a id="user-questionsanswered--emit"></a>
+
+#### `user-questions/answered` — emit
+
+A human answered a user-questions request attributed to an agent. Emitted after the answerer waterfall returns and before `ask()` resolves, so observers see the human's input as it is handed back to the asker. A request naming no agent announces nothing: its answer belongs to no session. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+
+```ts cordis-catalog
+/**
+ * A human answered a user-questions request attributed to an agent.
+ * Emitted after the answerer waterfall returns and before `ask()` resolves,
+ * so observers see the human's input as it is handed back to the asker. A
+ * request naming no agent announces nothing: its answer belongs to no
+ * session. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped
+ * listeners receive only that agent.
+ * @param payload.agent - agent whose request the human answered.
+ * @param payload.answer - the answer the human chose or typed.
+ * @mode emit
+ */
+'user-questions/answered'( this: Scoped<Agent>, payload: { agent: Agent; answer: AskUserQuestionAnswer }, ): void
+```
+
+Types: [Agent](core.md) · [Scoped](scope.md)
+
+Source: [`packages/interaction/user-questions/src/types.ts`](../../packages/interaction/user-questions/src/types.ts)
+
 <a id="user-questionsrequest--waterfall"></a>
 
 #### `user-questions/request` — waterfall

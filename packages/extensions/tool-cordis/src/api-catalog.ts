@@ -3925,6 +3925,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'exec', description: 'the execution object that traversed the pipeline.' }, { name: 'result', description: 'a deep-frozen snapshot of the final returned result.' }],
   },
   {
+    name: 'user-questions/answered',
+    mode: 'emit',
+    signature: '\'user-questions/answered\'( this: Scoped<Agent>, payload: { agent: Agent; answer: AskUserQuestionAnswer }, ): void',
+    summary: 'A human answered a user-questions request attributed to an agent.',
+    description: 'A human answered a user-questions request attributed to an agent. Emitted after the answerer waterfall returns and before `ask()` resolves, so observers see the human\'s input as it is handed back to the asker. A request naming no agent announces nothing: its answer belongs to no session. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.',
+    parameters: [{ name: 'payload', description: '.answer - the answer the human chose or typed.' }],
+  },
+  {
     name: 'user-questions/request',
     mode: 'waterfall',
     signature: '\'user-questions/request\'( this: Scoped<Agent>, request: AskUserQuestionRequestEvent, next: () => Promise<AskUserQuestionAnswer>, ): Promise<AskUserQuestionAnswer>',
@@ -4046,7 +4054,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AgentSession',
-    declaration: 'export interface AgentSession {\n    send(prompt: string, images: ImageAttachment[], files: FileAttachment[]): Promise<void>;\n    steer(prompt: string): void;\n    events(): EventChannel;\n    currentSessionID(): string;\n    alive(): boolean;\n    close(): Promise<void>;\n    lastStreamActivity?(): number;\n}',
+    declaration: 'export interface AgentSession {\n    send(prompt: string, images: ImageAttachment[], files: FileAttachment[]): Promise<void>;\n    steer(prompt: string): string;\n    events(): EventChannel;\n    currentSessionID(): string;\n    alive(): boolean;\n    close(): Promise<void>;\n    lastStreamActivity?(): number;\n    pendingBackgroundJobs(): number;\n    settledUnreportedBackgroundJobs(since: number): number;\n}',
   },
   {
     name: 'AgentSetup',
@@ -4758,7 +4766,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'Engine',
-    declaration: 'export class Engine {\n    readonly name: string;\n    readonly agent: Agent;\n    readonly platforms: Platform[];\n    readonly sessions: SessionManager;\n    readonly i18n: I18n;\n    readonly startedAt: number;\n    readonly bridge: BridgeDispatch;\n    display: DisplayCfg;\n    streamPreview: StreamPreviewCfg;\n    bumpDebounceInterval: number;\n    injectSender: boolean;\n    attachmentSendEnabled: boolean;\n    feishuWorkspace: FeishuWorkspaceInfo | undefined;\n    eventIdleTimeout: number;\n    stallMaxRetries: number;\n    maxQueuedMessages: number;\n    debounceInterval: number;\n    interactiveIdleTimeout: number;\n    subtaskMaxDepth: number;\n    spawnWorktree: WorktreeMode;\n    spawnProvider: string;\n    spawnMemWarnPct: number;\n    spawnMemBlockPct: number;\n    subtaskQuiet: boolean;\n    subtaskPanelEnabled: boolean;\n    subtaskPanelIntervalMs: number;\n    subtaskPanelStallMs: number;\n    subtaskGatherTimeout: number;\n    groupNameEnabled: boolean;\n    groupNameProvider: string;\n    groupNameTimeout: number;\n    groupNamePrompt: string;\n    groupNameSetAvatar: boolean;\n    readonly monitor: MonitorCore;\n    cronScheduler: CronScheduler | undefined;\n    relayManager: RelayManager | undefined;\n    planRenderEnabled: boolean;\n    planRenderProvider: string;\n    planRenderTimeoutMs: number;\n    planRenderPngScript: string;\n    planRenderSkillSource: (() => Promise<string | undefined>) | undefined;\n    planDir: string;\n    showContextIndicator: boolean;\n    usageProviders: UsageProvider /* …truncated — full shape in source */',
+    declaration: 'export class Engine {\n    readonly name: string;\n    readonly agent: Agent;\n    readonly platforms: Platform[];\n    readonly sessions: SessionManager;\n    readonly i18n: I18n;\n    readonly startedAt: number;\n    readonly bridge: BridgeDispatch;\n    display: DisplayCfg;\n    streamPreview: StreamPreviewCfg;\n    bumpDebounceInterval: number;\n    injectSender: boolean;\n    attachmentSendEnabled: boolean;\n    feishuWorkspace: FeishuWorkspaceInfo | undefined;\n    eventIdleTimeout: number;\n    stallMaxRetries: number;\n    maxQueuedMessages: number;\n    debounceInterval: number;\n    interactiveIdleTimeout: number;\n    subtaskMaxDepth: number;\n    spawnWorktree: WorktreeMode;\n    spawnProvider: string;\n    spawnMemWarnPct: number;\n    spawnMemBlockPct: number;\n    subtaskQuiet: boolean;\n    subtaskPanelEnabled: boolean;\n    subtaskPanelIntervalMs: number;\n    subtaskPanelStallMs: number;\n    subtaskPanelFollowTail: boolean;\n    subtaskGatherTimeout: number;\n    groupNameEnabled: boolean;\n    groupNameProvider: string;\n    groupNameTimeout: number;\n    groupNamePrompt: string;\n    groupNameSetAvatar: boolean;\n    readonly monitor: MonitorCore;\n    cronScheduler: CronScheduler | undefined;\n    relayManager: RelayManager | undefined;\n    planRenderEnabled: boolean;\n    planRenderProvider: string;\n    planRenderTimeoutMs: number;\n    planRenderPngScript: string;\n    planRenderSkillSource: (() => Promise<string | undefined>) | undefined;\n    planShadowEnabled: boolean;\n    planShadowPrompt /* …truncated — full shape in source */',
   },
   {
     name: 'EpochHeader',
@@ -4766,7 +4774,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'Event',
-    declaration: 'export interface Event {\n    type: EventKind;\n    content: string;\n    toolName?: string;\n    toolInput?: string;\n    toolInputRaw?: Record<string, unknown>;\n    toolResult?: string;\n    toolSuccess?: boolean;\n    toolID?: string;\n    done: boolean;\n    error?: Error;\n    errorText?: string;\n    stopReason?: string;\n    inputTokens?: number;\n    totalInputTokens?: number;\n    outputTokens?: number;\n    numTurns?: number;\n    todos?: TodoItem[];\n    fromSubagent?: boolean;\n    toolBackground?: boolean;\n    bgNoticeIDs?: string[];\n}',
+    declaration: 'export interface Event {\n    type: EventKind;\n    content: string;\n    toolName?: string;\n    toolInput?: string;\n    toolInputRaw?: Record<string, unknown>;\n    toolResult?: string;\n    toolSuccess?: boolean;\n    toolID?: string;\n    done: boolean;\n    error?: Error;\n    errorText?: string;\n    stopReason?: string;\n    inputTokens?: number;\n    totalInputTokens?: number;\n    outputTokens?: number;\n    numTurns?: number;\n    todos?: TodoItem[];\n    fromSubagent?: boolean;\n    toolBackground?: boolean;\n    bgNoticeIDs?: string[];\n    steerMessageID?: string;\n}',
   },
   {
     name: 'EventChannel',
@@ -4774,7 +4782,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'EventKind',
-    declaration: 'export type EventKind = \'text\' | \'text_delta\' | \'thinking_delta\' | \'tool_use\' | \'tool_result\' | \'result\' | \'error\' | \'thinking\' | \'subagent_status\' | \'compaction\' | \'todo_update\' | \'skill_invocation\' | \'presented\' | \'bg_task_notice\';',
+    declaration: 'export type EventKind = \'text\' | \'text_delta\' | \'thinking_delta\' | \'tool_use\' | \'tool_result\' | \'result\' | \'error\' | \'thinking\' | \'subagent_status\' | \'compaction\' | \'todo_update\' | \'skill_invocation\' | \'presented\' | \'bg_task_notice\' | \'steer_claimed\';',
   },
   {
     name: 'FeedbackCategory',
@@ -4990,7 +4998,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'InteractiveState',
-    declaration: 'export class InteractiveState {\n    agentSession: AgentSession | undefined;\n    platform: Platform | undefined;\n    replyCtx: unknown;\n    agent: Agent | undefined;\n    sessionStartOptions: SessionStartOptions | undefined;\n    closing: Promise<void> | undefined;\n    stopped: boolean;\n    userStopped: boolean;\n    engineStopped: boolean;\n    stopNoticeSent: boolean;\n    pendingMessages: QueuedMessage[];\n    inflightMessage: QueuedMessage | undefined;\n    sideText: string;\n    eventsNeedResync: boolean;\n    effectiveIdleTimeout: number;\n    lastActivity: number;\n    activeTurns: number;\n    lastEventAt: number;\n    activeToolCalls: number;\n    turnSeq: number;\n    fromVoice: boolean;\n    lastPrompt: string;\n    pendingAsk: PendingAsk | undefined;\n    pendingFollowups: UserQuestion | undefined;\n    capPausedMs: number;\n    capParkStart: number;\n    compactionCount: number;\n    cumulativeInputTokens: number;\n    cumulativeCacheInputTokens: number;\n    notificationHandle: unknown;\n    notificationFooterMsg: string;\n    notificationFooterElements: CardElement[];\n    notificationHeaderSuffix: string;\n    predictNextRunning: boolean;\n    predictNextDisabled: boolean;\n    turnSummaryRunning: boolean;\n    lastAutoCompressAt: number;\n    lastAutoCompressTokens: number;\n    sender: AsyncSender | undefined;\n    preview: StreamPreview | undefined;\n    deleteMode: import(\'./session-card.ts\').DeleteModeState | undefined;\n    backgroundTasksPending: number;\n    bgWaitStartedAt: number;\n    la /* …truncated — full shape in source */',
+    declaration: 'export class InteractiveState {\n    agentSession: AgentSession | undefined;\n    platform: Platform | undefined;\n    replyCtx: unknown;\n    agent: Agent | undefined;\n    sessionStartOptions: SessionStartOptions | undefined;\n    closing: Promise<void> | undefined;\n    stopped: boolean;\n    userStopped: boolean;\n    engineStopped: boolean;\n    stopNoticeSent: boolean;\n    pendingMessages: QueuedMessage[];\n    inflightMessage: QueuedMessage | undefined;\n    sideText: string;\n    eventsNeedResync: boolean;\n    effectiveIdleTimeout: number;\n    lastActivity: number;\n    activeTurns: number;\n    lastEventAt: number;\n    activeToolCalls: number;\n    turnSeq: number;\n    fromVoice: boolean;\n    lastPrompt: string;\n    pendingAsk: PendingAsk | undefined;\n    pendingFollowups: UserQuestion | undefined;\n    capPausedMs: number;\n    capParkStart: number;\n    compactionCount: number;\n    cumulativeInputTokens: number;\n    cumulativeCacheInputTokens: number;\n    notificationHandle: unknown;\n    notificationFooterMsg: string;\n    notificationFooterElements: CardElement[];\n    notificationHeaderSuffix: string;\n    sender: AsyncSender | undefined;\n    preview: StreamPreview | undefined;\n    deleteMode: import(\'./session-card.ts\').DeleteModeState | undefined;\n    backgroundTasksPending: number;\n    bgWaitStartedAt: number;\n    lastForegroundCompletionAt: number;\n    unsolicitedReader: UnsolicitedReaderHandle | undefined;\n    consumedToolIDs: Set<string>;\n    consumedNoticeIDs: Set<string>;\n     /* …truncated — full shape in source */',
   },
   {
     name: 'InvariantFailure',
@@ -5486,7 +5494,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ProgressEntry',
-    declaration: 'export class ProgressEntry {\n    text: string;\n    header: string;\n    body: string;\n    lang: string;\n    toolID: string;\n    result: string;\n    success: boolean;\n    hasResult: boolean;\n    isTool: boolean;\n    isCompact: boolean;\n    seq: number;\n    fullName: string;\n    toolName: string;\n    skillName: string;\n    constructor(init: Partial<ProgressEntry> = {});\n    render(isLatest: boolean): string;\n}',
+    declaration: 'export class ProgressEntry {\n    text: string;\n    header: string;\n    body: string;\n    lang: string;\n    toolID: string;\n    result: string;\n    success: boolean;\n    hasResult: boolean;\n    isTool: boolean;\n    isCompact: boolean;\n    isCompactRetry: boolean;\n    seq: number;\n    fullName: string;\n    toolName: string;\n    skillName: string;\n    resultNotice: string;\n    constructor(init: Partial<ProgressEntry> = {});\n    render(isLatest: boolean): string;\n}',
   },
   {
     name: 'ProgressStatus',
@@ -6478,7 +6486,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'StreamPreview',
-    declaration: 'export class StreamPreview {\n    fullText: string;\n    reissueCooldownMs: number;\n    previewMsgID: unknown;\n    degraded: boolean;\n    failedPatchStreak: number;\n    progressEntries: ProgressEntry[];\n    skillNames: string[];\n    analysisText: string;\n    pinnedAnalysis: string;\n    analysisTruncated: boolean;\n    completed: boolean;\n    turnTruncated: boolean;\n    waiting: boolean;\n    failed: boolean;\n    stoppedCardRendered: boolean;\n    answerDelivery: DeliveryOutcome | undefined;\n    timer: TimerHandle | undefined;\n    placedAtMs: number;\n    lastProgressFlush: number;\n    readonly sessionKey: string;\n    constructor(cfg: StreamPreviewCfg, p: Platform, replyCtx: unknown, transform: ((s: string) => string) | undefined, as: AsyncSender | undefined, sessionKey: string = \'\');\n    canPreview(): boolean;\n    async showPlaceholder(placeholderText: string): Promise<void>;\n    async appendText(text: string): Promise<void>;\n    progressStatusLocked(): ProgressStatus;\n    async freeze(): Promise<void>;\n    async completeAndDetach(park: boolean = false): Promise<unknown>;\n    async settleParkedCard(handle: unknown, outcome: ParkOutcome): Promise<void>;\n    async resumeFromFreeze(): Promise<void>;\n    async discard(): Promise<void>;\n    async finish(finalTextIn: string, truncated: boolean = false): Promise<boolean>;\n    async detachPreview(): Promise<void>;\n    async bumpToEnd(): Promise<void>;\n    cardMessageID(): string;\n    async markRecalled(): Promise<void>;\n    needsDoneReacti /* …truncated — full shape in source */',
+    declaration: 'export class StreamPreview {\n    fullText: string;\n    reissueCooldownMs: number;\n    previewMsgID: unknown;\n    degraded: boolean;\n    failedPatchStreak: number;\n    progressEntries: ProgressEntry[];\n    skillNames: string[];\n    analysisText: string;\n    pinnedAnalysis: string;\n    analysisTruncated: boolean;\n    completed: boolean;\n    turnTruncated: boolean;\n    waiting: boolean;\n    failed: boolean;\n    stoppedCardRendered: boolean;\n    answerDelivery: DeliveryOutcome | undefined;\n    timer: TimerHandle | undefined;\n    placedAtMs: number;\n    lastProgressFlush: number;\n    readonly sessionKey: string;\n    constructor(cfg: StreamPreviewCfg, p: Platform, replyCtx: unknown, transform: ((s: string) => string) | undefined, as: AsyncSender | undefined, sessionKey: string = \'\');\n    canPreview(): boolean;\n    async showPlaceholder(placeholderText: string): Promise<void>;\n    async appendText(text: string): Promise<void>;\n    progressStatusLocked(): ProgressStatus;\n    async freeze(): Promise<void>;\n    async completeAndDetach(park: boolean = false): Promise<unknown>;\n    async settleParkedCard(handle: unknown, outcome: ParkOutcome): Promise<void>;\n    async resumeFromFreeze(): Promise<void>;\n    async discard(): Promise<void>;\n    async finish(finalTextIn: string, truncated: boolean = false): Promise<boolean>;\n    async detachPreview(): Promise<void>;\n    async bumpToEnd(): Promise<void>;\n    cardMessageID(): string;\n    async markRecalled(): Promise<void>;\n    hasStarted(): b /* …truncated — full shape in source */',
   },
   {
     name: 'StreamPreviewCfg',
@@ -7077,10 +7085,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface UpdateTeamTaskRequest {\n    readonly taskId: TeamTaskId;\n    readonly expectedRevision: number;\n    readonly action: TeamTaskAction;\n    readonly subject?: string;\n    readonly description?: string;\n    readonly blockedBy?: readonly TeamTaskId[];\n    readonly writeScopes?: readonly string[];\n    readonly owner?: string;\n}',
   },
   {
-    name: 'UsageProvider',
-    declaration: 'export interface UsageProvider {\n    name(): string;\n    summary(): string;\n    refresh(): void;\n}',
-  },
-  {
     name: 'UserMessage',
     declaration: 'export interface UserMessage extends Message {\n    readonly role: \'user\';\n}',
   },
@@ -7094,7 +7098,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'UserQuestionOption',
-    declaration: 'export interface UserQuestionOption {\n    label: string;\n    description: string;\n    recommended?: boolean;\n}',
+    declaration: 'export interface UserQuestionOption {\n    label: string;\n    description: string;\n    recommended?: boolean;\n    locator?: string;\n}',
   },
   {
     name: 'VChartSpec',

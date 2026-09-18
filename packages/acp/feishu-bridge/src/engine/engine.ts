@@ -7134,7 +7134,7 @@ export class Engine {
    * @param childKey - Engine session key of the newly spawned child group.
    * @param parentKey - Engine session key of the parent chat; '' skips inheritance.
    */
-  seedSpawnProvider(childKey: string, parentKey = ''): void {
+  seedSpawnProvider(childKey: string, parentKey: string = ''): void {
     const route = this.childSpawnRoute(parentKey)
     if (route === '') return
     const switcher = asProviderSwitcher(this.agent)
