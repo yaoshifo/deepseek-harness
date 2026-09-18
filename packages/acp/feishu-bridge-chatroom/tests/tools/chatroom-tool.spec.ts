@@ -24,7 +24,7 @@ import { Engine, InteractiveState, ProjectStateStore } from '@deepseek-ai/dsh-fe
 import { registerChatroomTool } from '../../src/tools/chatroom.ts'
 import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { applyChatroomEngineConfig, chatroomConfig } from '../../src/chatroom-config.ts'
-import { beginChatroomTopicPick, getChatroomPickState, getChatroomTopicPickState } from '../../src/engine/chatroom-pick.ts'
+import { beginChatroomTopicPick, getChatroomModePickState, getChatroomPickState, getChatroomTopicPickState } from '../../src/engine/chatroom-pick.ts'
 import {
   chatroomLedgerDir,
   initChatroomLedger,
@@ -662,6 +662,121 @@ describe('feishu_bridge_chatroom cross-chatroom sharing', () => {
     expect(v.status).toBe('ok')
     const rep = await readFile(join(chatroomLedgerDir(home, hubKey), 'REPORT.md'), 'utf8')
     expect(rep).toContain('收尾总结')
+    test.dispose()
+  })
+
+
+  it('arms the mode card instead of starting while the role picker is pending (2026-09-08 oc_9b99f)', async () => {
+    // The user confirmed the cast in plain text ("按照你推荐的角色推进")
+    // and the moderator called start directly — the mode-selection card
+    // must still reach the user; the mode is not the moderator's to pick.
+    const engine = newEngine()
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-start-guard-'))
+    for (const name of ['taleb', 'munger']) {
+      await mkdir(join(rolesDir, name), { recursive: true })
+      await writeFile(join(rolesDir, name, 'CLAUDE.md'), `# ${name}\n`, 'utf8')
+    }
+    applyChatroomEngineConfig(engine, { rolesDir }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    value(await test.execute({
+      action: 'pick-roles', topic: '定投时机',
+      picks: '[{"name":"taleb","recommended":true,"blurb":"why"},{"name":"munger","recommended":true,"blurb":"why"}]',
+    }))
+
+    const v = value(await test.execute({ action: 'start', message: '定投时机', roles: 'taleb,munger' }))
+
+    expect(v.status).toBe('ok')
+    expect(v.message).toContain('mode-selection card')
+    // Nothing started: the moderator flag startChatroom sets is untouched.
+    expect(chatroomState(engine.sessions.getOrCreateActive('feishu:oc_hub:ou_1')).chatroomModerator).toBe(false)
+    // The pending role picker is consumed; the mode picker takes over.
+    expect(getChatroomPickState(engine, 'feishu:oc_hub:ou_1')).toBeUndefined()
+    const ms = getChatroomModePickState(engine, 'feishu:oc_hub:ou_1')
+    expect(ms?.roles).toEqual(['munger', 'taleb'])
+    expect(ms?.topic).toBe('定投时机')
+    await new Promise(r => setTimeout(r, 20))
+    const p = engine.spawnCapablePlatform() as unknown as { sentCards: unknown[] }
+    // The mode card's title (选择讨论模式) lives on the card object, not in
+    // its elements; the last card sent must be the mode card.
+    expect(JSON.stringify(p.sentCards.at(-1))).toContain('选择讨论模式')
+
+    // A repeat start while the mode card is with the user is idempotent:
+    // no second card, the armed state survives.
+    const again = value(await test.execute({ action: 'start', message: '定投时机', roles: 'taleb,munger' }))
+    expect(again.message).toContain('already with the user')
+    await new Promise(r => setTimeout(r, 20))
+    const before = p.sentCards.length
+    await new Promise(r => setTimeout(r, 20))
+    expect(p.sentCards.length).toBe(before)
+    expect(getChatroomModePickState(engine, 'feishu:oc_hub:ou_1')?.roles).toEqual(['munger', 'taleb'])
+    test.dispose()
+  })
+
+  it('starts directly with the role picker pending when research was decided explicitly', async () => {
+    // --research already stashed: the mode decision is made, matching the
+    // confirm path's pass-through for an explicit research flag.
+    const engine = newEngine()
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-start-guard-rs-'))
+    for (const name of ['taleb', 'munger']) {
+      await mkdir(join(rolesDir, name), { recursive: true })
+      await writeFile(join(rolesDir, name, 'CLAUDE.md'), `# ${name}\n`, 'utf8')
+    }
+    applyChatroomEngineConfig(engine, { rolesDir }, undefined)
+    chatroomState(engine.sessions.getOrCreateActive('feishu:oc_hub:ou_1')).chatroomResearch = true
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    value(await test.execute({
+      action: 'pick-roles', topic: '定投时机',
+      picks: '[{"name":"taleb","recommended":true,"blurb":"why"},{"name":"munger","recommended":true,"blurb":"why"}]',
+    }))
+
+    const v = value(await test.execute({ action: 'start', message: '定投时机', roles: 'taleb,munger' }))
+
+    expect(v.message).toContain('Chatroom started')
+    expect(getChatroomModePickState(engine, 'feishu:oc_hub:ou_1')).toBeUndefined()
+    test.dispose()
+  })
+
+  it('starts directly with the role picker pending for a single-role cast', async () => {
+    // Single-role casts skip the mode card on the confirm path; the guard
+    // stays symmetric.
+    const engine = newEngine()
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-start-guard-1r-'))
+    await mkdir(join(rolesDir, 'taleb'), { recursive: true })
+    await writeFile(join(rolesDir, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    applyChatroomEngineConfig(engine, { rolesDir }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    value(await test.execute({ action: 'pick-roles', topic: '定投时机', picks: '[{"name":"taleb","recommended":true,"blurb":"why"}]' }))
+
+    const v = value(await test.execute({ action: 'start', message: '定投时机', roles: 'taleb' }))
+
+    expect(v.message).toContain('Chatroom started')
+    expect(getChatroomModePickState(engine, 'feishu:oc_hub:ou_1')).toBeUndefined()
+    test.dispose()
+  })
+
+  it('keeps startChatroom failing loud on an over-max cast with the picker pending', async () => {
+    const engine = newEngine()
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-start-guard-max-'))
+    for (const name of ['taleb', 'munger']) {
+      await mkdir(join(rolesDir, name), { recursive: true })
+      await writeFile(join(rolesDir, name, 'CLAUDE.md'), `# ${name}\n`, 'utf8')
+    }
+    applyChatroomEngineConfig(engine, { rolesDir, maxRoles: 1 }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    value(await test.execute({
+      action: 'pick-roles', topic: '定投时机',
+      picks: '[{"name":"taleb","recommended":true,"blurb":"why"},{"name":"munger","recommended":false,"blurb":"why"}]',
+    }))
+
+    const res = await test.execute({ action: 'start', message: '定投时机', roles: 'taleb,munger' })
+
+    // The invalid cast falls through to startChatroom's own error instead
+    // of arming a mode card it cannot honor.
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('too many roles')
+    expect(getChatroomModePickState(engine, 'feishu:oc_hub:ou_1')).toBeUndefined()
+    // The role picker survives: the user can still fix the cast on the card.
+    expect(getChatroomPickState(engine, 'feishu:oc_hub:ou_1')).toBeDefined()
     test.dispose()
   })
 })

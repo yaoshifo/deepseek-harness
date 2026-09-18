@@ -811,6 +811,61 @@ export function beginChatroomModePick(
   }
 }
 
+/**
+ * A moderator start while a selection card is still pending must not skip
+ * the user's mode choice (2026-09-08 oc_9b99f: the user confirmed the cast
+ * in plain text, the moderator called start, and the chatroom launched
+ * without the mode card). Consumes the pending role picker, arms the mode
+ * picker from the moderator's cast, and sends the mode card; a repeat call
+ * while the mode picker is already armed is idempotent.
+ *
+ * @param e - Engine owning the picker maps.
+ * @param hubKey - Hub session key the start targeted.
+ * @param topic - Topic the moderator started with.
+ * @param roles - Cast the moderator proposed; the user confirmed it in chat.
+ * @param prior - Resolved inherit target when the start continues a chatroom.
+ * @returns 'armed' when the mode card went out, 'already-armed' when one is
+ *   already with the user, 'not-pending' when no card holds an undecided
+ *   user choice (an ordinary start proceeds) — including invalid casts,
+ *   which fall through so startChatroom keeps failing loud on them.
+ */
+export function armChatroomModePickFromModeratorStart(
+  e: Engine, hubKey: string, topic: string, roles: string[], prior?: ChatroomInheritTarget,
+): 'armed' | 'already-armed' | 'not-pending' {
+  if (pickers(e).chatroomModePick.get(hubKey) !== undefined) return 'already-armed'
+  const ps = pickers(e).chatroomPick.get(hubKey)
+  if (ps === undefined) return 'not-pending'
+  // Same validation startChatroom applies, checked here so an invalid cast
+  // never swaps the role card for a mode card it cannot honor.
+  if (roles.length === 0 || roles.length > chatroomConfig(e).maxRoles()) return 'not-pending'
+  const valid = new Set(listRoleNames(chatroomConfig(e).rolesDir()))
+  for (const name of roles) {
+    if (!valid.has(name)) return 'not-pending'
+  }
+  pickers(e).chatroomPick.delete(hubKey)
+  const ms: ChatroomModePickState = {
+    topic,
+    // Sorted like the confirm path ([...ps.selected.keys()].sort()).
+    roles: [...roles].sort(),
+    ...(prior !== undefined ? { prior } : {}),
+    userID: ps.userID,
+    chatType: ps.chatType,
+  }
+  pickers(e).chatroomModePick.set(hubKey, ms)
+  const p = e.spawnCapablePlatform()
+  if (p !== undefined) {
+    const cs = asCardSender(p)
+    if (cs !== undefined) {
+      void reconstructReplyCtx(e, p, hubKey).then((rctx) => {
+        void cs.sendCard(rctx, renderChatroomModePickCard(e, ms)).catch(() => {
+          // Best-effort mode card; the armed state still lets the user act.
+        })
+      })
+    }
+  }
+  return 'armed'
+}
+
 // ── #59 topic picker ──────────────────────────────────────────────────────
 
 /**

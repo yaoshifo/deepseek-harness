@@ -40,6 +40,7 @@ import {
 } from '../engine/chatroom.ts'
 import { listChatroomLedgers } from '../engine/chatroom-ledger.ts'
 import {
+  armChatroomModePickFromModeratorStart,
   bootstrapChatroomPick,
   getChatroomPickState,
   renderChatroomPickCardAndPush,
@@ -139,7 +140,8 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
         type: 'string',
         required: true,
         enum: ['start', 'ask', 'gather', 'poll', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note', 'history'],
-        description: 'start = spawn role groups; ask = question one role; gather = broadcast to all roles; '
+        description: 'start = spawn role groups (a pending selection card turns into the user\'s mode card instead); '
+          + 'ask = question one role; gather = broadcast to all roles; '
           + 'poll = lightning-round one-shot statements from every NON-spawned role (cheap, tool-less, no groups); '
           + 'pick-roles = submit role recommendations; pick-topic = submit candidate topics; ask-human = a role '
           + 'asks the user; end = tear down (add force: true to interrupt immediately from any state); '
@@ -253,6 +255,27 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
           let prior: ChatroomInheritTarget | undefined
           if (args.inherit !== undefined) {
             prior = resolveChatroomInheritPrior(engine, args.inherit.trim())
+          }
+          // A selection card still pending means the user has not made their
+          // choice: the mode is not the moderator's to pick on their behalf
+          // (single-role casts skip the mode card, matching the confirm
+          // path; an explicit --research already decided it).
+          if (roles.length >= 2 && !callerState.chatroomResearch) {
+            const outcome = armChatroomModePickFromModeratorStart(engine, sessionKey, topic, roles, prior)
+            if (outcome === 'armed') {
+              return {
+                status: 'ok' as const,
+                message: 'Roles confirmed; the mode-selection card has been sent to the user. '
+                  + 'End your turn now — the chatroom starts automatically after they pick a mode.',
+              }
+            }
+            if (outcome === 'already-armed') {
+              return {
+                status: 'ok' as const,
+                message: 'The mode-selection card is already with the user; end your turn now. '
+                  + 'The chatroom starts automatically after they pick a mode.',
+              }
+            }
           }
           const started = await startChatroom(engine, sessionKey, roles, topic, prior)
           const lines = started.map(r => `  • ${r.name} (session ${r.sessionKey})`)
