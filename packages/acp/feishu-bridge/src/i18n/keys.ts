@@ -465,7 +465,6 @@ export const ALL_MSG_KEYS = [
   'ask_recommended_suffix',
   'plan_shadow_name_suffix',
   'plan_shadow_origin_notice',
-  'plan_shadow_child_notice',
   'plan_shadow_aborted',
   'plan_shadow_origin_superseded',
 ] as const
@@ -907,7 +906,6 @@ export const Msg = {
   AskRecommendedSuffix: 'ask_recommended_suffix',
   PlanShadowNameSuffix: 'plan_shadow_name_suffix',
   PlanShadowOriginNotice: 'plan_shadow_origin_notice',
-  PlanShadowChildNotice: 'plan_shadow_child_notice',
   PlanShadowAborted: 'plan_shadow_aborted',
   PlanShadowOriginSuperseded: 'plan_shadow_origin_superseded',
 } as const

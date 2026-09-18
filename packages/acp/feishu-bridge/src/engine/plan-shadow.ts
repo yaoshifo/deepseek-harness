@@ -211,8 +211,6 @@ async function runLaunch(e: Engine, p: Platform, req: PlanShadowRequest): Promis
   }
   markShadow(e.sessions, req.sessionKey, { shadowSessionKey: child.sessionKey })
   markShadow(e.sessions, child.sessionKey, { shadowOf: req.sessionKey })
-  const replyCtx = await replyCtxFor(e, p, child.sessionKey, child.replyCtx)
-  if (replyCtx !== undefined) await e.reply(p, replyCtx, e.i18n.t(Msg.PlanShadowChildNotice))
 }
 
 /**
@@ -235,7 +233,7 @@ export function abortPlanShadow(e: Engine, p: Platform, req: PlanShadowRequest):
 async function runAbort(e: Engine, p: Platform, req: PlanShadowRequest): Promise<void> {
   const shadowKey = sectionOf(e.sessions.findActive(req.sessionKey)).shadowSessionKey
   if (shadowKey === undefined) return
-  const replyCtx = await replyCtxFor(e, p, shadowKey, undefined)
+  const replyCtx = await replyCtxFor(e, p, shadowKey)
   try {
     await e.markSpawnedChatDone(p, shadowKey)
     await asChatPhasePainter(p)?.setChatPhase(shadowKey, 'done')
@@ -268,7 +266,7 @@ async function runInvalidate(e: Engine, p: Platform, req: PlanShadowRequest): Pr
   if (originKey === undefined) return
   const originState = e.interactiveStates.get(originKey)
   const parkedPlan = originState?.pendingAsk?.request.kind === 'plan-review'
-  const replyCtx = await replyCtxFor(e, p, originKey, undefined)
+  const replyCtx = await replyCtxFor(e, p, originKey)
   if (parkedPlan) e.stopInteractiveSession(originKey)
   if (replyCtx === undefined) return
   const url = e.chatJumpURL(p, extractChannelID(req.sessionKey))
@@ -286,18 +284,17 @@ async function runInvalidate(e: Engine, p: Platform, req: PlanShadowRequest): Pr
  * @param e - The engine owning the interactive states.
  * @param p - The platform to reconstruct through.
  * @param sessionKey - The chat to address.
- * @param fallback - Reply context used when neither source yields one.
  * @returns The reply context, or undefined when the chat cannot be addressed.
  */
-async function replyCtxFor(e: Engine, p: Platform, sessionKey: string, fallback: unknown): Promise<unknown> {
+async function replyCtxFor(e: Engine, p: Platform, sessionKey: string): Promise<unknown> {
   const live = e.interactiveStates.get(sessionKey)?.replyCtx
   if (live !== undefined && live !== null) return live
   const reconstructor = asReplyContextReconstructor(p)
-  if (reconstructor === undefined) return fallback
+  if (reconstructor === undefined) return undefined
   try {
     return await reconstructor.reconstructReplyCtx(sessionKey)
   } catch (error) {
     console.warn(`plan-shadow: reconstruct reply ctx failed (${sessionKey}): ${String(error)}`)
-    return fallback
+    return undefined
   }
 }

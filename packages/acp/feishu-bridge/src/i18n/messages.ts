@@ -471,7 +471,6 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   ask_recommended_suffix: { en: ' (recommended)', zh: '（推荐）', 'zh-TW': '（推薦）', ja: '（推奨）', es: ' (recomendado)' },
   plan_shadow_name_suffix: { en: ' · Review', zh: '· 推敲' },
   plan_shadow_origin_notice: { en: '🤔 A shadow group is now reviewing this plan for a better option; this plan card stays valid — tap to open it', zh: '🤔 已自动开影子群并行推敲更优方案；本群这张计划卡仍然有效，点按钮查看子群' },
-  plan_shadow_child_notice: { en: 'This group was created automatically from a plan card in the origin group: it is reviewing whether a better plan exists. If the origin plan is approved, this group is void.', zh: '本群由原群的计划卡自动创建：正在并行推敲有没有更优方案。原群一旦批准原计划，本群自动作废。' },
   plan_shadow_aborted: { en: '⏹ The origin plan was approved; this review is void. The group has stopped — ignore or delete it.', zh: '⏹ 原群已批准原计划，本次推敲作废。本群已停止，可以忽略或直接删掉。' },
   plan_shadow_origin_superseded: { en: '⚠️ A better plan was approved in the shadow group; this plan card is void (further clicks do nothing). Tap to open the shadow group.', zh: '⚠️ 影子群已采纳更优方案，本群这张计划卡自动作废（再点无效）。点按钮跳到影子群。' },
 }

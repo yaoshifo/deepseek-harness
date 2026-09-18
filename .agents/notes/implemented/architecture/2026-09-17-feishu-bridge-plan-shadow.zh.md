@@ -21,7 +21,7 @@ Status: implemented
 
 **护栏**（全在 `canLaunch`，全部静默跳过）：项目开关、计划有正文、平台能建群、可 fork 的原生会话 id（已启动，既非 `__fork__` 也非 `__forkat__`）、发起人既非空也不是 cron 的合成发送者——影子群唯一的成员就是这个人，围绕 `cron` 建出来的群没人打得开、更别说批准——自身不是影子群，且尚未发起过。「一个会话至多一个影子群」记在 `Session.featureState.planShadow` 上：原会话记 `shadowSessionKey`，影子记 `shadowOf`。该区段有意不带 codec——它会持久化进会话快照，但没有任何 codec 会在会话重置时搬走它，因此 `/new` 重新武装这个功能是正当的。
 
-**命名与告知。** 群名为 `<原群名> · 推敲`，经 `truncateGroupName` 截断。原群名取会话标签（除非它还停在通用的 `defaultSessionName` 占位值上），否则取从该群消息里记下的名字；两者都没有时沿用 `/fork` 的占位名，由既有的首条消息改名接管。有意不走 `sessionDisplayName`——它剩下的兜底（占位值，再到裸会话 key）服务于 `/list` 与 `/status` 的行，而两者都不适合出现在本功能新建的聊天列表条目里——也有意不做无条件占位名，因为那样改名的素材会变成这段推敲话术。`SpawnCommonOpts.parentNotice` 把说明行带上原群已有的跳转卡；说明必须同时走两条发送路径（卡片句柄那条与 `sendAsCardWithButtons` 降级那条），因为只挂在其中一条上，在不支持卡片句柄的平台上会被静默丢掉。`/spawn` 与 `/fork` 不传说明，保持它们只有按钮的卡片。
+**命名与告知。** 群名为 `<原群名> · 推敲`，经 `truncateGroupName` 截断。原群名取会话标签（除非它还停在通用的 `defaultSessionName` 占位值上），否则取从该群消息里记下的名字；两者都没有时沿用 `/fork` 的占位名，由既有的首条消息改名接管。有意不走 `sessionDisplayName`——它剩下的兜底（占位值，再到裸会话 key）服务于 `/list` 与 `/status` 的行，而两者都不适合出现在本功能新建的聊天列表条目里——也有意不做无条件占位名，因为那样改名的素材会变成这段推敲话术。`SpawnCommonOpts.parentNotice` 把说明行带上原群已有的跳转卡；说明必须同时走两条发送路径（卡片句柄那条与 `sendAsCardWithButtons` 降级那条），因为只挂在其中一条上，在不支持卡片句柄的平台上会被静默丢掉。推敲群自身收不到任何说明消息：群里的人靠群名后缀与那张跳转卡辨识这个群。`/spawn` 与 `/fork` 不传说明，保持它们只有按钮的卡片。
 
 **双向结算。** 两个调用各自守门，而一个会话绝不会既是影子又是影子的发起者：
 
@@ -49,5 +49,5 @@ Status: implemented
 - **群会积累。** 作废的影子群留在聊天列表中，只是置灰。「每会话第一张卡」给它设了上界，`/new` 会重置计数，完全不想要的用户把 `planShadow.enabled` 设为 false。
 - **竞态。** 如果影子群还在创建时原计划就被批准，中止会作用在一个已经建出来的群上：它会被置灰并作废，但它确实存在。这是有意接受而非串行化——为了建群去堵批准窗口更糟。
 - **无人值守的计划永不开群。** cron 的合成发送者会被拒绝；其他机器唤醒的回合仍属于某个真实用户的聊天，那里存在能批准的人。
-- **验证。** `packages/acp/feishu-bridge/tests/engine/engine-plan-shadow.spec.ts` 对着 stub spawner 驱动 `Engine.askUser`：子会话的 fork 哨兵与计划模式、群名与两条通知、每会话一次、防套娃与 cron 两条护栏、开关、双向结算（含停机顺序与被冻结的原群卡片），以及逐字的推敲话术。`tests/assembly-config.spec.ts` 钉住配置转发与默认值。一次突变检验（摘掉结算接线）恰好让两个结算用例变红。
+- **验证。** `packages/acp/feishu-bridge/tests/engine/engine-plan-shadow.spec.ts` 对着 stub spawner 驱动 `Engine.askUser`：子会话的 fork 哨兵与计划模式、群名、原群那条通知，以及影子群自身的沉默（启动路径不向它发任何纯文本消息）、每会话一次、防套娃与 cron 两条护栏、开关、双向结算（含停机顺序与被冻结的原群卡片），以及逐字的推敲话术。`tests/assembly-config.spec.ts` 钉住配置转发与默认值。一次突变检验（摘掉结算接线）恰好让两个结算用例变红。
 - **部署。** 重新构建桥 + `/reload`；功能默认开启，采纳它不需要改任何配置。

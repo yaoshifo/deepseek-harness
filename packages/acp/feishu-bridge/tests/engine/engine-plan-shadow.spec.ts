@@ -138,10 +138,11 @@ describe('PlanShadowSpawn', () => {
     expect(e.sessions.getOrCreateActive('test:role-1').getInheritedMode()).toBe('plan')
     expect(section(e, key)['shadowSessionKey']).toBe('test:role-1')
     expect(section(e, 'test:role-1')['shadowOf']).toBe(key)
-    // Both chats are told why the group exists: the origin's jump card and the
-    // shadow group itself.
+    // Only the origin chat is told why the group exists, on its jump card: the
+    // shadow chat itself carries no explanation message, its name suffix and
+    // that card already saying what it is.
     expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginNotice))
-    expect(p.sent.join('\n')).toContain(e.i18n.t(Msg.PlanShadowChildNotice))
+    expect(p.sent).toEqual([])
 
     await deny(e, p, key, decision)
   })
@@ -279,10 +280,10 @@ describe('PlanShadowSpawn', () => {
     await settleLaunch()
 
     // The shared spawn skeleton already told the origin chat; the shadow path
-    // adds only its own bookkeeping (nothing) and no second notice.
+    // adds only its own bookkeeping (nothing) and, with the pair unlinked,
+    // never sends into the child chat either.
     const sent = p.getSent().join('\n')
     expect(sent).toContain('boom')
-    expect(sent).not.toContain(e.i18n.t(Msg.PlanShadowChildNotice))
     expect(section(e, key)['shadowSessionKey']).toBeUndefined()
     e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:deny', isPermissionAction: true }), 'perm:deny')
     await expect(decision).resolves.toEqual({ outcome: 'rejected' })
