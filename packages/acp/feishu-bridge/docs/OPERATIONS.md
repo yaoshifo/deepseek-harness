@@ -61,7 +61,7 @@ Linux 部署面用 systemd user unit（§5）。
 |---|---|---|
 | `data_dir` | `feishu-bridge` 行 `config.dataDir` | 默认 `~/.dsh/feishu-bridge`（per-project store 根） |
 | `language` | 插件行 `config.language`（'zh'/'zh-TW'/'ja'/'es'/'en'，其余自动探测） | |
-| `[platform_options.feishu]` `cancel_emoji` | `config.projects[].feishu.cancelEmoji` | 停止表情（`/ps` 三态表情的终止态；`'none'` 关闭；默认 `CrossMark`）。`reaction_emoji` / `done_emoji` 移植后从未接线，已删除（残留键加载时 fail loud，2026-09-17） |
+| `[platform_options.feishu]` `cancel_emoji` | `config.projects[].feishu.cancelEmoji` | 停止表情（`/ps` 在认领前死亡时叠加在 Get 之上的结局标记；`'none'` 关闭；默认 `CrossMark`）。`reaction_emoji` / `done_emoji` 移植后从未接线，已删除（残留键加载时 fail loud，2026-09-17） |
 | `[platform_options.feishu]` `notify_on_complete` | `config.projects[].feishu.notifyOnComplete` | 门禁每轮 ✅ 完成通知（紫色卡与文本回退统一受控）；缺省关 |
 | `[platform_options.feishu]` `topnotice_first_message` | `config.projects[].feishu.topNoticeFirstMessage` | |
 | `[platform_options.feishu]` `pin_user_messages` | `config.projects[].feishu.pinUserMessages` | |

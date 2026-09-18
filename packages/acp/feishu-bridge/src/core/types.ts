@@ -1551,14 +1551,15 @@ export interface CancelledReactionAdder {
 
 /**
  * /ps pickup reaction emoji (Feishu emoji key `Get`): the steered text landed
- * in the agent's next-step inbox but has not reached a model request yet.
+ * in the agent's next-step inbox. Added once and kept — the outcome mark
+ * (DONE or the stop emoji) joins it later, never replaces it.
  */
 export const SteerPickupEmoji = 'Get'
 
 /**
  * /ps claimed reaction emoji (Feishu emoji key `DONE`): the steered text was
- * claimed into a model request. Canonical casing per the official Feishu
- * emoji key table.
+ * claimed into a model request, marked beside the pickup emoji. Canonical
+ * casing per the official Feishu emoji key table.
  */
 export const SteerClaimedEmoji = 'DONE'
 

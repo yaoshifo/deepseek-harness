@@ -151,22 +151,20 @@ describe('/ps', () => {
   }
 
   /**
-   * Card platform recording every reaction capability: the Get pickup with a
-   * retractable id, the terminal add, and the configured stop reaction. The
-   * deferred WithID mode resolves the pickup id only when the test says so
-   * (the settle race), and withoutCancelled drops the stop capability.
+   * Card platform recording the additive /ps marks (Get at enqueue, then DONE
+   * or the configured stop emoji on settlement). The id-based retraction pair
+   * stays wired so the assertions can prove the /ps path never touches it;
+   * withoutCancelled drops the stop capability.
    */
   interface ReactionRecorder extends StubCardPlatform {
     added: string[]
     withIDs: string[]
     removes: string[]
     cancelledCount: number
-    resolveDeferredWithID(id: string): void
   }
 
-  function reactionPlatform(opts: { deferWithID?: boolean; withoutCancelled?: boolean } = {}): ReactionRecorder {
+  function reactionPlatform(opts: { withoutCancelled?: boolean } = {}): ReactionRecorder {
     const base = createStubCardPlatformFull('feishu')
-    let deferred: ((id: string) => void) | undefined
     const p: ReactionRecorder = Object.assign(base, {
       added: [] as string[],
       withIDs: [] as string[],
@@ -175,11 +173,9 @@ describe('/ps', () => {
       addReaction(_rc: unknown, emoji: string): void { p.added.push(emoji) },
       async addReactionWithID(_rc: unknown, emoji: string): Promise<string> {
         p.withIDs.push(emoji)
-        if (opts.deferWithID !== true) return `react-${emoji}`
-        return await new Promise<string>((resolve) => { deferred = resolve })
+        return `react-${emoji}`
       },
       async removeReaction(_rc: unknown, reactionID: string): Promise<void> { p.removes.push(reactionID) },
-      resolveDeferredWithID(id: string): void { deferred?.(id) },
       ...(opts.withoutCancelled === true ? {} : {
         addCancelledReaction(_rc: unknown): void { p.cancelledCount++; p.added.push('CrossMark') },
       }),
@@ -197,7 +193,7 @@ describe('/ps', () => {
     }
   })
 
-  it('steers mid-turn and marks the message Get (queued), never DONE up front', async () => {
+  it('marks the picked-up message Get (queued) and never DONE up front', async () => {
     const p = reactionPlatform()
     const { e, disposeAll } = newEngine(p)
     const session = newControllableSession('s1')
@@ -209,16 +205,17 @@ describe('/ps', () => {
       // followup-level send would only queue the next turn.
       expect(session.steerCalls).toEqual(['extra context'])
       expect(session.sendCalls).toEqual([])
-      // The pickup reaction says "queued", not "processed": no DONE yet.
-      await vi.waitFor(() => { expect(p.withIDs).toEqual(['Get']) })
-      expect(p.added).toEqual([])
+      // The pickup mark says "queued", not "processed": DONE waits for the
+      // claim, and the queued mark needs no reaction id (it is never retracted).
+      expect(p.added).toEqual(['Get'])
+      expect(p.withIDs).toEqual([])
       expect(p.getSent()).toHaveLength(0)
     } finally {
       disposeAll()
     }
   })
 
-  it('swaps Get for DONE when the steered text reaches a model request', async () => {
+  it('adds DONE next to the kept Get when the steered text reaches a model request', async () => {
     const p = reactionPlatform()
     const { e, disposeAll } = newEngine(p)
     const session = newControllableSession('s1')
@@ -227,22 +224,24 @@ describe('/ps', () => {
       const state = armedState(e, session)
       state.activeTurns = 1
       e.dispatchCommand(p, miscMsg('/ps extra context'), '/ps extra context')
-      await vi.waitFor(() => { expect(p.withIDs).toEqual(['Get']) })
+      expect(p.added).toEqual(['Get'])
 
       session.channel.push({ type: 'steer_claimed', content: '', done: false, steerMessageID: 'steer-1' })
       session.channel.push({ type: 'result', content: 'turn output', done: true })
       const bookSession = e.sessions.getOrCreateActive(sessionKey)
       await e.processInteractiveEvents(state, bookSession, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
 
-      await vi.waitFor(() => { expect(p.removes).toEqual(['react-Get']) })
-      expect(p.added).toEqual(['DONE'])
+      await vi.waitFor(() => { expect(p.added).toEqual(['Get', 'DONE']) })
+      // Additive marks: the pickup stays on the message, nothing is retracted.
+      expect(p.removes).toEqual([])
+      expect(p.withIDs).toEqual([])
       expect(p.cancelledCount).toBe(0)
     } finally {
       disposeAll()
     }
   })
 
-  it('retracts Get with the stop emoji when the turn is stopped before the claim', async () => {
+  it('adds the stop emoji next to the kept Get when the turn is stopped before the claim', async () => {
     const p = reactionPlatform()
     const { e, disposeAll } = newEngine(p)
     const session = newControllableSession('s1')
@@ -250,12 +249,12 @@ describe('/ps', () => {
       const state = armedState(e, session)
       state.activeTurns = 1
       e.dispatchCommand(p, miscMsg('/ps held back'), '/ps held back')
-      await vi.waitFor(() => { expect(p.withIDs).toEqual(['Get']) })
+      expect(p.added).toEqual(['Get'])
 
       e.stopInteractiveSession('test:ch1:u1')
 
-      await vi.waitFor(() => { expect(p.removes).toEqual(['react-Get']) })
-      expect(p.added).toEqual(['CrossMark'])
+      await vi.waitFor(() => { expect(p.added).toEqual(['Get', 'CrossMark']) })
+      expect(p.removes).toEqual([])
     } finally {
       disposeAll()
     }
@@ -269,12 +268,12 @@ describe('/ps', () => {
       const state = armedState(e, session)
       state.activeTurns = 1
       e.dispatchCommand(p, miscMsg('/ps held back'), '/ps held back')
-      await vi.waitFor(() => { expect(p.withIDs).toEqual(['Get']) })
+      expect(p.added).toEqual(['Get'])
 
       await e.cleanupInteractiveState('test:ch1:u1', state)
 
-      await vi.waitFor(() => { expect(p.removes).toEqual(['react-Get']) })
-      expect(p.added).toEqual(['CrossMark'])
+      await vi.waitFor(() => { expect(p.added).toEqual(['Get', 'CrossMark']) })
+      expect(p.removes).toEqual([])
     } finally {
       disposeAll()
     }
@@ -288,61 +287,42 @@ describe('/ps', () => {
       const state = armedState(e, session)
       state.activeTurns = 1
       e.dispatchCommand(p, miscMsg('/ps held back'), '/ps held back')
-      await vi.waitFor(() => { expect(p.withIDs).toEqual(['Get']) })
+      expect(p.added).toEqual(['Get'])
 
       e.stopInteractiveSession('test:ch1:u1')
 
-      await vi.waitFor(() => { expect(p.removes).toEqual(['react-Get']) })
-      expect(p.added).toEqual([])
+      // The stop path settles synchronously; without the capability nothing
+      // joins the kept Get mark.
+      expect(p.added).toEqual(['Get'])
+      expect(p.cancelledCount).toBe(0)
+      expect(p.removes).toEqual([])
     } finally {
       disposeAll()
     }
   })
 
-  it('falls back to an immediate DONE when the platform cannot retract reactions', () => {
+  it('marks the same additive Get → DONE pair on a platform without id-based retraction', async () => {
     const p = reactionPlatform()
     delete (p as { addReactionWithID?: unknown }).addReactionWithID
     delete (p as { removeReaction?: unknown }).removeReaction
-    const { e, disposeAll } = newEngine(p)
-    const session = newControllableSession('s1')
-    try {
-      const state = armedState(e, session)
-      state.activeTurns = 1
-      expect(e.dispatchCommand(p, miscMsg('/ps extra context'), '/ps extra context')).toBe(true)
-      expect(session.steerCalls).toEqual(['extra context'])
-      // Without id-based retraction there is no two-stage state machine: the
-      // old single-shot acknowledgement, immediately.
-      expect(p.added).toEqual(['DONE'])
-      expect(p.withIDs).toEqual([])
-    } finally {
-      disposeAll()
-    }
-  })
-
-  it('settles the claim without the Get retraction when the pickup id has not resolved', async () => {
-    const p = reactionPlatform({ deferWithID: true })
     const { e, disposeAll } = newEngine(p)
     const session = newControllableSession('s1')
     const sessionKey = 'test:ch1:u1'
     try {
       const state = armedState(e, session)
       state.activeTurns = 1
-      e.dispatchCommand(p, miscMsg('/ps extra context'), '/ps extra context')
-      await vi.waitFor(() => { expect(p.withIDs).toEqual(['Get']) })
+      expect(e.dispatchCommand(p, miscMsg('/ps extra context'), '/ps extra context')).toBe(true)
+      expect(session.steerCalls).toEqual(['extra context'])
+      // Retraction is gone from the /ps path, so a platform that cannot
+      // retract behaves exactly like one that can.
+      expect(p.added).toEqual(['Get'])
 
       session.channel.push({ type: 'steer_claimed', content: '', done: false, steerMessageID: 'steer-1' })
       session.channel.push({ type: 'result', content: 'turn output', done: true })
       const bookSession = e.sessions.getOrCreateActive(sessionKey)
       await e.processInteractiveEvents(state, bookSession, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
 
-      // The claim won the race against the pickup add: DONE lands, the
-      // still-unresolved Get retraction is skipped (an empty id removes
-      // nothing), and the late resolution lands on a settled record.
-      expect(p.added).toEqual(['DONE'])
-      expect(p.removes).toEqual([])
-      p.resolveDeferredWithID('react-Get')
-      await new Promise(resolve => setTimeout(resolve, 0))
-      expect(p.removes).toEqual([])
+      await vi.waitFor(() => { expect(p.added).toEqual(['Get', 'DONE']) })
     } finally {
       disposeAll()
     }

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-17-feishu-bridge-ps-three-state-reaction.md
-2026-09-17-feishu-bridge-ps-three-state-reaction.md: 83a59e41ea4b9079cd0c5e3c4176f62a2a70fad2
-2026-09-17-feishu-bridge-ps-three-state-reaction.zh.md: f2ec333325e1cc42d25d87e0fd0f4b78203161a2
+2026-09-17-feishu-bridge-ps-three-state-reaction.md: 44f7f0e85ea1e849426164f3eb8f3cfe41c8d9ca
+2026-09-17-feishu-bridge-ps-three-state-reaction.zh.md: 4f2fed1092dbd88936a206ed3ef206e4877c611c

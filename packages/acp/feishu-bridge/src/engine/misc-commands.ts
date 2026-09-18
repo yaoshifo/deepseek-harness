@@ -26,8 +26,7 @@
 import { Msg, type MsgKey } from '../i18n/index.ts'
 import { newCard, type Card, type CardButton } from '../card.ts'
 import type { Message, Platform } from '../core/types.ts'
-import { asReactionAdder, asReactionManager, SteerClaimedEmoji, SteerPickupEmoji, supportsCards } from '../core/types.ts'
-import type { PendingSteerReaction } from './engine.ts'
+import { asReactionAdder, SteerPickupEmoji, supportsCards } from '../core/types.ts'
 import type { Engine } from './engine.ts'
 
 /** One-line description lookup key per canonical command id. */
@@ -225,12 +224,14 @@ async function cmdHelp(e: Engine, p: Platform, msg: Message, args: string[]): Pr
  * text is lost. When the agent is idle the command returns false so the
  * message falls through to normal processing with the /ps prefix stripped.
  *
- * The pickup is acknowledged with a three-state reaction on the /ps message
- * (platforms that can retract reactions by id): Get when the text is queued,
- * swapped for DONE when its claim reaches a model request (the adapter's
- * steer_claimed projection), and swapped for the platform's stop emoji when
- * the turn dies before the claim. Platforms without id-based retraction keep
- * the old single-shot DONE acknowledgement.
+ * The message carries two additive reaction marks: Get on pickup (the text is
+ * in the agent's next-step inbox), then DONE once its claim reaches a model
+ * request (the adapter's steer_claimed projection) or the platform's stop
+ * emoji when the turn dies first. The pickup mark is never retracted, so the
+ * path holds no reaction id and one add is all it needs — an unsettled pickup
+ * (a stall-retry channel swap draining the claim event, a daemon restart
+ * losing the record) leaves the Get standing with no outcome instead of
+ * erasing the pickup.
  *
  * @returns Whether the command consumed the message.
  */
@@ -248,19 +249,7 @@ function cmdPs(e: Engine, p: Platform, msg: Message, args: string[]): boolean {
     return false
   }
   const steerMessageID = state.agentSession.steer(text)
-  const rm = asReactionManager(p)
-  if (rm === undefined) {
-    // No id-based retraction: a queued-then-swapped pair would strand the
-    // Get forever, so fall back to the single-shot acknowledgement.
-    asReactionAdder(p)?.addReaction(msg.replyCtx, SteerClaimedEmoji)
-    return true
-  }
-  const record: PendingSteerReaction = { platform: p, replyCtx: msg.replyCtx, reactionID: '' }
-  state.pendingSteerReactions.set(steerMessageID, record)
-  void rm.addReactionWithID(msg.replyCtx, SteerPickupEmoji).then((reactionID) => {
-    // The claim may already have settled by now: the write lands on the
-    // (then-settled) record object and retracts nothing.
-    record.reactionID = reactionID
-  })
+  state.pendingSteerReactions.set(steerMessageID, { platform: p, replyCtx: msg.replyCtx })
+  asReactionAdder(p)?.addReaction(msg.replyCtx, SteerPickupEmoji)
   return true
 }
