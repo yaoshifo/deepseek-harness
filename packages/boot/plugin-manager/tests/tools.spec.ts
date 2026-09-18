@@ -141,7 +141,7 @@ it('does not apply a grant when the call was cancelled before dispatch', async (
   const controller = new AbortController()
   vi.spyOn(ctx.approval, 'request').mockImplementation(async () => {
     controller.abort()
-    return 'allowed-once'
+    return { outcome: 'allowed-once' }
   })
   expect((await call({ action: 'install_bundle', target: 'bundle' }, activeAgent(), controller.signal)).isError).toBe(true)
   expect(manager.installBundle).not.toHaveBeenCalled()

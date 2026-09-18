@@ -789,7 +789,7 @@ describe('WorkspaceBrowser', () => {
     mount({
       useSessions: hook(sessionState(
         [summary('bridge', 1, { cwd: '/Users/hm/workspace/deepseek-harness' })],
-        { current: sid('bridge') },
+        { main: sid('bridge') },
       )),
       useWorkspaces: hook(workspaceState([workspace('alpha', [])])),
     })
