@@ -93,6 +93,7 @@ async function stage(pgrepStuck: boolean, psDaemon: boolean, sessionStore = 'fei
     FB_SPEC_WS_OK: wsOk ? '1' : '0',
     FB_SPEC_RESPAWN: respawn ? '1' : '0',
     FB_SPEC_LIST_COUNT: join(root, 'list-count'),
+    FB_SPEC_PNPM_CALLS: join(root, 'pnpm-calls'),
     FB_SPEC_LABEL: label,
     // Keep the suite fast: the stability re-check runs with a zero window.
     FB_RELOAD_STABILITY_SECS: '0',
@@ -114,9 +115,9 @@ async function stage(pgrepStuck: boolean, psDaemon: boolean, sessionStore = 'fei
   return { root, callsPath, plistPath, env, kinds }
 }
 
-async function runScript(env: NodeJS.ProcessEnv): Promise<{ code: number; stderr: string }> {
+async function runScript(env: NodeJS.ProcessEnv, args: readonly string[] = ['--skip-build']): Promise<{ code: number; stderr: string }> {
   try {
-    await run('sh', [scriptPath, '--skip-build'], { env })
+    await run('sh', [scriptPath, ...args], { env })
     return { code: 0, stderr: '' }
   } catch (error) {
     const e = error as { code?: number; stderr?: string }
@@ -394,6 +395,15 @@ async function stageLinux(
     'esac',
     'exit 0',
   ].join('\n'), { mode: 0o755 })
+  // Same pnpm stub as the macOS staging: record the build invocation and emit
+  // the artifact the build-reuse check looks for (the build step itself is
+  // platform-independent, so this staging covers it on both platforms).
+  await writeFile(join(bin, 'pnpm'), [
+    '#!/bin/sh',
+    'echo "$*" >> "$FB_SPEC_PNPM_CALLS"',
+    'if [ "x$FB_SPEC_FORK" != x ]; then mkdir -p "$FB_SPEC_FORK/apps/cli/lib" && : > "$FB_SPEC_FORK/apps/cli/lib/bin.js"; fi',
+    'exit 0',
+  ].join('\n'), { mode: 0o755 })
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -407,6 +417,7 @@ async function stageLinux(
     FB_SPEC_JOURNAL_LINE: journalLine,
     FB_SPEC_RESPAWN: respawn ? '1' : '0',
     FB_SPEC_SHOW_COUNT: join(root, 'show-count'),
+    FB_SPEC_PNPM_CALLS: join(root, 'pnpm-calls'),
     // Keep the suite fast: the stability re-check runs with a zero window.
     FB_RELOAD_STABILITY_SECS: '0',
     FB_SPEC_ANCESTOR: psDaemon
@@ -422,6 +433,13 @@ async function stageLinux(
       .then(s => s.split('\n').filter(Boolean))
       .catch(() => [] as string[])
   return { env, calls }
+}
+
+/** Build invocations recorded by the staged `pnpm` stub, in call order. */
+async function pnpmCalls(s: { env: NodeJS.ProcessEnv }): Promise<string[]> {
+  return readFile(s.env.FB_SPEC_PNPM_CALLS ?? '', 'utf8')
+    .then(text => text.split('\n').filter(Boolean))
+    .catch(() => [] as string[])
 }
 
 describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('reload.sh on Linux/systemd', () => {
@@ -441,6 +459,49 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
       '--user show feishu-bridge -p MainPID --value',
     ])
   }, 10000)
+
+  it('reuses the last build when no tracked source changed', async () => {
+    const s = await stageLinux()
+    const fork = await stageForkDir('git')
+    const env = { ...s.env, FORK_DIR: fork, FB_SPEC_FORK: fork }
+    expect((await runScript(env, [])).code).toBe(0)
+    expect(await pnpmCalls(s)).toEqual(['run build:lib'])
+    const second = await runScript(env, [])
+    expect(second.code).toBe(0)
+    expect(await pnpmCalls(s)).toEqual(['run build:lib'])
+  }, 20000)
+
+  it('ignores untracked scratch files when deciding to reuse the build', async () => {
+    const s = await stageLinux()
+    const fork = await stageForkDir('git')
+    const env = { ...s.env, FORK_DIR: fork, FB_SPEC_FORK: fork }
+    expect((await runScript(env, [])).code).toBe(0)
+    await writeFile(join(fork, 'scratch.ts'), 'draft\n')
+    expect((await runScript(env, [])).code).toBe(0)
+    expect(await pnpmCalls(s)).toEqual(['run build:lib'])
+  }, 20000)
+
+  it('rebuilds once the tracked tree moves', async () => {
+    const s = await stageLinux()
+    const fork = await stageForkDir('git')
+    const env = { ...s.env, FORK_DIR: fork, FB_SPEC_FORK: fork }
+    expect((await runScript(env, [])).code).toBe(0)
+    await run('git', [
+      '-C', fork, '-c', 'user.email=spec@example.com', '-c', 'user.name=spec',
+      'commit', '--allow-empty', '-m', 'next',
+    ])
+    expect((await runScript(env, [])).code).toBe(0)
+    expect(await pnpmCalls(s)).toEqual(['run build:lib', 'run build:lib'])
+  }, 20000)
+
+  it('rebuilds an unchanged tree on --force-build', async () => {
+    const s = await stageLinux()
+    const fork = await stageForkDir('git')
+    const env = { ...s.env, FORK_DIR: fork, FB_SPEC_FORK: fork }
+    expect((await runScript(env, [])).code).toBe(0)
+    expect((await runScript(env, ['--force-build'])).code).toBe(0)
+    expect(await pnpmCalls(s)).toEqual(['run build:lib', 'run build:lib'])
+  }, 20000)
 
   it('fails when the daemon respawns within the stability window (the 2026-08-29 false success)', async () => {
     const s = await stageLinux({ respawn: true })

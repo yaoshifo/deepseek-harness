@@ -9,6 +9,14 @@
 # broken file aborts the preflight below before anything is stopped.
 #
 #   --skip-build   restart only (build already done elsewhere)
+#   --force-build  rebuild even when the tracked tree is unchanged
+#
+# The build is reused when the tracked tree — HEAD plus the porcelain of
+# tracked modifications, untracked scratch files excluded — is unchanged since
+# the build this deployment last restarted on. Profile yml edits are the
+# common reload and need no new artifacts, so they skip the minutes-long
+# bundling of every package; anything the rebuild would pick up (a pull, an
+# edit, a checkout) changes that state and rebuilds as before.
 #
 # Refuses to run from inside the daemon (e.g. an agent session it hosts): the
 # restart would kill the script's own process tree before the restart lands.
@@ -39,10 +47,12 @@ PROFILE=${PROFILE:-feishu-bridge}
 UNIT=${UNIT:-feishu-bridge}
 
 BUILD=1
+FORCE=0
 case "${1:-}" in
   "") ;;
   --skip-build) BUILD=0 ;;
-  *) echo "usage: $0 [--skip-build]" >&2; exit 1 ;;
+  --force-build) FORCE=1 ;;
+  *) echo "usage: $0 [--skip-build|--force-build]" >&2; exit 1 ;;
 esac
 
 OS=$(uname)
@@ -117,7 +127,25 @@ print_rollback_hint() {
   echo "  $PKG_DIR/reload.sh --skip-build   # restarts and re-probes WS readiness" >&2
 }
 
-if [ "$BUILD" -eq 1 ]; then
+# Tracked-tree identity of the build this deployment is running: HEAD plus the
+# porcelain of tracked modifications. Untracked files are excluded on purpose —
+# a scratch draft beside the tree must not force a full rebuild.
+tracked_tree_state() {
+  (cd "$FORK_DIR" && { git rev-parse HEAD && git status --porcelain --untracked-files=no | git hash-object --stdin; })
+}
+BUILD_STAMP="$LOG_DIR/feishu-bridge-build-stamp"
+# Empty outside a git checkout: reuse then never applies and every run builds.
+STATE=$(tracked_tree_state 2>/dev/null || true)
+
+NEED_BUILD=$BUILD
+if [ "$BUILD" -eq 1 ] && [ "$FORCE" -eq 0 ] && [ -n "$STATE" ] \
+  && [ -f "$BUILD_STAMP" ] && [ "$(cat "$BUILD_STAMP" 2>/dev/null)" = "$STATE" ] \
+  && [ -f "$FORK_DIR/apps/cli/lib/bin.js" ]; then
+  NEED_BUILD=0
+  echo "==> reusing the last build: the tracked tree is unchanged since it was built (--force-build rebuilds)"
+fi
+
+if [ "$NEED_BUILD" -eq 1 ]; then
   echo "==> building host+client face libs in $FORK_DIR"
   # CI=true: pnpm's pre-run deps check auto-installs when the lockfile moved
   # (e.g. after a pull); without it the modules-dir purge prompt aborts in
@@ -300,4 +328,10 @@ else
     exit 1
   fi
   echo "==> ok: daemon $UNIT restarted on latest build, Feishu WS ready"
+fi
+
+# Only a successful restart records the state: every failure above exited
+# first, so a broken or unprobed build can never be reused.
+if [ -n "$STATE" ]; then
+  printf '%s\n' "$STATE" > "$BUILD_STAMP" 2>/dev/null || true
 fi
