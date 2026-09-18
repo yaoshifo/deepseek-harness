@@ -13,8 +13,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.ts'
-import { defaultPlanShadowPrompt, launchPlanShadow } from '../../src/engine/plan-shadow.ts'
+import { Engine, InteractiveState, type QueuedMessage } from '../../src/engine/engine.ts'
+import { closePlanShadowOnTurnEnd, defaultPlanShadowPrompt, launchPlanShadow } from '../../src/engine/plan-shadow.ts'
 import { spawnPlaceholderName } from '../../src/engine/groupname.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import {
@@ -23,6 +23,7 @@ import {
   createStubPlatform,
   createWorkDirAgent,
   newControllableSession,
+  newQueuingSession,
 } from '../stubs/engine-stubs.ts'
 import { ForkSessionPrefix, type Agent, type AskDecision, type GroupSpawnOptions, type Message } from '../../src/core/types.ts'
 
@@ -920,6 +921,203 @@ describe('PlanShadowPeerInput', () => {
   })
 })
 
+describe('PlanShadowTurnEnd', () => {
+  it('the review group\'s own finished turn closes it, leaving the origin\'s card approvable', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const decision = parkPlan(e, p, originKey)
+    await settleLaunch()
+    expect(p.count).toBe(1)
+    const shadowKey = 'test:role-1'
+    // Attached after the spawn: this ledger holds only what the review turn's
+    // own end does.
+    const teardown = withCloseRecorder(p)
+
+    // The review concluded without submitting another plan: a real turn whose
+    // result event arrives after the prompt.
+    const reviewSession = newQueuingSession('shadow-review')
+    const shadowState = armState(e, p, shadowKey)
+    shadowState.agentSession = reviewSession
+    reviewSession.channel.push({ type: 'result', content: '原方案已是最优', done: true })
+    await e.processInteractiveEvents(
+      shadowState, e.sessions.getOrCreateActive(shadowKey), e.sessions, shadowKey, 'm1', undefined, shadowState.replyCtx,
+    )
+    await settleLaunch()
+
+    // The review concluded where it stood: greyed the /done way (the mark
+    // before the stop), and its session stopped.
+    expect(teardown.calls).toEqual([
+      `phase:${shadowKey}:discussing`,
+      `done:${shadowKey}`,
+      `phase:${shadowKey}:done`,
+    ])
+    expect(shadowState.userStopped).toBe(true)
+    expect(e.interactiveStates.has(shadowKey)).toBe(false)
+
+    // The origin is a different chat that decided nothing: untouched state,
+    // and its parked plan card still decides.
+    const originState = e.interactiveStates.get(originKey)
+    expect(originState?.userStopped).toBe(false)
+    expect(originState?.pendingAsk).toBeDefined()
+    e.routeAskResponse(p, msg({ sessionKey: originKey, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+  })
+
+  it('a settled pair is not closed by a turn end either', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const decision = parkPlan(e, p, originKey)
+    await settleLaunch()
+    const shadowKey = 'test:role-1'
+    // A ledger without the spawned-chat signals: this case pins the settled
+    // guard, not the done-mark one.
+    const teardown = withTeardownRecorder(p)
+
+    // The user acted in the origin: the pair is settled and the review group
+    // already closed by that settlement.
+    e.handleInbound(p, msg({ sessionKey: originKey, content: '先别推了' }))
+    await settleLaunch()
+    expect(section(e, shadowKey)['settled']).toBe(true)
+    teardown.calls.length = 0
+
+    // The user wakes the closed group and its review turn ends: the pair's
+    // decision is spent, so this turn end closes nothing.
+    const shadowState = armState(e, p, shadowKey)
+    closePlanShadowOnTurnEnd(e, p, shadowKey, { errored: false, background: false, queued: false })
+    await settleLaunch()
+
+    expect(teardown.calls).toEqual([])
+    expect(shadowState.userStopped).toBe(false)
+    await deny(e, p, originKey, decision)
+  })
+
+  it('an errored review turn closes nothing', async () => {
+    // A failed turn needs the user's eyes on the group, not a close.
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const decision = parkPlan(e, p, originKey)
+    await settleLaunch()
+    const shadowKey = 'test:role-1'
+    expect(section(e, shadowKey)['shadowOf']).toBe(originKey)
+    const teardown = withCloseRecorder(p)
+    const shadowState = armState(e, p, shadowKey)
+
+    closePlanShadowOnTurnEnd(e, p, shadowKey, { errored: true, background: false, queued: false })
+    await settleLaunch()
+
+    expect(teardown.calls).toEqual([])
+    expect(shadowState.userStopped).toBe(false)
+    await deny(e, p, originKey, decision)
+  })
+
+  it('a reader-woken background turn closes nothing', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const decision = parkPlan(e, p, originKey)
+    await settleLaunch()
+    const shadowKey = 'test:role-1'
+    expect(section(e, shadowKey)['shadowOf']).toBe(originKey)
+    const teardown = withCloseRecorder(p)
+    const shadowState = armState(e, p, shadowKey)
+
+    closePlanShadowOnTurnEnd(e, p, shadowKey, { errored: false, background: true, queued: false })
+    await settleLaunch()
+
+    expect(teardown.calls).toEqual([])
+    expect(shadowState.userStopped).toBe(false)
+    await deny(e, p, originKey, decision)
+  })
+
+  it('a turn that handed over to a queued message closes nothing, and the queue takes over', async () => {
+    const { e, p } = newShadowEngine()
+    // The merge window would only slow the takeover down; the case is about
+    // the queued turn, not about merging.
+    e.setDebounceInterval(0)
+    const originKey = 'feishu:oc_parent:ou_u'
+    const decision = parkPlan(e, p, originKey)
+    await settleLaunch()
+    const shadowKey = 'test:role-1'
+    expect(section(e, shadowKey)['shadowOf']).toBe(originKey)
+    const teardown = withCloseRecorder(p)
+
+    const reviewSession = newQueuingSession('shadow-review')
+    const shadowState = armState(e, p, shadowKey)
+    shadowState.agentSession = reviewSession
+    shadowState.pendingMessages = [queuedShadowMsg(p, shadowKey, '排队再说一句')]
+    reviewSession.channel.push({ type: 'result', content: '原方案已是最优', done: true })
+
+    const loop = e.processInteractiveEvents(
+      shadowState, e.sessions.getOrCreateActive(shadowKey), e.sessions, shadowKey, 'm1', undefined, shadowState.replyCtx,
+    )
+    // The queued message drained into a live turn — the group is still
+    // working, so this turn end closed nothing. Waiting for the queued prompt
+    // to reach the session also proves the drain ran, so the channel is free
+    // for the queued turn's own result.
+    await waitUntil(() => reviewSession.sendCalls.some(text => text.includes('排队再说一句')))
+    expect(teardown.calls.some(call => call.startsWith('done:'))).toBe(false)
+    expect(shadowState.userStopped).toBe(false)
+
+    // The queued turn's own end is a turn end like any other: the group closes.
+    reviewSession.channel.push({ type: 'result', content: '排队轮也完成', done: true })
+    await loop
+    expect(teardown.calls.slice(-2)).toEqual([`done:${shadowKey}`, `phase:${shadowKey}:done`])
+    await deny(e, p, originKey, decision)
+  })
+
+  it('a review group already carrying its terminal mark is left alone', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const decision = parkPlan(e, p, originKey)
+    await settleLaunch()
+    const shadowKey = 'test:role-1'
+    const teardown = withCloseRecorder(p)
+    const shadowState = armState(e, p, shadowKey)
+    // A `/done` by hand, or an earlier settlement, committed the mark; the
+    // user may have woken the greyed group since, and greying it again is
+    // exactly what the mark's freeze exists to prevent.
+    await e.markSpawnedChatDone(p, shadowKey)
+    const before = [...teardown.calls]
+
+    closePlanShadowOnTurnEnd(e, p, shadowKey, { errored: false, background: false, queued: false })
+    await settleLaunch()
+
+    expect(teardown.calls).toEqual(before)
+    expect(shadowState.userStopped).toBe(false)
+    await deny(e, p, originKey, decision)
+  })
+
+  it('a turn ending in a chat outside a pair closes nothing', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const decision = parkPlan(e, p, originKey)
+    await settleLaunch()
+    const teardown = withCloseRecorder(p)
+
+    // The pair's origin side: its record names the review group instead of
+    // being one, so it is never the chat this trigger closes.
+    const childKey = 'feishu:oc_child:ou_u'
+    const mainKey = 'feishu:oc_main:ou_u'
+    const absentKey = 'feishu:oc_absent:ou_u'
+    e.sessions.getOrCreateActive(childKey).setParentSessionKey(originKey)
+    for (const key of [childKey, mainKey]) {
+      e.sessions.getOrCreateActive(key)
+      armState(e, p, key)
+      closePlanShadowOnTurnEnd(e, p, key, { errored: false, background: false, queued: false })
+    }
+    closePlanShadowOnTurnEnd(e, p, originKey, { errored: false, background: false, queued: false })
+    // A chat with no session record at all cannot be in a pair either.
+    closePlanShadowOnTurnEnd(e, p, absentKey, { errored: false, background: false, queued: false })
+    await settleLaunch()
+
+    expect(teardown.calls).toEqual([])
+    for (const key of [childKey, mainKey, originKey]) {
+      expect(e.interactiveStates.get(key)?.userStopped).toBe(false)
+    }
+    expect(e.interactiveStates.get(originKey)?.pendingAsk).toBeDefined()
+    await deny(e, p, originKey, decision)
+  })
+})
+
 /** The teardown calls that landed on the review group (the origin paints its own plan-review phase). */
 function reviewGroupCalls(rec: { calls: string[] }): string[] {
   return rec.calls.filter(c => c.includes('test:role-1'))
@@ -966,6 +1164,34 @@ function withCloseRecorder(
     isSpawnedChatActive: (sessionKey: string) => state === 'live' && !isDone(sessionKey),
     isSpawnedChatDone: isDone,
   })
+}
+
+/** One queued message for a chat, shaped as the platform ingress queues it. */
+function queuedShadowMsg(p: SpawnerPlatform, sessionKey: string, content: string): QueuedMessage {
+  return {
+    platform: p,
+    replyCtx: 'ctx',
+    messageID: '',
+    content,
+    images: [],
+    files: [],
+    fromVoice: false,
+    isSpawnedGroup: false,
+    userID: 'ou_u',
+    userName: '',
+    msgPlatform: 'feishu',
+    msgSessionKey: sessionKey,
+    metadata: undefined,
+  }
+}
+
+/** Wait until `cond` holds; throws instead of hanging the case on a stalled turn. */
+async function waitUntil(cond: () => boolean): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    if (cond()) return
+    await new Promise((r) => { setTimeout(r, 5) })
+  }
+  throw new Error('condition never held')
 }
 
 /** Every button URL recorded across the platform's cards. */

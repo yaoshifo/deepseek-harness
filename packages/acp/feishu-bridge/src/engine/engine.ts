@@ -168,7 +168,7 @@ import { executeDeleteModeAction, renderDeleteModeCard, renderListCardSafe, rend
 import { runBangShell } from './shell-commands.ts'
 import { renderDirCardSafe } from './dir-card.ts'
 import { executeCardAction } from './cron-commands.ts'
-import { defaultPlanShadowPrompt, launchPlanShadow, settlePlanShadowPeer, settlePlanShadowPeerOnInput } from './plan-shadow.ts'
+import { closePlanShadowOnTurnEnd, defaultPlanShadowPrompt, launchPlanShadow, settlePlanShadowPeer, settlePlanShadowPeerOnInput } from './plan-shadow.ts'
 import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from './recall.ts'
 import { renderSubtaskPanelCard } from './subtask-panel.ts'
 import { maybeAutoResetSessionOnIdle } from './session-misc.ts'
@@ -4548,6 +4548,15 @@ export class Engine {
     const phasePlatform = state.platform ?? this.platforms[0]
     if (phasePlatform !== undefined) {
       await this.applyChatPhase(phasePlatform, sessionKey, errored ? 'attention' : this.chatBasePhase(phasePlatform, sessionKey))
+      // Held to this tail rather than the turn-end emit above: the review
+      // group's self-close runs closeChat → stopInteractiveSession, whose
+      // markStoppedSync degrades the preview — a terminal-card branch racing
+      // it would fall back to plain text or push its ✅ card into a group that
+      // is already closing. The phase paint above stays first, so a done group
+      // is never repainted.
+      closePlanShadowOnTurnEnd(this, phasePlatform, sessionKey, {
+        errored, background, queued: state.pendingMessages.length > 0,
+      })
     }
 
     // The turn's settled card and its trailing sends hold the chat tail

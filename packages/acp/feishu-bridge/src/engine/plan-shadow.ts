@@ -18,6 +18,12 @@
  * once; later messages, and a group woken after its close, settle nothing and
  * repeat nothing.
  *
+ * The third trigger face needs no action at all: a review group whose own turn
+ * reaches its end concluded its review without submitting another plan, so it
+ * closes itself on the spot rather than waiting for a user who has no reason to
+ * come back. The origin never closes that way — its record names the review
+ * group instead of being one.
+ *
  * A group the platform does not track (a main group, a p2p chat) owns no avatar
  * axis: it loses its parked card with its turn and is told without any close
  * claimed. Neither settlement touches a group's own child groups or worktree,
@@ -439,6 +445,51 @@ function isPlanCardApproval(e: Engine, msg: Message): boolean {
 export function settlePlanShadowPeerOnInput(e: Engine, p: Platform, msg: Message): void {
   if (!isUserAction(msg) || isPlanCardApproval(e, msg)) return
   settlePlanShadowPeer(e, p, { sessionKey: msg.sessionKey, trigger: 'input' })
+}
+
+/**
+ * Close the review group of a pair when its own turn reached its end, and close
+ * nothing else: the review concluded without submitting another plan, so the
+ * group closes itself rather than lingering until the user tidies it up. Silent
+ * — a review that simply finished has nothing to explain — and detached
+ * ({@link fireAndForget}), because the close belongs to the settled turn, not
+ * to the event loop reporting it. A plan card parks its turn, so "the turn
+ * reached its end" and "no plan card was submitted" are the same condition.
+ *
+ * @param e - The engine owning the chat's session.
+ * @param p - The platform owning the chat's avatar axis.
+ * @param sessionKey - Session key of the chat whose turn ended.
+ * @param turn - How that turn ended: `errored`, a reader-woken `background`
+ *   turn, and a turn a `queued` message takes over from all leave the group
+ *   alone.
+ */
+export function closePlanShadowOnTurnEnd(
+  e: Engine, p: Platform, sessionKey: string,
+  turn: { errored: boolean; background: boolean; queued: boolean },
+): void {
+  // Only a turn that reached its end with nothing behind it concludes the
+  // review: an errored turn needs the user's eyes on the group, a reader-woken
+  // turn is background work reporting in, and a queued message already owns the
+  // group's next turn.
+  if (turn.errored || turn.background || turn.queued) return
+  const session = e.sessions.findActive(sessionKey)
+  if (session === undefined) return
+  const section = sectionOf(session)
+  // Only a shadow record names an origin — the origin record names the review
+  // group instead — so this trigger can never close the side whose parked plan
+  // card the user is still deciding on.
+  if (section.shadowOf === undefined) return
+  // The pair is spent: its settlement closed this group when it landed.
+  if (section.settled === true) return
+  // Shared with closeShadowPeer: a group already carrying its terminal mark was
+  // closed — a `/done` by hand included — and may have been woken since. It
+  // also bounds this trigger to one close per group.
+  if (asSpawnedChatActiveChecker(p)?.isSpawnedChatDone(sessionKey) === true) return
+  // Deliberately claims nothing. A `settled` write here would send the user's
+  // comeback — waking the closed group, planning again, having that plan
+  // approved — into claimPeer's settled guard, leaving the origin group open
+  // with a card that can never be honoured.
+  fireAndForget('unplanned review close failed', sessionKey, () => closeChat(e, p, sessionKey))
 }
 
 /**
