@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
-import { defaultPlanShadowPrompt } from '../../src/engine/plan-shadow.ts'
+import { defaultPlanShadowPrompt, launchPlanShadow } from '../../src/engine/plan-shadow.ts'
 import { spawnPlaceholderName } from '../../src/engine/groupname.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import {
@@ -259,6 +259,58 @@ describe('PlanShadowSpawn', () => {
     await expect(decision).resolves.toEqual({ outcome: 'rejected' })
   })
 
+  it('a launch request without plan text spawns nothing', async () => {
+    // The exported entry point is the public seam: a caller that omits the
+    // plan — abort and invalidate do — must not reach the group spawner.
+    const { e, p } = newShadowEngine()
+    launchPlanShadow(e, p, { sessionKey: 'feishu:oc_parent:ou_u', replyCtx: 'ctx' })
+    await settleLaunch()
+
+    expect(p.count).toBe(0)
+  })
+
+  it('a launch for a chat with no session record spawns nothing', async () => {
+    const { e, p } = newShadowEngine()
+    launchPlanShadow(e, p, { sessionKey: 'feishu:oc_unknown:ou_u', replyCtx: 'ctx', plan: '# P' })
+    await settleLaunch()
+
+    expect(p.count).toBe(0)
+  })
+
+  it('a chat whose session never started spawns nothing', async () => {
+    const { e, p } = newShadowEngine()
+    const key = 'feishu:oc_parent:ou_u'
+    // No agent session id: there is no transcript to fork the review from.
+    const s = e.sessions.getOrCreateActive(key)
+    s.setSpawnUserID('ou_u')
+    armState(e, p, key)
+
+    const decision = e.askUser(key, { kind: 'plan-review', heading: '# P', plan: '# P\n1. step one' })
+    await parked(e, key)
+    await settleLaunch()
+
+    expect(p.count).toBe(0)
+    await deny(e, p, key, decision)
+  })
+
+  it('a chat that is itself a fork spawns nothing', async () => {
+    // A `/fk` group — and the shadow group before its link is written —
+    // carries a fork sentinel id, and forking a fork is not a second opinion.
+    const { e, p } = newShadowEngine()
+    const key = 'feishu:oc_forked:ou_u'
+    const s = e.sessions.getOrCreateActive(key)
+    s.setAgentSessionID(`${ForkSessionPrefix}agent-sid-1`, 'dsh')
+    s.setSpawnUserID('ou_u')
+    armState(e, p, key)
+
+    const decision = e.askUser(key, { kind: 'plan-review', heading: '# P', plan: '# P\n1. step one' })
+    await parked(e, key)
+    await settleLaunch()
+
+    expect(p.count).toBe(0)
+    await deny(e, p, key, decision)
+  })
+
   it('a failed group spawn leaves the pair unlinked and does not double-report', async () => {
     const base = createStubChatroomSpawner('feishu')
     const p = Object.assign(base, {
@@ -376,6 +428,27 @@ describe('PlanShadowAbort', () => {
     expect(p.getSent().join('\n')).not.toContain(e.i18n.t(Msg.PlanShadowAborted))
   })
 
+  it('a throwing reply-context reconstruction skips the void notice', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    p.reconstructReplyCtx = async (_sessionKey: string): Promise<string> => { throw new Error('ctx lookup down') }
+    const teardown = withTeardownRecorder(p)
+    const e = new Engine('test', recordingAgent(), [p], '', 'en')
+    e.setPlanShadow(true, reviewPrompt)
+    const key = 'feishu:oc_parent:ou_u'
+    const decision = parkPlan(e, p, key)
+    await settleLaunch()
+    e.interactiveStates.delete('test:role-1')
+
+    e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+    await settleLaunch()
+
+    // A reconstruction that throws degrades the same way a missing one does:
+    // the group settles, only the notice has nowhere to land.
+    expect(teardown.calls).toContain('done:test:role-1')
+    expect(p.getSent().join('\n')).not.toContain(e.i18n.t(Msg.PlanShadowAborted))
+  })
+
   it('a failing dim does not block the shadow teardown', async () => {
     const base = createStubChatroomSpawner('feishu')
     const p = Object.assign(base, {
@@ -464,6 +537,36 @@ describe('PlanShadowOriginInvalidation', () => {
     expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
   })
 
+  it('an origin parked on another ask is told, not closed', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const teardown = withCloseRecorder(p)
+    await deny(e, p, originKey, parkPlan(e, p, originKey))
+    await settleLaunch()
+
+    // The origin is idle but for a question of its own: a parked ask is work
+    // in flight, and its turn is parked on it.
+    const originState = armState(e, p, originKey)
+    void e.askUser(originKey, {
+      kind: 'questions',
+      questions: [{ question: '继续吗？', header: '问', options: [], multiSelect: false }],
+    })
+    await parked(e, originKey)
+
+    const shadowKey = 'test:role-1'
+    const shadowDecision = parkPlan(e, p, shadowKey, 'shadow-native')
+    await parked(e, shadowKey)
+    e.routeAskResponse(p, msg({ sessionKey: shadowKey, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(shadowDecision).resolves.toEqual({ outcome: 'allowed-once' })
+    await settleLaunch()
+
+    expect(teardown.calls).not.toContain(`done:${originKey}`)
+    expect(originState.userStopped).toBe(false)
+    expect(originState.pendingAsk).toBeDefined()
+    expect(cardTexts(p)).toContain(e.i18n.t(Msg.PlanShadowOriginSuperseded))
+    expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
+  })
+
   it('an origin the platform does not track is voided without a close', async () => {
     const { e, p } = newShadowEngine()
     const originKey = 'feishu:oc_parent:ou_u'
@@ -519,6 +622,33 @@ describe('PlanShadowOriginInvalidation', () => {
     expect(teardown.calls).not.toContain(`phase:${originKey}:done`)
     expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginSuperseded))
     expect(cardTexts(p)).not.toContain(e.i18n.t(Msg.PlanShadowOriginClosed))
+  })
+
+  it('a settlement notice that cannot be sent does not undo the close', async () => {
+    const { e, p } = newShadowEngine()
+    const originKey = 'feishu:oc_parent:ou_u'
+    const teardown = withCloseRecorder(p)
+    await deny(e, p, originKey, parkPlan(e, p, originKey))
+    await settleLaunch()
+
+    const originState = armState(e, p, originKey)
+    const originSecond = e.askUser(originKey, { kind: 'plan-review', heading: '# P2', plan: '# P2\norigin second' })
+    await parked(e, originKey)
+    const shadowKey = 'test:role-1'
+    const shadowDecision = parkPlan(e, p, shadowKey, 'shadow-native')
+    await parked(e, shadowKey)
+    // The notice's jump link cannot be built: the failure stays inside the
+    // fire-and-forget settlement, which must leave the close it already
+    // committed in place and reach nobody's error handler.
+    Object.assign(p, { chatJumpURL: (): string => { throw new Error('no link') } })
+
+    e.routeAskResponse(p, msg({ sessionKey: shadowKey, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(shadowDecision).resolves.toEqual({ outcome: 'allowed-once' })
+    await settleLaunch()
+
+    await expect(originSecond).resolves.toEqual({ outcome: 'cancelled' })
+    expect(teardown.calls).toContain(`done:${originKey}`)
+    expect(originState.userStopped).toBe(true)
   })
 
   it('closing the origin leaves its own child groups alone', async () => {

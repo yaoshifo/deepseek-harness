@@ -78,31 +78,33 @@ function markShadow(sessions: SessionManager, sessionKey: string, patch: PlanSha
 }
 
 /**
- * Whether a plan card in this session may spawn a shadow: the feature must be
- * on, the plan must carry text, the session must be forkable (a started,
- * non-fork native id), attributed to a real user (the shadow group's only
- * member), not itself a shadow, and not one that already spawned one.
+ * The session a shadow review may be launched for, or undefined: the feature
+ * must be on, the plan must carry text, the platform must be able to create
+ * groups, the session must exist (a started, non-fork native id), it must be
+ * attributed to a real user (the shadow group's only member), it must not be a
+ * shadow itself, and it must not have launched one already.
  *
  * @param e - The engine holding the feature switch and session records.
  * @param p - The platform that would create the group.
  * @param req - The parked plan card.
- * @returns True when the launch should proceed.
+ * @returns The origin session when the launch should proceed.
  */
-function canLaunch(e: Engine, p: Platform, req: PlanShadowRequest): boolean {
-  if (!e.planShadowEnabled || (req.plan ?? '').trim() === '') return false
-  if (asGroupSpawner(p) === undefined) return false
+function launchableSession(e: Engine, p: Platform, req: PlanShadowRequest): Session | undefined {
+  if (!e.planShadowEnabled || (req.plan ?? '').trim() === '') return undefined
+  if (asGroupSpawner(p) === undefined) return undefined
   const session = e.sessions.findActive(req.sessionKey)
-  if (session === undefined) return false
+  if (session === undefined) return undefined
   const section = sectionOf(session)
-  if (section.shadowOf !== undefined || section.shadowSessionKey !== undefined) return false
+  if (section.shadowOf !== undefined || section.shadowSessionKey !== undefined) return undefined
   // The shadow group's only member is this user: an unattended (cron) turn
   // carries a synthetic sender, and a group invited around it would be one
   // nobody can open, let alone approve.
   const userID = session.getSpawnUserID().trim()
-  if (userID === '' || userID === cronSenderUserID) return false
+  if (userID === '' || userID === cronSenderUserID) return undefined
   const nativeID = session.getAgentSessionID()
-  if (nativeID === '' || nativeID === ContinueSession) return false
-  return !nativeID.startsWith(ForkSessionPrefix) && !nativeID.startsWith(ForkAtSessionPrefix)
+  if (nativeID === '' || nativeID === ContinueSession) return undefined
+  if (nativeID.startsWith(ForkSessionPrefix) || nativeID.startsWith(ForkAtSessionPrefix)) return undefined
+  return session
 }
 
 /**
@@ -132,16 +134,16 @@ function chatNameOf(sessions: SessionManager, session: Session, sessionKey: stri
  * @param e - The engine owning session records.
  * @param p - The platform carrying the request.
  * @param req - The parked plan card.
+ * @param session - The origin chat's session record, already resolved by the launch guard.
  * @returns The message to hand `spawnGroupCommon`.
  */
-function originMessage(e: Engine, p: Platform, req: PlanShadowRequest): Message {
-  const session = e.sessions.findActive(req.sessionKey)
-  const name = session === undefined ? '' : chatNameOf(e.sessions, session, req.sessionKey)
+function originMessage(e: Engine, p: Platform, req: PlanShadowRequest, session: Session): Message {
+  const name = chatNameOf(e.sessions, session, req.sessionKey)
   return {
     sessionKey: req.sessionKey,
     platform: p.name(),
     messageID: '',
-    userID: session?.getSpawnUserID().trim() ?? '',
+    userID: session.getSpawnUserID().trim(),
     userName: '',
     // The breadcrumb is the one place a raw key still beats an empty label.
     chatName: name !== '' ? name : req.sessionKey,
@@ -163,6 +165,21 @@ function originMessage(e: Engine, p: Platform, req: PlanShadowRequest): Message 
 }
 
 /**
+ * Run one settlement step detached, logging its failure and nothing else. Every
+ * entry point below is reached from a parked ask, whose approval window must
+ * not be blocked by — or die with — work that runs after the card landed.
+ *
+ * @param label - What failed, for the log line.
+ * @param sessionKey - The chat the step belongs to.
+ * @param run - The step's body.
+ */
+function fireAndForget(label: string, sessionKey: string, run: () => Promise<void>): void {
+  void run().catch((error: unknown) => {
+    console.warn(`plan-shadow: ${label} (${sessionKey}): ${String(error)}`)
+  })
+}
+
+/**
  * Launch the shadow review for a parked plan card: fire-and-forget, so the
  * ask's park and the user's approval window are never blocked by group
  * creation. Every skip is silent — the guards describe states where no shadow
@@ -173,15 +190,12 @@ function originMessage(e: Engine, p: Platform, req: PlanShadowRequest): Message 
  * @param req - The parked plan card.
  */
 export function launchPlanShadow(e: Engine, p: Platform, req: PlanShadowRequest): void {
-  void runLaunch(e, p, req).catch((error: unknown) => {
-    console.warn(`plan-shadow: launch failed (${req.sessionKey}): ${String(error)}`)
-  })
+  fireAndForget('launch failed', req.sessionKey, () => runLaunch(e, p, req))
 }
 
 /** The launch body behind {@link launchPlanShadow}. */
 async function runLaunch(e: Engine, p: Platform, req: PlanShadowRequest): Promise<void> {
-  if (!canLaunch(e, p, req)) return
-  const session = e.sessions.findActive(req.sessionKey)
+  const session = launchableSession(e, p, req)
   if (session === undefined) return
   const nativeID = session.getAgentSessionID()
   const name = chatNameOf(e.sessions, session, req.sessionKey)
@@ -191,7 +205,7 @@ async function runLaunch(e: Engine, p: Platform, req: PlanShadowRequest): Promis
     ? spawnPlaceholderName(e.name, true)
     : truncateGroupName(`${name}${e.i18n.t(Msg.PlanShadowNameSuffix)}`)
   const child = await spawnGroupCommon(
-    e, p, originMessage(e, p, req),
+    e, p, originMessage(e, p, req, session),
     groupName,
     e.planShadowPrompt,
     {
@@ -227,9 +241,7 @@ async function runLaunch(e: Engine, p: Platform, req: PlanShadowRequest): Promis
  * @param req - The origin chat's key and reply context.
  */
 export function abortPlanShadow(e: Engine, p: Platform, req: PlanShadowRequest): void {
-  void runAbort(e, p, req).catch((error: unknown) => {
-    console.warn(`plan-shadow: abort failed (${req.sessionKey}): ${String(error)}`)
-  })
+  fireAndForget('abort failed', req.sessionKey, () => runAbort(e, p, req))
 }
 
 /** The abort body behind {@link abortPlanShadow}. */
@@ -253,9 +265,7 @@ async function runAbort(e: Engine, p: Platform, req: PlanShadowRequest): Promise
  * @param req - The SHADOW chat's key and reply context.
  */
 export function invalidateOriginPlan(e: Engine, p: Platform, req: PlanShadowRequest): void {
-  void runInvalidate(e, p, req).catch((error: unknown) => {
-    console.warn(`plan-shadow: invalidate failed (${req.sessionKey}): ${String(error)}`)
-  })
+  fireAndForget('invalidate failed', req.sessionKey, () => runInvalidate(e, p, req))
 }
 
 /** The invalidate body behind {@link invalidateOriginPlan}. */
