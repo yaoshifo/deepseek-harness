@@ -35,7 +35,7 @@ Status: implemented
 - 「后台启动 + 同回合领取」模式定稿的卡上根本不再有后台提示：结算前对账在终态渲染之前丢掉泄漏计数，凡渲染卡面处提示都以注册表的活 job 为准（含运行中的卡），reader 的 idle 对账则继续清掉它再也无法佐证的计数，让 reader 在一个 idle tick（约 60 秒）内解除武装，而不是拖满 30 分钟宽限。中途结算的 job 仍会保留计数（其 `finishedAt` 晚于结算锚点），但已不可能再作为「在跑任务」渲染到定稿卡上。
 - 终态卡在任何一次渲染里都显示真实定稿时刻；加上重复卡守卫后它根本不会再在群里出现一次，迟到的卡无法再冒充刚发生的完成。
 - 慢任务与在途通知保留全部现有保护（2026-09-16 oc_3c16b 语义不变）。
-- 代价：计数挂起期间每个 idle tick 一次注册表 `list`（内存过滤）。
+- 代价：每次提示写入一次内存内注册表 `list`（回合起步、通知消费、`run_in_background` 调用的结果、后台回合结算、结算回合），外加计数挂起期间每个 idle tick 一次。
 - 漂移警报：两个探针锚定 `JobSnapshot.ownerSession`/`status`/`reported`/`finishedAt`；jobs 包改动任一字段形状都会让 adapter-projection 的过滤用例大声失败。
 - 旧的「盲等宽限」测试重定向到在途通知语义（无 job 的 stub 默认值在对账语义下读作泄漏）；对账场景有独立测试，锚定探针的用例归 [finishedAt 锚定 note](2026-09-17-feishu-bridge-bg-reconcile-finished-at-anchor.zh.md) 所有。
 

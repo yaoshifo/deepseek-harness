@@ -2975,7 +2975,7 @@ export class Engine {
         // completion card (Go unsolicitedSpilloverGrace).
         const fgAt = state.lastForegroundCompletionAt
         if (this.unsolicitedSpilloverGrace > 0 && fgAt > 0 && Date.now() - fgAt < this.unsolicitedSpilloverGrace) {
-          if (await this.relaySpilloverTurn(handle, state, session, sessions, event)) return
+          if (await this.relaySpilloverTurn(handle, state, session, sessions, interactiveKey, event)) return
           continue
         }
 
@@ -3011,6 +3011,7 @@ export class Engine {
    * forwarding the final text without any card (Go's reader spillover
    * branches). Tool calls are counted only; an error relays its message and
    * ends the reader.
+   * @param interactiveKey - Slot key whose native children the hint counts.
    * @returns True when the reader must exit (error or channel close).
    */
   private async relaySpilloverTurn(
@@ -3018,6 +3019,7 @@ export class Engine {
     state: InteractiveState,
     session: Session,
     sessions: SessionManager,
+    interactiveKey: string,
     firstEvent: Event,
   ): Promise<boolean> {
     const channel = state.agentSession?.events()
