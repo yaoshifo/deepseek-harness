@@ -36,6 +36,8 @@ const DESCRIPTION =
   + 'decision (it renders verbatim on the card; no code identifiers or file paths). locator = '
   + 'the `path:line` for the executing agent (never shown on the card). '
   + 'recommended = true on the ones worth handling (recommended options render pre-checked). '
+  + 'The `path:line` locator belongs in the locator field alone — never in the「发现的问题 / '
+  + '可优化点」收尾正文 or on the card. '
   + 'The tool returns immediately with a registration confirmation — end the turn normally and do not wait: '
   + 'the card ships after this turn\'s completion notice, and the user\'s selections arrive as new '
   + '[后续处理] messages, where a checked option is authorization to start that item.'

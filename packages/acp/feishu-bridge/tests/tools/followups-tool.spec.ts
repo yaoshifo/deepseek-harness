@@ -234,4 +234,16 @@ describe('feishu_bridge_followups registration', () => {
     test.dispose() // idempotent
     expect(test.ctx.tools.get('feishu_bridge_followups')).toBeUndefined()
   })
+
+  it('states the plain-language contract for the closing reply as well as the card', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:chat' }))
+    const description = test.ctx.tools.get('feishu_bridge_followups')?.description ?? ''
+    // The findings section renders on the card AND as the reply text, so the
+    // tool's own contract covers both: a requirement stated only in the
+    // resident conventions section leaves one model-facing contract silent.
+    expect(description).toContain('收尾正文')
+    // code locations stay in the locator field on every surface
+    expect(description).toContain('locator')
+  })
 })
