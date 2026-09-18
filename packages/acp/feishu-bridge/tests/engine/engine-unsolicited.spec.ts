@@ -601,6 +601,38 @@ describe('background task hint closed loop', () => {
     expect(p.hints.slice(mark).some(h => h.includes('background task'))).toBe(false)
   })
 
+  it('runs a background call without a writable card when the platform has none', async () => {
+    // createStubPlatform holds no message updater, so the turn's preview can
+    // never be written: the hint must be skipped, and the turn must still land.
+    const p = createStubPlatform()
+    const agentSession = newControllableSession('s1')
+    agentSession.send = async () => {
+      agentSession.sendCalls.push('sent')
+      agentSession.channel.push({
+        type: 'tool_use', toolName: 'bash', toolInput: '{}', toolID: 'c1', content: '', done: false,
+        toolBackground: true,
+      })
+      agentSession.channel.push({ type: 'tool_result', toolResult: 'job started', toolID: 'c1', content: '', done: false })
+      agentSession.channel.push({ type: 'result', content: 'deploy started', done: true })
+    }
+    const e = new Engine('test', createControllableAgent(agentSession), [p], '', 'en')
+    e.setDisplayConfig({ toolProgress: true })
+    const msg = {
+      sessionKey: KEY, platform: 'test', messageID: '', userID: '', userName: '',
+      chatName: '', chatType: '', content: 'deploy', originalContent: '', images: [], files: [],
+      extraContent: '', replyCtx: 'ctx', fromVoice: false, isSpawnedGroup: false,
+      isPermissionAction: false, isAskqCardAction: false, isCardAction: false,
+      parentMessageID: '', quotedText: '',
+    }
+    const session = e.sessions.getOrCreateActive(KEY)
+
+    e.receiveMessage(p, msg)
+    await waitFor(() => session.lastResult === 'deploy started')
+    // Without a writable card the reply still goes out as a plain message, and
+    // the hint write is skipped rather than attempted.
+    expect(p.getSent().some(m => m.includes('deploy started'))).toBe(true)
+  })
+
   it('consumes a late re-projection of the same notice exactly once', async () => {
     const p = createPreviewRecorderPlatform()
     const agentSession = newControllableSession('s1')
@@ -679,6 +711,20 @@ describe('background task hint closed loop', () => {
     } finally {
       infoSpy.mockRestore()
     }
+  })
+  it('drops a notice slot when no card is open to carry the hint', async () => {
+    const { e, agentSession, state } = armed()
+    e.setDisplayConfig({ toolProgress: true })
+    state.backgroundTasksPending = 1
+    // No turn has opened a card for this state: the hint write has no preview
+    // to reach, and the slot must drop all the same.
+    e.startUnsolicitedReader(e.sessions.getOrCreateActive(KEY), e.sessions, KEY)
+    agentSession.channel.push({ type: 'bg_task_notice', content: '', done: false, bgNoticeIDs: ['n1'] })
+    await waitFor(() => state.backgroundTasksPending === 0)
+    // The notice itself consumed the slot (not a reconcile later on): the
+    // hint write it triggers has no preview to reach.
+    expect(state.consumedNoticeIDs.has('n1')).toBe(true)
+    expect(state.preview).toBeUndefined()
   })
 })
 

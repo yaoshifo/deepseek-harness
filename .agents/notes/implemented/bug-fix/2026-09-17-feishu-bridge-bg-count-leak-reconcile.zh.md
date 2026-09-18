@@ -41,7 +41,7 @@ Status: implemented
 
 ## 测试
 
-- `tests/engine/engine-unsolicited.spec.ts`：泄漏计数在首个 idle tick 对账清零；重定向后的在途通知宽限边界；活 job 宽限测试不变。提示在每次写入都跟注册表走：通知吃掉槽位时渲染活 job 数；启动的 job 要等它自己的结果登记后才被点名；被唤醒的完成回合不会留下它已结束的 job 支撑不了的提示。
+- `tests/engine/engine-unsolicited.spec.ts`：泄漏计数在首个 idle tick 对账清零；重定向后的在途通知宽限边界；活 job 宽限测试不变。提示在每次写入都跟注册表走：通知吃掉槽位时渲染活 job 数；启动的 job 要等它自己的结果登记后才被点名；被唤醒的完成回合不会留下它已结束的 job 支撑不了的提示；没有卡面可写时跳过（无预览、平台无卡、会话已消失三种情形各有覆盖）。
 - `tests/engine/engine-events.spec.ts`：结算前对账——泄漏计数不渲染到定稿卡上，仍活着的 job 保留计数与提示。提示以注册表的活 job 切面为准：在途通知保留计数但不出提示行；活 job 的行显示活 job 数而非挂起计数；计数已不再跟踪的活 job 依旧有它的一行。
 - `tests/agent-dsh/adapter-projection.spec.ts`：`settledUnreportedBackgroundJobs` 的 owner/status/reported 过滤；注册表缺席 → 0。
 - `tests/streaming.spec.ts`：终态标题时间戳冻结——completed 卡后渲染保持定稿时刻、已结算挂起卡不再接受任何后渲染并保持结果时钟、非终态渲染时钟照常前进。

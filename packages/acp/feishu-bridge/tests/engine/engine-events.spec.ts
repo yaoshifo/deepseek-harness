@@ -2035,6 +2035,35 @@ describe('background count at settlement', () => {
     expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).toContain('💡 1 ')
   })
 
+  it('settles without a hint when the session died mid-turn', async () => {
+    // The session can be gone by the time the turn settles (the loop's error
+    // paths handle that): the card still renders, and the live probe falls back
+    // to zero jobs instead of the registry it can no longer reach.
+    const { e, updates } = newPreviewCaptureEngine()
+    const key = 'test:bg-no-session'
+    const sess = newControllableSession('bg-no-session')
+    const session = e.sessions.getOrCreateActive(key)
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = e.platforms[0]
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    sess.channel.push({
+      type: 'tool_use', toolName: 'bash', toolID: 't1',
+      toolInput: '{"command":"pnpm run build"}', toolBackground: true, content: '', done: false,
+    } as never)
+    const loop = e.processInteractiveEvents(state, session, e.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+    // The session dies while the turn is still streaming (the loop's own error
+    // paths handle that): the settlement must render without reaching it.
+    await new Promise((r) => { setTimeout(r, 10) })
+    state.agentSession = undefined
+    sess.channel.push({ type: 'result', content: 'done', done: true } as never)
+    await loop
+
+    expect(state.backgroundTasksPending).toBe(1)
+    expect(updates.at(-1) ?? '', `updates=${JSON.stringify(updates)}`).not.toContain('💡')
+  })
+
   it('clears a pre-turn zombie before the terminal render, anchored at the settling turn\'s start', async () => {
     // The notice-delivered zombie shape: the job settled in an earlier turn,
     // its notice was consumed by the turn it woke, and `reported` never
