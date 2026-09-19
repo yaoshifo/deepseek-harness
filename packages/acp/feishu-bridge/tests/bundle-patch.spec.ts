@@ -94,6 +94,9 @@ describe('bridge bundle patch', () => {
     // single-focus and explored serially).
     expect(text).toContain('broad merge or release review')
     expect(text).toContain('not by how few commands could skim it')
+    // Non-code deliverables get their own ground: a writing project must not
+    // be sent looking for a repository, an API, or a schema to change.
+    expect(text).toContain('the ground is the source material and a proposed outline, not the repository')
     // A rejection opens a discussion round backed by the rejection hold:
     // answer in the reply, end the turn, re-present only when the user asks
     // (2026-09-15 plan-rejection UX: questions were read as revision requests
@@ -180,7 +183,7 @@ describe('bridge bundle patch', () => {
     })
   })
 
-  it('keeps the section in lockstep with dsh-base modulo the four fork guidance deltas', () => {
+  it('keeps the section in lockstep with dsh-base modulo the five fork guidance deltas', () => {
     const base = asSectionText(composePlanModeSection([basePatchFile]).section)
     const bridge = asSectionText(composePlanModeSection([basePatchFile, bridgePatchFile]).section)
     // Guard the adaptation anchors: when upstream rewords any anchored
@@ -214,6 +217,13 @@ describe('bridge bundle patch', () => {
     adapted = adapted.replace(
       'detailed enough that another engineer can implement it without making design decisions.\n\nWhen ready, call exit_plan_mode with the complete plan markdown, starting with a # title.',
       'detailed enough that another engineer can implement the plan together with its details layer without making design decisions.\n\nWhen ready, call exit_plan_mode with the plan\'s two layers as its two arguments: the plain-language layer in the plan argument (starting with a # title) and the implementation-details layer in the details argument.',
+    )
+    // Fork delta 5: non-code deliverables get their own ground — a writing
+    // project must not be sent looking for a repository, an API, or a schema
+    // to change.
+    adapted = adapted.replace(
+      'ground the plan in the actual repository.',
+      'ground the plan in the actual repository. For non-code deliverables (papers, reports, decks), the ground is the source material and a proposed outline, not the repository, and the plan states structure and evidence in place of API, schema, and data-flow changes.',
     )
     expect(bridge).toBe(adapted)
   })

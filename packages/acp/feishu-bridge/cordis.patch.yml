@@ -133,16 +133,18 @@
       name: '@deepseek-ai/dsh-agent-instructions/suppression'
 
 # The plan-mode section: base stays upstream-verbatim (the fork's guidance
-# prose lives only here), and this composition's delta is four fork guidance
+# prose lives only here), and this composition's delta is five fork guidance
 # transformations — parallel exploration by default (dispatched through
 # feishu_bridge_subtask), parallel/serial group marking in the
 # decision-complete paragraph, the rejection discussion round (backed by the
 # rejection hold: after a rejected review, exit_plan_mode bounces until the
 # user speaks again — their next message or their answer to a question card),
-# and the two-layer exit call (plain language in the
-# plan argument, implementation details in the details argument). When the
-# upstream section evolves, re-adapt the text here (the lockstep spec in
-# tests/bundle-patch.spec.ts fails until the delta is exactly those four
+# the two-layer exit call (plain language in the
+# plan argument, implementation details in the details argument), and the
+# non-code ground (papers, reports, and decks plan from source material and a
+# proposed outline instead of the repository, the API, and the schema). When
+# the upstream section evolves, re-adapt the text here (the lockstep spec in
+# tests/bundle-patch.spec.ts fails until the delta is exactly those five
 # documented transformations). This replaces the per-profile cordis.patch.yml
 # overrides that drifted per machine (2026-08-21 shims, retired 2026-09-01);
 # the graft on dsh-base's own section and the three presets was reverted
@@ -152,7 +154,7 @@
     section: |
           You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
-          Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery. Exploration parallelizes by default: a repo-wide scan, cross-cutting audit, broad merge or release review, or a request naming several directions is several investigations — split it into 2–5 independent angles up front and dispatch them together as feishu_bridge_subtask spawns in one assistant message, each with a focused, self-contained brief that tells the child to read and report only, and fold their results into the plan. Keep exploration serial only for a single-focus question one or two reads can answer — judge focus by how many subsystems or directions the answer must cover, not by how few commands could skim it.
+          Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. For non-code deliverables (papers, reports, decks), the ground is the source material and a proposed outline, not the repository, and the plan states structure and evidence in place of API, schema, and data-flow changes. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery. Exploration parallelizes by default: a repo-wide scan, cross-cutting audit, broad merge or release review, or a request naming several directions is several investigations — split it into 2–5 independent angles up front and dispatch them together as feishu_bridge_subtask spawns in one assistant message, each with a focused, self-contained brief that tells the child to read and report only, and fold their results into the plan. Keep exploration serial only for a single-focus question one or two reads can answer — judge focus by how many subsystems or directions the answer must cover, not by how few commands could skim it.
 
           The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed only to keep the request shape stable. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
 
