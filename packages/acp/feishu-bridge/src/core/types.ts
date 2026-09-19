@@ -688,6 +688,35 @@ export function asAgentInterrupter(s: AgentSession): AgentInterrupter | undefine
 }
 
 /**
+ * Optional: agent session whose native plan mode can be switched while the
+ * session is live (the `/plan` command). The controller owns the logged
+ * state; this capability only forwards one selection.
+ */
+export interface PlanModeSwitcher {
+  /**
+   * Select whether plan mode is in force for this session.
+   * @param active - whether plan mode should be active from the next step.
+   * @returns the switch outcome — `committed` (logged now), `queued` (applies
+   *   from the next accepted in-turn pre-step), `cancelled` (an opposite
+   *   pending selection was cleared; the logged state already matches),
+   *   `noop` (already the requested state), or '' when no plan-mode service
+   *   is composed.
+   */
+  setPlanMode(active: boolean): string
+}
+
+/**
+ * Structural check for the {@link PlanModeSwitcher} capability.
+ *
+ * @param s - the agent session to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asPlanModeSwitcher(s: AgentSession): PlanModeSwitcher | undefined {
+  const candidate = s as Partial<PlanModeSwitcher>
+  return typeof candidate.setPlanMode === 'function' ? (candidate as PlanModeSwitcher) : undefined
+}
+
+/**
  * Optional: agent projects a session's recent conversation window (user and
  * assistant turns) from the native session log — live sessions from the
  * adapter's incrementally maintained window, cold ones from the persisted

@@ -2778,6 +2778,28 @@ export class DshAgentSession implements AgentSession {
     return this.channel
   }
 
+  /**
+   * PlanModeSwitcher: forward one plan-mode selection to the native
+   * controller, which owns the logged state and applies it at the next
+   * accepted in-turn pre-step (or immediately between turns).
+   *
+   * @param active - whether plan mode should be active from the next step.
+   * @returns the native outcome, '' when no plan-mode service is composed.
+   */
+  setPlanMode(active: boolean): string {
+    const planMode = this.ctx?.get('planMode') as
+      | { set(agent: unknown, active: boolean): string; get(agent: unknown): { pending?: boolean } }
+      | undefined
+    if (planMode === undefined) return ''
+    const outcome = planMode.set(this.handle.agent, active)
+    // A repeated selection while a switch is already queued reads `noop`
+    // natively — the requested state matches the pending selection — so
+    // report it as queued rather than letting the caller claim the mode is
+    // already in force.
+    if (outcome === 'noop' && planMode.get(this.handle.agent).pending === active) return 'queued'
+    return outcome
+  }
+
   /** Dispose the native agent; buffered events drain as channel-closed. */
   async close(): Promise<void> {
     if (this.disposed) return

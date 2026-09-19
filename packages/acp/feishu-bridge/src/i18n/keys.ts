@@ -471,6 +471,16 @@ export const ALL_MSG_KEYS = [
   'plan_shadow_origin_superseded',
   'plan_shadow_origin_superseded_on_input',
   'plan_shadow_origin_closed',
+  'plan',
+  'plan_usage',
+  'plan_entered',
+  'plan_entered_pending',
+  'plan_exited',
+  'plan_exited_pending',
+  'plan_already',
+  'plan_unavailable',
+  'plan_cold_hint',
+  'plan_cold_off',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -916,4 +926,14 @@ export const Msg = {
   PlanShadowOriginSuperseded: 'plan_shadow_origin_superseded',
   PlanShadowOriginSupersededOnInput: 'plan_shadow_origin_superseded_on_input',
   PlanShadowOriginClosed: 'plan_shadow_origin_closed',
+  Plan: 'plan',
+  PlanUsage: 'plan_usage',
+  PlanEntered: 'plan_entered',
+  PlanEnteredPending: 'plan_entered_pending',
+  PlanExited: 'plan_exited',
+  PlanExitedPending: 'plan_exited_pending',
+  PlanAlready: 'plan_already',
+  PlanUnavailable: 'plan_unavailable',
+  PlanColdHint: 'plan_cold_hint',
+  PlanColdOff: 'plan_cold_off',
 } as const

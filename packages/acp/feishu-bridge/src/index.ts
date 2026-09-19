@@ -58,6 +58,7 @@ import { registerFollowupsTool } from './tools/followups.ts'
 import { registerLarkTool, type LarkRoute } from './tools/lark.ts'
 import { registerProviderCommands } from './engine/provider-commands.ts'
 import { registerBtwCommands } from './engine/btw.ts'
+import { registerPlanCommands } from './engine/plan-commands.ts'
 import { renderSkillName } from './engine/plan-render.ts'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.ts'
 import type { StreamPreviewCfg } from './streaming.ts'
@@ -1407,6 +1408,8 @@ export function buildProjectAssembly(
   // M7-c: /provider family + shortcuts, /btw.
   ctx.effect(() => registerProviderCommands(engine))
   ctx.effect(() => registerBtwCommands(engine))
+  // TS 原生: /plan — 运行中切回/退出计划模式（无 Go 对应；Go 的 /mode 是一次性覆盖）。
+  ctx.effect(() => registerPlanCommands(engine))
   engine.setProviderSaveFunc((sessionKey, name) => {
     projectState.setProviderOverride(sessionKey, name)
     projectState.save()

@@ -91,6 +91,12 @@ export interface ControllableAgentSession extends AgentSession {
   settledUnreportedSince: number[]
   /** Optional Go AgentInterrupter capability for the Interrupt-preference specs. */
   cancelTurn?: () => void
+  /** PlanModeSwitcher capability: records the call and answers with {@link ControllableAgentSession.planModeResult}. */
+  setPlanMode(active: boolean): string
+  /** The `active` argument of every setPlanMode call. */
+  planModeCalls: boolean[]
+  /** Outcome the PlanModeSwitcher capability reports (native set() result shape). */
+  planModeResult: string
   eventsImpl(): EventChannel
 }
 
@@ -105,10 +111,16 @@ export function newControllableSession(id: string): ControllableAgentSession {
     steerCalls: [],
     jobs: [],
     settledUnreportedSince: [],
+    planModeCalls: [],
+    planModeResult: 'committed',
     send: async () => {},
     steer: (prompt: string) => {
       s.steerCalls.push(prompt)
       return `steer-${s.steerCalls.length}`
+    },
+    setPlanMode: (active: boolean) => {
+      s.planModeCalls.push(active)
+      return s.planModeResult
     },
     eventsImpl: () => channel,
     events: () => channel,

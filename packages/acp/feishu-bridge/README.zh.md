@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-用一个长驻 dsh 进程运行飞书群聊 bot：每个配置的 project 得到一个 engine 加一个飞书长连接平台，群聊驱动真实 agent 会话，轮次渲染为实时进度卡、审批与追问卡、终态完成卡。用 `feishu_bridge_subtask` 派发并行工作——子任务作为原生可续会话运行并结算回父聊天——用 cron 排无人值守运行，用 `lark-cli` 工具调飞书开放 API。每个 project 是一条配置；斜杠命令族（`/reload`、`/spawn`、`/dir`、`/skills`、`/context` 等）、i18n 与按项目的工具可见性随层提供，机器级策略留在 profile。
+用一个长驻 dsh 进程运行飞书群聊 bot：每个配置的 project 得到一个 engine 加一个飞书长连接平台，群聊驱动真实 agent 会话，轮次渲染为实时进度卡、审批与追问卡、终态完成卡。用 `feishu_bridge_subtask` 派发并行工作——子任务作为原生可续会话运行并结算回父聊天——用 cron 排无人值守运行，用 `lark-cli` 工具调飞书开放 API。每个 project 是一条配置；斜杠命令族（`/reload`、`/spawn`、`/dir`、`/skills`、`/context`、`/plan` 等）、i18n 与按项目的工具可见性随层提供，机器级策略留在 profile。
 
 ## 目录
 

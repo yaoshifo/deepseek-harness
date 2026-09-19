@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Run Feishu group-chat bots from one long-lived dsh process: each configured project gets an engine plus a Feishu long-connection platform, and chats drive real agent sessions whose turns render as live progress cards, approval and question cards, and terminal completion cards. Delegate parallel work through `feishu_bridge_subtask` children that run as native continuable sessions and settle back into the parent chat, schedule unattended runs with cron, and call Feishu open APIs through the `lark-cli` tool. Each project is one configuration entry; the slash-command family (`/reload`, `/spawn`, `/dir`, `/skills`, `/context`, …), i18n, and per-project tool visibility come with the layer, while per-machine policy stays in the profile.
+Run Feishu group-chat bots from one long-lived dsh process: each configured project gets an engine plus a Feishu long-connection platform, and chats drive real agent sessions whose turns render as live progress cards, approval and question cards, and terminal completion cards. Delegate parallel work through `feishu_bridge_subtask` children that run as native continuable sessions and settle back into the parent chat, schedule unattended runs with cron, and call Feishu open APIs through the `lark-cli` tool. Each project is one configuration entry; the slash-command family (`/reload`, `/spawn`, `/dir`, `/skills`, `/context`, `/plan`, …), i18n, and per-project tool visibility come with the layer, while per-machine policy stays in the profile.
 
 ## Table of Contents
 

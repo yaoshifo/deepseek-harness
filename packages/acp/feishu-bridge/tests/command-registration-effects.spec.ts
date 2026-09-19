@@ -62,6 +62,7 @@ describe('command registrations are effects', () => {
       expect(engine.commandHandlers?.has('cron')).toBe(true)
       expect(engine.commandHandlers?.has('bind')).toBe(true)
       expect(engine.commandHandlers?.has('monitor')).toBe(true)
+      expect(engine.commandHandlers?.has('plan')).toBe(true)
 
       await ctx.fiber.dispose()
 

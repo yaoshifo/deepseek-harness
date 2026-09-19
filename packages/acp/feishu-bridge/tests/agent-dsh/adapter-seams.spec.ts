@@ -12,6 +12,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { asPlanModeSwitcher } from '../../src/core/types.ts'
 import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentsRegistryLike, type DshContextLike } from '../../src/agent-dsh/adapter.ts'
 
 // REAL-composition tripwires for the adapter's structurally-typed service
@@ -136,6 +137,22 @@ describe('DshAgentAdapter service seams against real upstream services', () => {
     await adapter.startSession('')
     // The controller committed a plan/mode event onto the real session.
     expect(agents[0]!.session.snapshotEvents().some(e => e.type === 'plan/mode')).toBe(true)
+  })
+
+  it('setPlanMode switches a live session through the real planMode controller', async () => {
+    const { adapter, agents } = await seamHarness()
+    const session = await adapter.startSession('')
+    const switcher = asPlanModeSwitcher(session)
+    if (switcher === undefined) throw new Error('session lacks the PlanModeSwitcher capability')
+
+    // Between turns the controller commits each selection immediately.
+    expect(switcher.setPlanMode(true)).toBe('committed')
+    expect(switcher.setPlanMode(false)).toBe('committed')
+
+    const modes = agents[0]!.session.snapshotEvents()
+      .filter(e => e.type === 'plan/mode')
+      .map(e => e.data.active)
+    expect(modes).toEqual([true, false])
   })
 
   it('contextSnapshot reads the real sessionProjections registry', async () => {

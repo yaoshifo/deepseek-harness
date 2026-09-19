@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
-import { ContinueSession, type AskDecision, type AskDelegate, type AskRequest, type Event } from '../../src/core/types.ts'
+import { asPlanModeSwitcher, ContinueSession, type AskDecision, type AskDelegate, type AskRequest, type Event } from '../../src/core/types.ts'
 import { ctxBridgeDispatch, type BridgeDispatch } from '../../src/bridge-service.ts'
 import type { SessionStartOptions } from '../../src/core/types.ts'
 import { DshAgentAdapter, DshAgentSession, unattendedSubtaskBypassesPermissions, stripModelAlias, toolBackgroundOf, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshAgentsRegistryLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.ts'
@@ -1672,6 +1672,40 @@ it('defaultMode plan activates plan mode on every startSession (Go agent options
   await a.startSession('', { sessionKey: 'feishu:oc_m3:ou_9' })
   await a.startSession('', { sessionKey: 'feishu:oc_m4:ou_9' })
   expect(planSets).toEqual([true, true, false, true])
+})
+
+it('PlanModeSwitcher: forwards the selection and reports a pending switch as queued', async () => {
+  const h = createHarness()
+  const planSets: boolean[] = []
+  let pending: boolean | undefined
+  h.services['planMode'] = {
+    set: (_agent: unknown, active: boolean) => { planSets.push(active); return 'noop' },
+    get: (_agent: unknown) => ({ pending }),
+  }
+  const a = newAdapter(h)
+  const session = await a.startSession('', { sessionKey: 'feishu:oc_planmode:ou_9' })
+  const switcher = asPlanModeSwitcher(session)
+  if (switcher === undefined) throw new Error('session lacks the PlanModeSwitcher capability')
+
+  // Nothing queued: the native noop stands as the current state.
+  expect(switcher.setPlanMode(true)).toBe('noop')
+  // A switch already queued toward plan mode makes the same repeat a queued
+  // one, so the acknowledgement cannot claim the mode is already in force.
+  pending = true
+  expect(switcher.setPlanMode(true)).toBe('queued')
+  pending = false
+  expect(switcher.setPlanMode(false)).toBe('queued')
+  // A pending switch in the other direction does not answer for this one.
+  expect(switcher.setPlanMode(true)).toBe('noop')
+  expect(planSets).toEqual([true, true, false, true])
+})
+
+it('PlanModeSwitcher: reports no capability when no plan-mode service is composed', async () => {
+  const h = createHarness()
+  const a = newAdapter(h)
+  const switcher = asPlanModeSwitcher(await a.startSession('', { sessionKey: 'feishu:oc_noplan:ou_9' }))
+  if (switcher === undefined) throw new Error('session lacks the PlanModeSwitcher capability')
+  expect(switcher.setPlanMode(true)).toBe('')
 })
 
 it('a resumed session keeps its logged plan state; the project default does not re-arm plan mode (2026-09-09 oc_a8f4)', async () => {
