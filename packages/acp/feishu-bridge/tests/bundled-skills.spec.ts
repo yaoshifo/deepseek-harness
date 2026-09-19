@@ -76,6 +76,25 @@ describe('mountBundledSkills', () => {
     expect(skill?.description).toContain('功能、方案、报告、策划、选型')
   })
 
+  it('pins the diagnose description to the non-code feedback loop', async () => {
+    const ctx = await harness()
+    mountBundledSkills(ctx)
+    const skill = await ctx.skills.get('diagnose')
+    // Reported breakage is not always software: the same loop-before-
+    // conclusion discipline must route a writing or research complaint to a
+    // recompute or an independent source, never to a test that cannot exist.
+    expect(skill?.description).toContain('非代码报障')
+  })
+
+  it('pins the subtask description to non-code delegation', async () => {
+    const ctx = await harness()
+    mountBundledSkills(ctx)
+    const skill = await ctx.skills.get('feishu-bridge-subtask')
+    // Parallel delegation is not code-only: a paper or report splits by
+    // section or source direction as well as by vertical slice.
+    expect(skill?.description).toContain('非代码任务同样适用')
+  })
+
   it('pins prototype as a deploy-side original the upstream skill must not overwrite', async () => {
     const ctx = await harness()
     mountBundledSkills(ctx)
