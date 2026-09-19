@@ -28,8 +28,8 @@ const FOLLOWUPS_ID = 'followups'
 
 const DESCRIPTION =
   'Register the closing follow-ups suggestion card for this turn. '
-  + 'Call it right after delivering your final reply, when the「发现的问题 / 可优化点」'
-  + '(problems / improvement findings) section of that reply is non-empty; skip it when there are no findings. '
+  + 'Call it before writing your final reply, and only when that reply\'s「发现的问题 / 可优化点」'
+  + '(problems / improvement findings) section will be non-empty; skip it when there are no new findings. '
   + 'Pass one option per finding: label = a short plain-language title from the user\'s '
   + 'perspective (expand jargon into everyday words). description = plain language only, one '
   + 'sentence of roughly 30 characters — what the problem is plus what handling it would do, and '
