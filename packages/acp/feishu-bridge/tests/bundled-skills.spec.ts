@@ -66,6 +66,16 @@ describe('mountBundledSkills', () => {
     expect(skill?.content).toContain('Tautological')
   })
 
+  it('pins the grill description to the non-code trigger surface', async () => {
+    const ctx = await harness()
+    mountBundledSkills(ctx)
+    const skill = await ctx.skills.get('grill')
+    // The catalog renders name plus description only; a description narrowed
+    // back to code-shaped asks stops firing grill on non-code deliverables
+    // (proposals, reports, plans, selections).
+    expect(skill?.description).toContain('功能、方案、报告、策划、选型')
+  })
+
   it('pins prototype as a deploy-side original the upstream skill must not overwrite', async () => {
     const ctx = await harness()
     mountBundledSkills(ctx)

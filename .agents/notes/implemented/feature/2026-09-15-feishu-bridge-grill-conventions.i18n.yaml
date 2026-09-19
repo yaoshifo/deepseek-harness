@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-15-feishu-bridge-grill-conventions.md
-2026-09-15-feishu-bridge-grill-conventions.md: 4c44cd7a7fab78a55abe970df7b7a014f22e9467
-2026-09-15-feishu-bridge-grill-conventions.zh.md: 2a1a962220008ec92c2503a3e743ee7d24664fa4
+2026-09-15-feishu-bridge-grill-conventions.md: 3c33592099b3239c4357c103245b85d707b079fd
+2026-09-15-feishu-bridge-grill-conventions.zh.md: 58e2cce5014d51ea1f52e17dff03144deaaa16de
