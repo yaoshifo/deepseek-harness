@@ -5,7 +5,7 @@
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { DirHistory, resolveDirArg } from '../../src/engine/dir-history.ts'
@@ -103,6 +103,19 @@ describe('resolveDirArg', () => {
     const home = process.env.HOME ?? ''
     if (home === '') return
     expect(resolveDirArg(undefined, 'p1', '~', false)).toBe(home)
+  })
+
+  it('expands ~ from the OS home when HOME is unset', () => {
+    const saved = process.env.HOME
+    delete process.env.HOME
+    try {
+      // Reading the environment alone would expand to '' and fail the stat
+      // probe; the OS lookup still answers.
+      expect(resolveDirArg(undefined, 'p1', '~', false)).toBe(homedir())
+    } finally {
+      if (saved === undefined) delete process.env.HOME
+      else process.env.HOME = saved
+    }
   })
 
   it('resolves a bare name under the scan roots, first root holding it wins', () => {

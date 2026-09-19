@@ -24,6 +24,9 @@
       "path": "../../skill/skill-filesystem"
     },
     {
+      "path": "../../util/home-paths"
+    },
+    {
       "path": "../feishu-bridge"
     }
   ]

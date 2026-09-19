@@ -12,6 +12,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { mkdirSync } from 'node:fs'
 import { basename, join, dirname } from 'node:path'
+import { expandHomePath } from '@deepseek-ai/dsh-home-paths'
 import { atomicWriteFileSync } from '../atomicwrite.ts'
 import { absLen, fuzzyThreshold, levenshtein } from '../lucide/fuzzy.ts'
 
@@ -272,7 +273,7 @@ export class DirHistory {
  * @returns The resolved directory, or undefined when no existing directory matches.
  */
 export function resolveDirArg(dirs: DirHistory | undefined, project: string, arg: string, fuzzy: boolean): string | undefined {
-  let newDir = expandTilde(arg.trim())
+  let newDir = expandHomePath(arg.trim())
   if (!newDir.startsWith('/')) {
     const hit = dirs?.resolveScanPath(project, newDir)
     if (hit !== undefined) {
@@ -285,14 +286,6 @@ export function resolveDirArg(dirs: DirHistory | undefined, project: string, arg
     }
   }
   return statSyncIsDir(newDir) ? newDir : undefined
-}
-
-/** Expand a leading ~ so an argument can address the home directory (Go expandHome). */
-function expandTilde(path: string): string {
-  const home = process.env.HOME ?? ''
-  if (path === '~') return home
-  if (path.startsWith('~/')) return join(home, path.slice(2))
-  return path
 }
 
 /** Whether the path is an existing directory; a missing or unreadable path is not one. */

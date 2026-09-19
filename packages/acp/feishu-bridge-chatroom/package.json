@@ -30,6 +30,7 @@
   ],
   "dependencies": {
     "@deepseek-ai/dsh-feishu-bridge": "workspace:^",
+    "@deepseek-ai/dsh-home-paths": "workspace:^",
     "@deepseek-ai/dsh-skill-filesystem": "workspace:^",
     "@deepseek-ai/dsh-tools": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^"

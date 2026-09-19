@@ -20,6 +20,7 @@ import * as SkillFileSystem from '@deepseek-ai/dsh-skill-filesystem'
 // itself is mounted by dsh-base, not here).
 import type { SubagentRunEndInfo, SubagentRunInfo } from '@deepseek-ai/dsh-subagent'
 import Schema from '@deepseek-ai/schemastery'
+import { expandHomePath } from '@deepseek-ai/dsh-home-paths'
 import type { EngineSubprocess } from './core/types.ts'
 import { inboxProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import { subagentCatalogProjectionDefinition } from '@deepseek-ai/dsh-subagent'
@@ -1610,13 +1611,16 @@ function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
   })
 }
 
-/** Expand a leading ~ in a config path so the config stays portable across machines (Go expandHome). */
+/**
+ * Expand a leading ~ in a configured path so the config stays portable across
+ * machines (Go expandHome), trimming padding first: a configured path is a
+ * whole value, while {@link expandHomePath} takes an already-trimmed one.
+ *
+ * @param path - Configured path that may start with ~.
+ * @returns The expanded path.
+ */
 function expandHome(path: string): string {
-  const trimmed = path.trim()
-  const home = homedir()
-  if (trimmed === '~') return home
-  if (trimmed.startsWith('~/')) return join(home, trimmed.slice(2))
-  return trimmed
+  return expandHomePath(path.trim())
 }
 
 /**

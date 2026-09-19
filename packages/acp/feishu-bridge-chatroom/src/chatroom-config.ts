@@ -9,9 +9,8 @@
  * @module dsh-feishu-bridge-chatroom/chatroom-config
  */
 
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
+import { expandHomePath } from '@deepseek-ai/dsh-home-paths'
 import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { defaultChatroomRolesDir } from './engine/chatroom-roles.ts'
 import {
@@ -114,13 +113,15 @@ export const Config = Schema.object({
   projects: Schema.dict(chatroomSection).description('Per-project chatroom tuning, keyed by the bridge project name'),
 })
 
-/** Expand a leading ~ in a config path so the config stays portable across machines (Go expandHome). */
+/**
+ * Expand a leading ~ in a configured path so the config stays portable across
+ * machines (Go expandHome), trimming padding first.
+ *
+ * @param path - Configured path that may start with ~.
+ * @returns The expanded path.
+ */
 function expandHome(path: string): string {
-  const trimmed = path.trim()
-  const home = homedir()
-  if (trimmed === '~') return home
-  if (trimmed.startsWith('~/')) return join(home, trimmed.slice(2))
-  return trimmed
+  return expandHomePath(path.trim())
 }
 
 /**

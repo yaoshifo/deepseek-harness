@@ -64,6 +64,9 @@
     },
     {
       "path": "../../subagent/subagent-spawn-in-process"
+    },
+    {
+      "path": "../../util/home-paths"
     }
   ]
 }
