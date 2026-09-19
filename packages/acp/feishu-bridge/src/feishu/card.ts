@@ -246,7 +246,8 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
           } else {
             // The separator carries its own spaces: padBoldDelimiters only
             // adds one for a delimiter glued to text, and a glued colon would
-            // render as `**label** ：detail`.
+            // render as `**label** ：detail`. The settled card composes the
+            // same line in `followupsDetailLines` (`src/engine/ask.ts`).
             detailLines.push(`**${opt.label}** · ${detail}`)
           }
         }

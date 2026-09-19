@@ -473,7 +473,7 @@ describe('agent conventions prompt (followups contract)', () => {
   })
 })
 
-describe('followups details (folded on the live card, grey on the settled one, plain in the dispatch)', () => {
+describe('followups details (folded on both cards, plain in the dispatch)', () => {
   const detailed = q({
     options: [
       { label: '修 A', description: '空指针崩溃，勾选后补上空值检查', details: '涉及 src/a.ts:1 的判空分支' },
@@ -527,9 +527,29 @@ describe('followups details (folded on the live card, grey on the settled one, p
     expect(check.detailsPanel).toBeUndefined()
   })
 
-  it('the settled card renders the detail in grey too', () => {
+  it('the settled card folds the details into the same collapsed panel as the live card', () => {
     const card: Card = buildFollowupsCardSettled(detailed, [1], '')
-    expect(JSON.stringify(card)).toContain('涉及 src/a.ts:1 的判空分支')
-    expect(JSON.stringify(card)).toContain("<font color='grey'>")
+    const panel = card.elements.find(el => el.kind === 'collapsiblePanel') as {
+      kind: 'collapsiblePanel'
+      expanded?: boolean
+      title?: string
+      elements: Array<{ kind: string; content?: string }>
+    }
+    expect(panel.expanded).toBe(false)
+    expect(panel.title).toBe('🔎 事实细节（2 项）')
+    expect(panel.elements).toHaveLength(1)
+    expect(panel.elements[0]?.content).toBe(
+      '**修 A** · 涉及 src/a.ts:1 的判空分支\n**查 B** · 涉及 src/b.ts:2 的日志点')
+    // The marks stay two lines per option and keep the details out: a submit
+    // must not unfold what the live card just folded.
+    const marks = JSON.stringify(card.elements.filter(el => el.kind === 'markdown'))
+    expect(marks).toContain('✅ **修 A**')
+    expect(marks).not.toContain('🔎')
+    expect(JSON.stringify(card)).not.toContain('<font')
+  })
+
+  it('an option set without details gives the settled card no panel', () => {
+    const card: Card = buildFollowupsCardSettled(q(), [1], '')
+    expect(card.elements.some(el => el.kind === 'collapsiblePanel')).toBe(false)
   })
 })

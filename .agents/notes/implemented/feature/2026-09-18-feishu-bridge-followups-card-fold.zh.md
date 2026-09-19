@@ -15,7 +15,8 @@ Status: implemented
 - `CardCheckOptions.detailsPanel`（`src/card.ts`）是可选的面板标题。设置后，飞书渲染器（`src/feishu/card.ts` 的 `case 'checkOptions'`）让 checker 文本只保留 `**label**` + description，并在表单内追加一个 `collapsible_panel`——位于各 checker 之后、文本输入框与提交按钮之前——其唯一的 markdown 子元素按「每个带细节的选项一行」拼出 `**label** · detail`。
 - 不设标题时元素保持原来的行内灰色细节行：折叠是选择性开启的，忘记设标题的生产者不会把细节悄悄从卡面丢掉。
 - `buildFollowupsCard`（`src/engine/ask.ts`）统计细节非空的选项数并传入 `i18n.tf(Msg.FollowupsDetailsPanel, n)`；全都没有细节时不传标题，卡上也不出现面板。新词条 `followups_details_panel` 补齐五种语言。
-- `details` 仍留在卡模型的选项上，所以发卡时回读（`askCardMeta`）、结算卡的灰行、派发的 `[后续处理]` 消息、以及无卡片平台的纯文本降级全都保持不变。
+- `details` 仍留在卡模型的选项上，所以发卡时回读（`askCardMeta`）、派发的 `[后续处理]` 消息、以及无卡片平台的纯文本降级全都保持不变。
+- 结算快照同样折叠、不再行内展示细节（`settledOptionMarks` 的面 `card-panel` 加 `src/engine/ask.ts` 的 `followupsDetailLines`）：选项行保持两行，面板承载同一批 `**label** · detail` 行——点选提交不会把刚折起的证据摊开（2026-09-20 用户反馈）。
 - 同一改动里写作口径跟着改：工具契约（`src/tools/followups.ts`）与常驻约定段（`src/engine/agent-conventions.ts`）现在要求说明只写一句话、约 30 字以内——是什么问题 + 勾选后做什么，确有代价才补半句——并把 `details` 描述为收进折叠块。两处都只是引导，没有任何门会拒绝超长的说明。
 
 ## Feishu nesting rule
@@ -36,6 +37,6 @@ Status: implemented
 - 每项两行加一个折叠表头，几条发现的收尾卡一屏放得下；证据退到一次点击之后，而不是一直占版面。
 - 面板标题统计的是「带细节的选项数」（`🔎 事实细节（2 项）`），不是选项总数：标题写三项却只列两行会被读成 bug。
 - 分隔符是自带空格的 ` · `：`padBoldDelimiters` 只给紧贴相邻文本的定界符补空格（飞书仅在定界符两侧有空白时才渲染加粗），用 `：` 会渲染成 `**label** ：detail`。
-- 取代[事实细节层](2026-09-18-feishu-bridge-followups-details-layer.zh.md)中**实时卡面渲染**的那条决定，其余不动；那张 note 现指向本文。
+- 取代[事实细节层](2026-09-18-feishu-bridge-followups-details-layer.zh.md)的两条渲染决定——实时卡的行内细节与结算卡的灰色行；那张 note 现指向本文。
 - 说明变短也会让执行 agent 读到的派发消息变短，上下文因此转移到 `details` 上——那个同样随派发消息走的字段。
-- 测试：`tests/feishu/card.spec.ts`（折叠块位置、收起状态、逐项行、无细节则无面板、不设标题时的行内默认），`tests/engine/followups.spec.ts`（标题项数、选项保留 details、结算与派发不变），`tests/feishu/card-action.spec.ts`（发卡回读仍能让两条出口都派发出细节），`tests/tools/followups-tool.spec.ts` 与 `tests/agent-dsh/adapter-persona.spec.ts`（两处散文面的钉子），`tests/i18n.spec.ts`（新键带 en/zh）。
+- 测试：`tests/feishu/card.spec.ts`（折叠块位置、收起状态、逐项行、结算卡折进面板而非行内、无细节则无面板、不设标题时的行内默认），`tests/engine/followups.spec.ts`（标题项数、选项保留 details、结算面板与无细节时无面板、派发不变），`tests/feishu/card-action.spec.ts`（发卡回读仍能让两条出口都派发出细节），`tests/tools/followups-tool.spec.ts` 与 `tests/agent-dsh/adapter-persona.spec.ts`（两处散文面的钉子），`tests/i18n.spec.ts`（新键带 en/zh）。

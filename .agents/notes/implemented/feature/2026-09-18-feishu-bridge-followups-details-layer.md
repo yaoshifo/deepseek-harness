@@ -17,7 +17,7 @@ Separately, the user asked for the factual side of each finding on the card itse
 One field replaces two: the option carries a factual `details` string, and the separate `locator` field is deleted.
 
 - `UserQuestionOption.details` (replacing `locator`) holds the factual side — files, mechanism, evidence; whether it names an exact location (`path:line`) is the caller's call.
-- The settled card renders it as its own grey line (`<font color='grey'>🔎 …</font>`, whitelisted for Feishu card markdown) under the plain-language description, composed into the frozen marks (`settledOptionMarks`, `src/engine/ask.ts`, face `card`); the live card moved it into one collapsed panel later the same day — see [followups card fold](2026-09-18-feishu-bridge-followups-card-fold.md).
+- Both cards fold it into one collapsed panel titled by the detail-bearing option count instead of showing it inline — the live card inside its form, the settled snapshot through `followupsDetailLines` (`src/engine/ask.ts`), whose marks carry the plain-language lines alone — see [followups card fold](2026-09-18-feishu-bridge-followups-card-fold.md).
 - The dispatched selection message carries the same detail as plain text (face `dispatch`): a model input must not receive rendering tags.
 - The send-time cache records the card's own source question (`Card.askQuestion`), so both egresses keep every option field and the sidecar survives restarts — the [source-question change](../bug-fix/2026-09-18-feishu-bridge-ask-meta-source-question.md) replaced the card-face reconstruction that had dropped the locator in the first place.
 
@@ -29,8 +29,8 @@ One field replaces two: the option carries a factual `details` string, and the s
 
 ## Consequences
 
-- Newer cards show the factual detail in grey on the settled face; the card no longer reads as plain language only — the accepted cost of the user's request (the plan card keeps its own collapsed-details pattern).
+- The card no longer reads as plain language only: its factual detail rides both faces, one click away, matching the plan card's own collapsed-details pattern.
 - Cards registered before this change dispatch without a detail line — a degradation to the old behavior, not a failure.
 - `details` is optional in the tool schema; fill quality is watched on the first cards after reload, and the escalation path is making it required (mirroring the plan-details rollout).
-- The grey wrapper is marks-side for the settled card (`tests/feishu/card.spec.ts`, `tests/engine/followups.spec.ts`); the live card's folded form is pinned by the [followups card fold](2026-09-18-feishu-bridge-followups-card-fold.md) tests.
-- Testing: `tests/feishu/card-action.spec.ts` (the send-time read-back through both the `sendCard` and `replyCard` egresses dispatches the detail), `tests/feishu/card.spec.ts` (grey detail line on the settled card face), `tests/engine/followups.spec.ts` (`followups details` describe), `tests/tools/followups-tool.spec.ts` (the schema exposes `details` and no `locator`; conversion keeps it), `tests/agent-dsh/adapter-persona.spec.ts` (conventions text updated).
+- The fold's `**label** · detail` line is composed in two places — the Feishu renderer for the live card and `followupsDetailLines` for the settled snapshot — and both faces are pinned by the [followups card fold](2026-09-18-feishu-bridge-followups-card-fold.md) tests.
+- Testing: `tests/feishu/card-action.spec.ts` (the send-time read-back through both the `sendCard` and `replyCard` egresses dispatches the detail), `tests/feishu/card.spec.ts` (the settled card's collapsed panel and its lines), `tests/engine/followups.spec.ts` (`followups details` describe), `tests/tools/followups-tool.spec.ts` (the schema exposes `details` and no `locator`; conversion keeps it), `tests/agent-dsh/adapter-persona.spec.ts` (conventions text updated).

@@ -374,27 +374,30 @@ export function buildFollowupsCard(q: UserQuestion, i18n: AskCardI18n = zhAskCar
   return cb.build().setAskQuestion(q)
 }
 
-/** Render face of the frozen option marks: the card shows the factual detail
- * in grey, the dispatched message (a model input) keeps it plain. */
-type OptionMarkFace = 'card' | 'dispatch'
+/** Render face of the frozen option marks: the ask card shows the factual
+ * detail in grey, the dispatched message (a model input) keeps it plain, and
+ * the followups snapshot leaves it to its own collapsed panel. */
+type OptionMarkFace = 'card' | 'card-panel' | 'dispatch'
 
 /**
  * Frozen selection marks shared by the settled cards and the dispatched
  * followups selection message: `✅/◻️ **label**` plus the option description
- * and its factual detail line. On the card face the detail renders in grey
+ * and its factual detail line. On the ask card the detail renders in grey
  * (`<font>`, whitelisted for Feishu card markdown); the dispatched message is
- * a model input and stays plain text.
+ * a model input and stays plain text; the followups snapshot's marks omit the
+ * detail because that card folds it into a panel instead.
  *
  * @param q - The question whose options render.
  * @param indices - 1-based option indices marked checked.
- * @param face - Output surface: 'card' (grey detail) or 'dispatch' (plain detail).
+ * @param face - Output surface: 'card' (grey detail), 'card-panel' (detail left to the caller's fold), or 'dispatch' (plain detail).
  * @returns One mark string per option.
  */
 function settledOptionMarks(q: UserQuestion, indices: number[], face: OptionMarkFace = 'card'): string[] {
   const dispatch = face === 'dispatch'
+  const inlineDetail = face !== 'card-panel'
   return q.options.map((opt, i) => {
     const checked = indices.includes(i + 1)
-    const detail = opt.details !== undefined && opt.details !== '' ? opt.details : undefined
+    const detail = inlineDetail && opt.details !== undefined && opt.details !== '' ? opt.details : undefined
     return `${checked ? '✅' : '◻️'} **${opt.label}**`
       + (opt.description !== '' ? `\n${opt.description}` : '')
       + (detail !== undefined ? `\n${dispatch ? `🔎 ${detail}` : `<font color='grey'>🔎 ${detail}</font>`}` : '')
@@ -402,11 +405,30 @@ function settledOptionMarks(q: UserQuestion, indices: number[], face: OptionMark
 }
 
 /**
- * Build the read-only settled snapshot for a submitted followups card:
- * frozen selection marks and the submitted note, no controls. The Feishu
- * platform returns it as the card-action callback response, swapping the
- * pressed suggestion card for its answer snapshot (the same terminal
- * replacement `buildAskQuestionCardSettled` performs on ask cards).
+ * One line per detail-bearing option, as the followups cards' fold renders it:
+ * `**label** · detail`. The live card composes the same line in its Feishu
+ * projection (`src/feishu/card.ts`, `case 'checkOptions'`) — keep the two in
+ * sync.
+ *
+ * @param q - The question whose options render.
+ * @returns The panel lines; empty when no option carries a detail.
+ */
+function followupsDetailLines(q: UserQuestion): string[] {
+  return q.options.flatMap((opt) => {
+    const detail = opt.details ?? ''
+    return detail === '' ? [] : [`**${opt.label}** · ${detail}`]
+  })
+}
+
+/**
+ * Build the read-only settled snapshot for a submitted followups card: frozen
+ * selection marks, the same collapsed factual-detail panel the live card
+ * carries, and the submitted note, no controls. The Feishu platform returns it
+ * as the card-action callback response, swapping the pressed suggestion card
+ * for its answer snapshot (the same terminal replacement
+ * `buildAskQuestionCardSettled` performs on ask cards). The fold keeps the
+ * snapshot as compact as the card it replaces — a submit must not unfold every
+ * finding at the moment the user stops reading them.
  *
  * @param q - The followups question the card was built from.
  * @param indices - 1-based option indices the user checked.
@@ -418,9 +440,18 @@ export function buildFollowupsCardSettled(
   q: UserQuestion, indices: number[], note: string, i18n: AskCardI18n = zhAskCardI18n,
 ): Card {
   const cb = newCard().title(i18n.t(Msg.FollowupsCardTitle), 'green')
-  const marks = settledOptionMarks(q, indices)
+  const marks = settledOptionMarks(q, indices, 'card-panel')
   if (marks.length > 0) {
     cb.raw({ kind: 'markdown', content: marks.join('\n') })
+  }
+  const detailLines = followupsDetailLines(q)
+  if (detailLines.length > 0) {
+    cb.raw({
+      kind: 'collapsiblePanel',
+      title: i18n.tf(Msg.FollowupsDetailsPanel, detailLines.length),
+      expanded: false,
+      elements: [{ kind: 'markdown', content: detailLines.join('\n') }],
+    })
   }
   if (note !== '') {
     cb.raw({ kind: 'markdown', content: `✍️ ${note}` })

@@ -234,11 +234,24 @@ describe('renderCardMap', () => {
     expect(children.map(e => jStr(e.tag))).not.toContain('collapsible_panel')
   })
 
-  it('the settled followups card keeps the grey detail line', () => {
+  it('the settled followups card folds its details into the same collapsed panel', () => {
+    // Submitting the card swaps it for this snapshot: a detail that stayed
+    // inline on the marks would unfold every finding at the one moment the
+    // user is done reading them (2026-09-20 user report).
     const got = decodeRenderedCard(buildFollowupsCardSettled(detailsQuestion(), [1], ''))
-    const markdown = getBodyElements(got).map(jObj).map(e => jStr(e.content)).join('\n')
+    const children = getBodyElements(got).map(jObj)
+
+    const markdown = children.map(e => jStr(e.content)).join('\n')
     expect(markdown).toContain('✅ **两个生成的 schema 文件总在合并时挡路**')
-    expect(markdown).toContain("<font color='grey'>🔎 涉及 apps/desktop/src-tauri/gen/schemas/acl-manifests.json:1 的生成约定</font>")
+    expect(markdown).not.toContain('🔎')
+
+    const panel = children.find(e => jStr(e.tag) === 'collapsible_panel')!
+    expect(panel.expanded).toBe(false)
+    expect(jStr(jObj(jObj(panel.header).title).content)).toBe('🔎 事实细节（1 项）')
+    const body = jArr(panel.elements).map(jObj)
+    expect(body).toHaveLength(1)
+    expect(jStr(body[0]?.content)).toBe(
+      '**两个生成的 schema 文件总在合并时挡路** · 涉及 apps/desktop/src-tauri/gen/schemas/acl-manifests.json:1 的生成约定')
   })
 
   it('a question card renders card-wide unique form-control names', () => {
