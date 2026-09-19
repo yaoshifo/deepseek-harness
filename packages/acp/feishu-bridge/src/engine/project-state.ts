@@ -1,7 +1,7 @@
 /**
  * Per-project runtime state store ported from cc-connect core/projectstate.go:
- * workDir override plus per-workspace dir overrides, JSON-persisted with the
- * same field names so existing state files reload unchanged.
+ * per-workspace dir overrides plus the runtime switches, JSON-persisted with
+ * the same field names so existing state files reload unchanged.
  *
  * @module dsh-feishu-bridge/project-state
  */
@@ -15,7 +15,6 @@ import { dirname } from 'node:path'
 const CLEARED_NATIVE_CHILDREN_CAP = 512
 
 interface ProjectStateData {
-  work_dir_override?: string
   workspace_dir_overrides?: Record<string, string> | undefined
   /** Runtime /monitor chats override (#53; empty = use config). */
   monitor_chats?: string
@@ -69,22 +68,6 @@ export class ProjectStateStore {
   }
 
   /**
-   * The project-wide workDir override ('' when unset).
-   * @returns The override directory, or '' when unset.
-   */
-  workDirOverride(): string {
-    return this.state.work_dir_override ?? ''
-  }
-
-  /**
-   * Set or clear the project-wide workDir override.
-   * @param dir - Override directory; '' clears the override.
-   */
-  setWorkDirOverride(dir: string): void {
-    this.state.work_dir_override = dir
-  }
-
-  /**
    * The per-workspace dir override ('' when unset).
    * @param workspace - Workspace key whose override to read.
    * @returns The override directory for workspace, or '' when unset.
@@ -117,11 +100,6 @@ export class ProjectStateStore {
       if (k !== workspace) next[k] = v
     }
     this.state.workspace_dir_overrides = Object.keys(next).length === 0 ? undefined : next
-  }
-
-  /** Clear the project-wide workDir override by setting it to ''. */
-  clearWorkDirOverride(): void {
-    this.setWorkDirOverride('')
   }
 
   /**

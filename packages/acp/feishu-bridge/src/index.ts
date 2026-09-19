@@ -8,8 +8,8 @@
  */
 
 import { homedir } from 'node:os'
-import { mkdirSync, statSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import type { SkillRegistry } from '@deepseek-ai/dsh-skill'
@@ -1000,30 +1000,6 @@ function languageOf(value: string | undefined): Language {
 }
 
 /**
- * Resolve the effective work dir at startup (Go applyProjectStateOverride):
- * a persisted project-wide override from the project state store wins over
- * the configured workdir when it still points at an existing directory.
- * @param adapter - The agent adapter whose workdir may be switched.
- * @param configured - The project's configured workdir.
- * @param projectState - The persisted per-project state store.
- * @returns The effective workdir for the engine's base work dir.
- */
-function applyProjectStateOverride(adapter: DshAgentAdapter, configured: string, projectState: ProjectStateStore): string {
-  const override = projectState.workDirOverride()
-  if (override === '') return configured
-  const abs = resolve(override)
-  try {
-    if (statSync(abs).isDirectory()) {
-      adapter.setWorkDir(abs)
-      return abs
-    }
-  } catch {
-    // Missing directory: fall through to the configured workdir (Go logs and ignores).
-  }
-  return configured
-}
-
-/**
  * Assemble one project's adapter + platform + engine with its disk stores
  * and config knobs wired (Go wire.go per-project wiring): the project state
  * store carries the per-chat workdir overrides (without it /spawn --dir and
@@ -1381,7 +1357,7 @@ export function buildProjectAssembly(
     })
   }
   engine.setProjectStateStore(projectState)
-  const effectiveWorkDir = applyProjectStateOverride(adapter, project.workdir, projectState)
+  const effectiveWorkDir = project.workdir
   engine.setBaseWorkDir(effectiveWorkDir)
   const dirHistory = sharedDirHistory ?? new DirHistory(dataRoot)
   engine.setDirHistory(dirHistory)

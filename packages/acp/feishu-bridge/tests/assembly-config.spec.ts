@@ -9,7 +9,7 @@
  */
 
 import { mkdtempSync } from 'node:fs'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -71,29 +71,6 @@ describe('buildProjectAssembly config wiring', () => {
 
   it('wires the base work dir so /dir reset restores the project workdir', () => {
     expect(assemble(baseConfig()).engine.baseWorkDir).toBe('/workspace/project')
-  })
-
-  it('applies the persisted project-wide work_dir override at startup (Go applyProjectStateOverride)', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'fb-assembly-'))
-    const overrideDir = join(root, 'override-dir')
-    await mkdir(overrideDir)
-    // First assembly persists nothing; write the state file the Go daemon
-    // would have left behind, then re-assemble.
-    const statePath = join(root, 'smoke-project', 'state.json')
-    await mkdir(join(root, 'smoke-project'), { recursive: true })
-    await writeFile(statePath, JSON.stringify({ work_dir_override: overrideDir }))
-    const { engine, adapter } = assemble(baseConfig(), project(), root)
-    expect(adapter.getWorkDir()).toBe(overrideDir)
-    expect(engine.baseWorkDir).toBe(overrideDir)
-  })
-
-  it('ignores an invalid persisted work_dir override', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'fb-assembly-'))
-    await mkdir(join(root, 'smoke-project'), { recursive: true })
-    await writeFile(join(root, 'smoke-project', 'state.json'), JSON.stringify({ work_dir_override: '/nonexistent/dir' }))
-    const { engine, adapter } = assemble(baseConfig(), project(), root)
-    expect(adapter.getWorkDir()).toBe('/workspace/project')
-    expect(engine.baseWorkDir).toBe('/workspace/project')
   })
 
   it('threads the project MCP allowlist onto the adapter (per-project MCP visibility)', () => {

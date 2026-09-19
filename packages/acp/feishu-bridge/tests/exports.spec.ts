@@ -96,7 +96,7 @@ describe('the plugin-extension export face', () => {
     const dir = await mkdtemp(join(tmpdir(), 'fb-exports-'))
     try {
       const store = new ProjectStateStore(join(dir, 'state.json'))
-      expect(store.workDirOverride()).toBe('')
+      expect(store.workspaceDirOverride('face-spec:chat')).toBe('')
       atomicWriteFileSync(join(dir, 'sessions.json'), new TextEncoder().encode('{}'), 0o644)
     } finally {
       await rm(dir, { recursive: true, force: true })

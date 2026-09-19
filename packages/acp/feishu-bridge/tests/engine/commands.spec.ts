@@ -671,7 +671,6 @@ describe('/dir', () => {
 
       expect(agent.getWorkDir()).toBe(overrideDir)
       const reloaded = new ProjectStateStore(statePath)
-      expect(reloaded.workDirOverride()).toBe('')
       expect(reloaded.workspaceDirOverride(stripUserID(m.sessionKey))).toBe('')
       expect(s.getAgentSessionID()).toBe('')
       expect(s.getName()).toBe('old')
