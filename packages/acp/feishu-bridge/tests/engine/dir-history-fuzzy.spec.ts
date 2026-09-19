@@ -1,13 +1,14 @@
 /**
  * Ported from cc-connect core/dir_history_test.go TestDirHistory_ResolveScanPathFuzzy
- * plus the /dir resolution fallback that consumes it (M7 #3: dir_scan_paths).
+ * plus the /dir resolution fallback that consumes it (M7 #3: dir_scan_paths)
+ * and the shared argument resolution behind every --dir surface.
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { DirHistory } from '../../src/engine/dir-history.ts'
+import { DirHistory, resolveDirArg } from '../../src/engine/dir-history.ts'
 
 describe('DirHistory.resolveScanPathFuzzy', () => {
   it('prefix, substring, case-insensitive, and edit-distance matches', () => {
@@ -86,5 +87,52 @@ describe('DirHistory.load shape validation', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+describe('resolveDirArg', () => {
+  it('passes an existing absolute path through and rejects a missing one', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dirarg-abs-'))
+    const target = join(root, 'repo')
+    mkdirSync(target)
+    expect(resolveDirArg(undefined, 'p1', target, false)).toBe(target)
+    expect(resolveDirArg(undefined, 'p1', join(root, 'missing'), false)).toBeUndefined()
+  })
+
+  it('expands a leading tilde', () => {
+    const home = process.env.HOME ?? ''
+    if (home === '') return
+    expect(resolveDirArg(undefined, 'p1', '~', false)).toBe(home)
+  })
+
+  it('resolves a bare name under the scan roots, first root holding it wins', () => {
+    const first = mkdtempSync(join(tmpdir(), 'dirarg-first-'))
+    const second = mkdtempSync(join(tmpdir(), 'dirarg-second-'))
+    const target = join(second, 'mem0')
+    mkdirSync(target)
+    const dh = new DirHistory(mkdtempSync(join(tmpdir(), 'dirarg-data-')))
+    dh.setScanPaths('p1', [first, second])
+    expect(resolveDirArg(dh, 'p1', 'mem0', false)).toBe(target)
+    expect(resolveDirArg(dh, 'p1', 'not-scanned', false)).toBeUndefined()
+  })
+
+  it('fuzzy-matches a typo only when the caller allows it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dirarg-fuzzy-'))
+    const target = join(root, 'mem0')
+    mkdirSync(target)
+    const dh = new DirHistory(mkdtempSync(join(tmpdir(), 'dirarg-data-')))
+    dh.setScanPaths('p1', [root])
+    // Same input, same store: the flag alone decides whether the neighbour
+    // directory is picked (human-typed) or the miss fails loud (dispatched).
+    expect(resolveDirArg(dh, 'p1', 'nem0', true)).toBe(target)
+    expect(resolveDirArg(dh, 'p1', 'nem0', false)).toBeUndefined()
+  })
+
+  it('keeps absolute paths working without a dir history and drops bare names', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dirarg-nohistory-'))
+    const target = join(root, 'mem0')
+    mkdirSync(target)
+    expect(resolveDirArg(undefined, 'p1', target, false)).toBe(target)
+    expect(resolveDirArg(undefined, 'p1', 'mem0', false)).toBeUndefined()
   })
 })

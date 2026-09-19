@@ -2,6 +2,9 @@
  * Directory switch history ported from cc-connect core/dir_history.go:
  * per-project MRU list plus live-scanned parent dirs, JSON-persisted,
  * including the fuzzy bare-name fallback (Go ResolveScanPathFuzzy, #3).
+ * Also owns {@link resolveDirArg}, the one rule turning a caller-supplied dir
+ * argument into a directory for /dir, /spawn --dir, /fork --dir, and subtask
+ * dispatch.
  *
  * @module dsh-feishu-bridge/dir-history
  */
@@ -247,5 +250,57 @@ export class DirHistory {
     } catch (error) {
       console.error(`dir_history: failed to write ${this.storePath}: ${String(error)}`)
     }
+  }
+}
+
+/**
+ * Resolve a caller-supplied dir argument into an existing directory: tilde
+ * expansion, then an absolute path as-is, otherwise the project's scan roots
+ * (Go resolveDir). Relative names resolve ONLY against scan roots — never the
+ * work dir or process cwd — so a typo cannot silently land under an unrelated
+ * directory.
+ *
+ * Human-typed input passes `fuzzy`: after an exact scan miss the closest
+ * scanned/MRU basename wins (#3). Machine-supplied input passes false so a
+ * mistyped name fails loud instead of rerouting the child into a neighbour
+ * directory the caller never saw.
+ *
+ * @param dirs - Store owning the project's scan roots and MRU list.
+ * @param project - Project key whose scan roots to use.
+ * @param arg - Raw argument text: absolute path, tilde path, or bare name.
+ * @param fuzzy - Whether an exact scan miss may fall back to the closest basename.
+ * @returns The resolved directory, or undefined when no existing directory matches.
+ */
+export function resolveDirArg(dirs: DirHistory | undefined, project: string, arg: string, fuzzy: boolean): string | undefined {
+  let newDir = expandTilde(arg.trim())
+  if (!newDir.startsWith('/')) {
+    const hit = dirs?.resolveScanPath(project, newDir)
+    if (hit !== undefined) {
+      newDir = hit
+    } else {
+      if (!fuzzy) return undefined
+      const closest = dirs?.resolveScanPathFuzzy(project, newDir)
+      if (closest === undefined) return undefined
+      newDir = closest
+    }
+  }
+  return statSyncIsDir(newDir) ? newDir : undefined
+}
+
+/** Expand a leading ~ so an argument can address the home directory (Go expandHome). */
+function expandTilde(path: string): string {
+  const home = process.env.HOME ?? ''
+  if (path === '~') return home
+  if (path.startsWith('~/')) return join(home, path.slice(2))
+  return path
+}
+
+/** Whether the path is an existing directory; a missing or unreadable path is not one. */
+function statSyncIsDir(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    // Missing path, or a parent without search permission.
+    return false
   }
 }

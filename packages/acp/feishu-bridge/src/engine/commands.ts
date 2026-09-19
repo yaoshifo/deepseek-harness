@@ -10,8 +10,6 @@
  */
 
 import { readFileSync } from 'node:fs'
-import { statSync } from 'node:fs'
-import { join } from 'node:path'
 import { Msg } from '../i18n/index.ts'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.ts'
 import { asCardSender, asCardSenderWithUpdate, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, asStagedForkSeedForgetter, ContinueSession, DoneEmoji, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.ts'
@@ -31,6 +29,7 @@ import {
 import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName, spawnPlaceholderName } from './groupname.ts'
 import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.ts'
 import { renderDirCardSafe } from './dir-card.ts'
+import { resolveDirArg } from './dir-history.ts'
 import { renderListCardSafe, renderStatusCard } from './session-card.ts'
 import { buildStatusLines } from './build-info.ts'
 import { extractChannelID } from './engine.ts'
@@ -682,7 +681,7 @@ export async function dirApply(
       return [e.i18n.t(Msg.DirNoHistory), '']
     }
   } else {
-    const resolved = resolveDir(e, arg)
+    const resolved = resolveDirArg(e.dirHistory, e.name, arg, true)
     if (resolved === undefined) return [e.i18n.tf(Msg.DirInvalidPath, arg), '']
     newDir = resolved
   }
@@ -695,42 +694,6 @@ export async function dirApply(
   e.projectState?.setWorkspaceDirOverride(e.dirOverrideKey(interactiveKey), newDir)
   e.projectState?.save()
   return ['', e.i18n.tf(Msg.DirChanged, newDir)]
-}
-
-/** Resolve a user-supplied dir argument (tilde expansion + scan paths + stat). */
-function resolveDir(e: Engine, arg: string): string | undefined {
-  let newDir = expandTilde(arg.trim())
-  if (!newDir.startsWith('/')) {
-    // Relative bare names resolve ONLY against scan roots (Go resolveDir):
-    // no work-dir/cwd fallback, so a typo'd name cannot silently land under
-    // an unrelated directory. After an exact miss, the fuzzy fallback picks
-    // the closest scanned/MRU basename (#3).
-    const hit = e.dirHistory?.resolveScanPath(e.name, newDir)
-    if (hit !== undefined) {
-      newDir = hit
-    } else {
-      const fuzzy = e.dirHistory?.resolveScanPathFuzzy(e.name, newDir)
-      if (fuzzy === undefined) return undefined
-      newDir = fuzzy
-    }
-  }
-  try {
-    if (!statSyncIsDir(newDir)) return undefined
-  } catch {
-    return undefined
-  }
-  return newDir
-}
-
-function statSyncIsDir(path: string): boolean {
-  return statSync(path).isDirectory()
-}
-
-function expandTilde(path: string): string {
-  const home = process.env.HOME ?? ''
-  if (path === '~') return home
-  if (path.startsWith('~/')) return join(home, path.slice(2))
-  return path
 }
 
 /**
@@ -1031,7 +994,7 @@ export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string
     if (parentWorkDir === '') parentWorkDir = e.baseWorkDir
     let childWorkDir = parentWorkDir
     if (dirArg !== '') {
-      const resolved = resolveDir(e, dirArg)
+      const resolved = resolveDirArg(e.dirHistory, e.name, dirArg, true)
       if (resolved !== undefined) childWorkDir = resolved
     }
     try {
@@ -1130,7 +1093,7 @@ export async function spawnGroupCommon(
     if (override !== '') workDir = override
     else workDir = e.agentWorkDir()
     if (opts.dirArg !== '') {
-      const resolved = resolveDir(e, opts.dirArg)
+      const resolved = resolveDirArg(e.dirHistory, e.name, opts.dirArg, true)
       if (resolved === undefined) {
         forgetStagedForkSeed(e, opts.forkSentinelID)
         void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.SpawnDirError, opts.dirArg))

@@ -193,6 +193,8 @@ describe('feishu_bridge_subtask registration', () => {
     }).properties?.dir?.description
     expect(dir).toContain('different project')
     expect(dir).toContain('instruction files')
+    expect(dir).toContain('the same shorthands as /spawn --dir')
+    expect(dir).toContain('must match an existing directory exactly')
   })
 
   it('states the approved-plan execution boundary in the model-facing wording', async () => {

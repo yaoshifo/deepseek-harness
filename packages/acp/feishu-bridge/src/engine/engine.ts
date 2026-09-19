@@ -155,7 +155,7 @@ import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, previe
 import { isTodoToolName, parseTodoItems } from '../progress.ts'
 import { newAsyncSender, type AsyncSender } from '../async-sender.ts'
 import { RateLimiter } from '../ratelimit.ts'
-import { readFileSync, statSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { dirname, join as joinPath } from 'node:path'
 import { atomicWriteFileSync } from '../atomicwrite.ts'
@@ -167,6 +167,7 @@ import { renderHelpGroupCard } from './misc-commands.ts'
 import { executeDeleteModeAction, renderDeleteModeCard, renderListCardSafe, renderStatusCard } from './session-card.ts'
 import { runBangShell } from './shell-commands.ts'
 import { renderDirCardSafe } from './dir-card.ts'
+import { resolveDirArg } from './dir-history.ts'
 import { executeCardAction } from './cron-commands.ts'
 import { closePlanShadowOnTurnEnd, defaultPlanShadowPrompt, launchPlanShadow, settlePlanShadowPeer, settlePlanShadowPeerOnInput } from './plan-shadow.ts'
 import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from './recall.ts'
@@ -907,15 +908,6 @@ export function emptyMessage(): Message {
     isCardAction: false,
     parentMessageID: '',
     quotedText: '',
-  }
-}
-
-/** statSync isDirectory probe that reports false on error. */
-function statIsDir(path: string): boolean {
-  try {
-    return statSync(path).isDirectory()
-  } catch {
-    return false
   }
 }
 
@@ -7438,7 +7430,10 @@ export class Engine {
   ): Promise<{ workDir: string; wtPath: string; wtBranch: string; wtBase: string; wtBaseBranch: string; wtRoot: string }> {
     let workDir = parentDir
     if (dir !== '') {
-      const resolved = this.resolveDirPath(dir)
+      // Strict resolution (no fuzzy fallback): a caller-supplied name that
+      // misses must fail here, not silently reroute the child into the
+      // nearest same-named directory — the caller never sees the picked dir.
+      const resolved = resolveDirArg(this.dirHistory, this.name, dir, false)
       if (resolved === undefined) {
         throw new Error(`subtask: --dir path invalid: ${dir}`)
       }
@@ -8343,20 +8338,6 @@ export class Engine {
     const switcher = asWorkDirSwitcher(this.agent)
     if (switcher !== undefined) return switcher.getWorkDir()
     return (this.agent as { getWorkDir?: () => string }).getWorkDir?.().trim() ?? ''
-  }
-
-  /** Resolve a user-supplied dir argument (Go Engine.resolveDir, engine-side copy). */
-  private resolveDirPath(arg: string): string | undefined {
-    let newDir = arg.trim()
-    const home = process.env.HOME ?? ''
-    if (newDir === '~') newDir = home
-    else if (newDir.startsWith('~/')) newDir = joinPath(home, newDir.slice(2))
-    try {
-      if (!statIsDir(newDir)) return undefined
-    } catch {
-      return undefined
-    }
-    return newDir
   }
 
   /**

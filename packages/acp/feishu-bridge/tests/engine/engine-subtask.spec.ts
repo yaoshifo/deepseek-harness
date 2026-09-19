@@ -8,7 +8,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { Session } from '../../src/engine/session.ts'
+import { DirHistory } from '../../src/engine/dir-history.ts'
 import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import { WorktreeMode } from '../../src/engine/worktree.ts'
 import { Msg } from '../../src/i18n/index.ts'
@@ -1254,6 +1255,39 @@ describe('spawnSubtaskNative', () => {
     await e.spawnSubtaskNative('native-child-1', '', WorktreeMode.ForceOff, false, 'inherit my dir')
 
     expect(agent.started[1]?.cwd).toBe('/tmp/native-caller-cwd')
+  })
+
+  it('resolves a bare --dir name against the project scan roots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fb-scan-root-'))
+    const target = join(root, 'mem0')
+    await mkdir(target)
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:parent-chat:u1'
+    const { e, agent } = newNativeEngine(p, parentKey)
+    const dirs = new DirHistory(await mkdtemp(join(tmpdir(), 'fb-scan-history-')))
+    dirs.setScanPaths('test', [root])
+    e.setDirHistory(dirs)
+
+    await e.spawnSubtaskNative(parentKey, 'mem0', WorktreeMode.ForceOff, false, 'work in mem0')
+
+    expect(agent.started[0]?.cwd).toBe(target)
+  })
+
+  it('rejects a mistyped --dir name instead of picking the closest directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fb-scan-root-'))
+    await mkdir(join(root, 'mem0'))
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:parent-chat:u1'
+    const { e, agent } = newNativeEngine(p, parentKey)
+    const dirs = new DirHistory(await mkdtemp(join(tmpdir(), 'fb-scan-history-')))
+    dirs.setScanPaths('test', [root])
+    e.setDirHistory(dirs)
+
+    // 'nem0' is one edit away from the scanned 'mem0': human-typed /dir and
+    // /spawn --dir fuzzy-match it, a dispatched child must fail instead.
+    await expect(e.spawnSubtaskNative(parentKey, 'nem0', WorktreeMode.ForceOff, false, 'typo'))
+      .rejects.toThrow('subtask: --dir path invalid: nem0')
+    expect(agent.started).toHaveLength(0)
   })
 
   it('falls back to runtime inheritance when the native caller exposes no cwd', async () => {

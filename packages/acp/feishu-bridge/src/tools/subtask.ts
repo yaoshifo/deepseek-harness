@@ -106,7 +106,8 @@ export function registerSubtaskTool(
         type: 'string',
         description: 'spawn only: the child\'s working directory (default: this session\'s). Work that lives in a '
           + 'different project must be delegated with this: the child runs there and loads that project\'s '
-          + 'instruction files.',
+          + 'instruction files. Accepts an absolute path, ~, or a bare name under the configured scan roots '
+          + '(the same shorthands as /spawn --dir), and the name must match an existing directory exactly.',
       },
       worktree: {
         type: 'string',
