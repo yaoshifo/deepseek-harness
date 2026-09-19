@@ -104,6 +104,15 @@
 - **取证**：daemon stdout.log 搜 `grace exhausted`（旧版指纹）或 `background count reconciled away`（修复后新日志行 = 对账清理泄漏计数，非故障）；会话日志看该 turn 的 `tool/call` 是否 `run_in_background` + `job_output` 同回合配对。
 - **修复后判别**：泄漏计数（含「通知已投递未领取」僵尸形态）约 1–2 个 idle tick 内被对账清（reader 以 `bgWaitStartedAt` 为锚，首个 tick 只设锚点）；终态卡时间戳冻结为定稿时刻且不再新开第二张。💡 行本身只看注册表的活 job 数（2026-09-18 oc_5677 起的语义）：卡面（运行中的卡与定稿卡一样）上的 💡 N 表示真有 N 个 job 在跑，一个在跑的都没有时这一行不出现；`run_in_background` 调用要等它自己的工具结果到达才上提示（job 在工具体内注册，晚于 `tool/call` 抵达 bridge），因此刚启动的一瞬没有提示行属正常。**判「卡面残留」**：stdout.log 见 `unsolicited reader background count reconciled away`（计数已清）而卡面仍挂 💡、系统里也无相关进程 = 结算那一刻在途豁免留住了计数、卡已冻结（旧形态，Agent Note `2026-09-17-feishu-bridge-bg-count-leak-reconcile` 的续修已覆盖）；修复后同一形状打 `settled card background hint cleared` 且卡面不出 💡。`grace exhausted` 仍会在「通知真在途却超时」场景出现，属既有宽限语义，非本指纹。
 
+### N 收尾有「发现的问题」清单、却没发追问卡 = 模型漏调用登记工具（2026-09-19 oc_0e41e1aa 实测）
+
+- **症状**：收尾正文带「发现的问题 / 可优化点」清单，但那张「后续处理」多选卡始终不出现；引擎侧无任何告警。与 H 的分工：H 是引擎登记后丢卡（日志有 `engine: closing-card ask converted to followups`、无 `followups card sent`），本指纹是模型压根没调用工具——**两条 `engine: followups card …` 行都不存在**。
+- **机制**：卡片由模型主动调用 `feishu_bridge_followups` 触发，引擎没有「正文含该节就自动登记」的兜底；只写清单不调用，日志不留痕，只能按 turn 对证。
+- **判别法**：找出 text 块含该节的 `assistant/message`，核同一 turn 有无登记调用；旁证是 stdout.log 该群在该 turn 前后没有新增的 `followups card sent`。
+  `zstdcat <log> | grep 'tool/call' | grep -c feishu_bridge_followups` —— 计数为 0（或该 turn 无命中）= 本指纹；注意别用不加 `tool/call` 的直接 grep，系统提示与 `request/header` 的工具清单都会命中。
+- **实测**（oc_0e41e1aa / cc-20260919-181115-2eb9b5316a1f）：turn 1 有调用 → 18:12:45 卡片发出、用户 18:16 勾选消费（证明链路正常）；turn 3/4/5（seq 290/325/360）收尾均带清单、零调用。典型形态是「清单在、卡片无」的自相矛盾：turn 4 的 reasoning 写明「本轮无新发现 → 不重述清单、不发卡」，正文却仍列了清单。
+- **修复后判别**：约定已改为「先登记、再写含该节的最终回复；写了没登记即漏做」并「只列本轮新发现」（feishu-bridge 提交 `738fdeb405`，需 /reload 生效）。修后若再现同形状，说明提示词层不够，按引擎侧兜底（第二档）评估——该方向尚未立项。
+
 ## 审批事件判别（卡片没弹 / 反复要授权）
 
 - 会话日志事件 `approval/asked` → `approval/decided` 的**时间差**：秒级/分钟级 = 真弹卡等用户点击；0–1ms = 被常设授权短路放行。两种情况日志事件形态相同，只有时间差能区分。

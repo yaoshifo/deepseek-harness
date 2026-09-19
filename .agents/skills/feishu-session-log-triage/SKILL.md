@@ -50,6 +50,7 @@ python3 <skill-dir>/scripts/locate-session.py "$chat_id"
 
 - 群无响应 / 卡死 / 卡片不动 → MUST 先读 `references/triage-fingerprints.md`，按指纹表判别后再下结论。
 - 审批卡没弹 / 反复要授权 → 同上，读指纹表的审批事件判别一节。
+- 收尾的「后续处理」卡片没出现（正文却带「发现的问题 / 可优化点」清单） → 同上，读指纹表 N（模型漏调用登记工具，区别于 H 的引擎侧丢卡）。
 - 答非所问 / 回复内容与本会话无关（含交付没人要的产物） → 同上，读指纹表 K 的生成失控取证法。
 - 内容丢失 / 找不到汇报 → MUST 先读 `references/group-history-recovery.md`。
 - 只要日志路径 → 第 1 步为止。
